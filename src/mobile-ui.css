@@ -421,6 +421,7 @@
    mobile way to switch; picking one clicks the app's own .tab-select.
    The button sits before the status pill in the 48px header. */
 .fb-session-switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -436,6 +437,31 @@
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+/* Attention dot — mirrors the app's own tab unseen-dot (--brand, 6px) and
+   shows whenever any open session tab has the "unseen" class (mobile-ui.js
+   syncs it from the tabbar). Soft pulse so it reads as "something needs
+   you" without being noisy. */
+.fb-session-switch.fb-has-attention::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 2px var(--chrome);
+  animation: fb-dot-pulse 2.4s ease-in-out infinite;
+}
+@keyframes fb-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 .fb-session-switch:hover,
 .fb-session-switch:active {
@@ -605,8 +631,8 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
+  min-height: 48px;
+  padding: 6px 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -619,8 +645,23 @@
 .fb-session-menu-item.recent:hover {
   background: var(--raised);
 }
+.fb-session-menu-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 1px;
+}
+.fb-session-menu-project {
+  color: var(--faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fb-session-menu-time {
   flex: none;
+  align-self: flex-start;
   color: var(--faint);
   font-size: 11.5px;
 }

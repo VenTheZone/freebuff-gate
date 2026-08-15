@@ -117,14 +117,20 @@ for narrow viewports:
   dismisses the menu. Below the open sessions, a **Recent** section lists
   recently-active **closed** sessions from the app's own catalog API
   (  `/api/projects`, same-origin — titled, non-archived, newest first, with a
-  relative time), and its header has a **refresh** button that re-fetches the
-  catalog in place (with a spinner) so the list updates without reopening the
-  menu. Picking one reopens it as a tab through the app's native
-  path: go home, select its project, and click the matching catalog row (a
-  time-based tiebreak disambiguates duplicate titles). The button appears
-  only while a session is open, the menu animates like the thread menu and
-  supports swipe-down-to-close, and it hides on the home screen (which has
-  its own catalog).
+  relative time, and the **project name** under each title so sessions from
+  different projects are easy to tell apart), and its header has a
+  **refresh** button that re-fetches the catalog in place (with a spinner)
+  so the list updates without reopening the menu. Picking one reopens it as a
+  tab through the app's native
+  path: go home, select its project, and click the matching catalog row  (a
+  time-based tiebreak disambiguates duplicate titles). The session button
+  shows a small pulsing **attention dot** (same `--brand` color as the app's
+  own tab unseen-dot) whenever any open session needs attention — it mirrors
+  the app's native `unseen` tab class (not active, not running, attention
+  revision unacknowledged), kept in sync by the tabbar observer. The button
+  appears only while a session is open, the menu animates like the thread
+  menu and supports swipe-down-to-close, and it hides on the home screen
+  (which has its own catalog).
   The thread-window (popout) header gets a
   JS-injected back button too (the browser port has no tabs or window controls
   there), which closes the popout and returns focus to the opener.

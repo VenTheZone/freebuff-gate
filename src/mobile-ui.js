@@ -662,10 +662,22 @@
             b.type = 'button';
             b.className = 'fb-session-menu-item recent';
             b.setAttribute('role', 'menuitem');
+            // Two-line row: title on top, project name underneath (basename,
+            // same as the app's own project labels) so sessions from
+            // different projects are easy to tell apart.
+            var main = document.createElement('span');
+            main.className = 'fb-session-menu-main';
             var label = document.createElement('span');
             label.className = 'fb-session-menu-label';
             label.textContent = th.title;
-            b.appendChild(label);
+            main.appendChild(label);
+            var proj = document.createElement('span');
+            proj.className = 'fb-session-menu-project';
+            proj.textContent =
+              th.projectPath.split(/[\\/]/).filter(Boolean).pop() ||
+              th.projectPath;
+            main.appendChild(proj);
+            b.appendChild(main);
             var time = document.createElement('span');
             time.className = 'fb-session-menu-time';
             time.textContent = relTime(th.lastPromptAt || th.updatedAt);
@@ -794,6 +806,17 @@
         null;
       tabbar.insertBefore(btn, anchor);
       btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+      // Attention dot: the app marks a session tab as needing attention with
+      // the "unseen" class (not active, not running, and its attention
+      // revision is ahead of what was acknowledged — see the app's sl()
+      // predicate). Mirror it on the switcher button via the tabbar observer.
+      function syncAttention() {
+        var needsAttention = sessionTabs().some(function (t) {
+          return t.classList.contains('unseen');
+        });
+        btn.classList.toggle('fb-has-attention', needsAttention);
+      }
+      syncAttention();
 
       // Outside tap / Escape / resize / scroll close (capture phase so the
       // toggle runs before the app's own click handling).
@@ -823,6 +846,7 @@
           return;
         }
         btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+        syncAttention();
         if (!menu) return;
         if (activeTab() !== openedActive) {
           close();
