@@ -520,3 +520,7 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Increased CI-only fixture pairing TTL to 600 seconds; production/default pairing TTL remains unchanged. Node syntax and 21/21 relay tests pass. A final CI rerun is pending.
 - CI run `31890651787` then showed `Gateway response missing deviceExpiresAt`; refresh responses omit both immutable device token and expiry metadata.
 - Updated Android refresh parsing to preserve stored `deviceToken` and `deviceExpiresAt`; regression fixture now omits both fields. Gradle lint/debug/instrumentation APK compilation passes.
+- Final Android CI run `31891233534` passed relay integration and all 7 emulator tests, including real claim, refresh, cookie exchange, and relay WebView load.
+- Bumped versionCode to `3`/versionName `0.1.3` and published `mobile-v0.1.3-freebuff-gate-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.3-freebuff-gate-test.
+- Public APK hash `25e130f9d12b0ee200f3c36556f23405bb781cb0642e1f1dd60a019a0c2501f0` matches checksum sidecar.
+- Staging relay deployment remains blocked: relay URLs, enrollment token, deployment files, and GitHub environment secrets are absent.

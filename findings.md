@@ -203,3 +203,6 @@
 - CI run `31889798169` diagnostics showed `Pairing failed (404): Pairing request is missing or expired`; the fixture's 60-second pairing TTL expired while hosted emulator setup completed.
 - CI-only fixture TTL is now 600 seconds, with production/default pairing expiry unchanged. The next Android workflow run will validate claim, refresh, cookie exchange, and WebView load again.
 - CI run `31890651787` exposed a second refresh-parser mismatch: `/v1/sessions/refresh` omits `deviceExpiresAt` as well as raw `deviceToken`. Android now preserves both immutable values from the encrypted stored session; instrumentation coverage omits both fields.
+- Final CI run `31891233534` passed relay integration and all 7 emulator tests, validating claim, refresh, Secure/HttpOnly cookie exchange, and authenticated relay WebView load.
+- Published final debug test release `mobile-v0.1.3-freebuff-gate-test` from `f40c8b5`; downloaded APK hash matches local build.
+- Live public relay still needs operator-provided HTTPS/WSS host, DNS/TLS, persistent state, and enrollment secret; none is present in repository or GitHub environment configuration.
