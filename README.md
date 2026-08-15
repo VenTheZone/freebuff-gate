@@ -98,9 +98,19 @@ for narrow viewports:
   side-reserves zeroed), the explorer becomes a full-screen drawer and a slim
   44px icon rail when collapsed, the composer stays docked with 16px input
   text (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
-  `src/mobile-ui.js` **auto-collapses the explorer on load** (the app starts
-  with it open, which would hide the whole chat on a phone) and lets the app
-  persist that choice, so the chat is always visible.
+  The tab strip collapses into a **slim header**: the home tab becomes a back
+  button and the active thread tab becomes a full-width title. Tapping that
+  title opens a small **thread menu** (rename / move to new window / close)
+  that reuses the app's own tab actions (dblclick for rename, the tab's
+  pop-out and close buttons). The menu opens with the app's popover
+  fade/scale animation and supports **swipe-down-to-close** on touch.
+  The thread-window (popout) header gets a
+  JS-injected back button too (the browser port has no tabs or window controls
+  there), which closes the popout and returns focus to the opener.
+  `src/mobile-ui.js`
+  **auto-collapses the explorer on load** (the app starts with it open, which
+  would hide the whole chat on a phone) and lets the app persist that choice,
+  so the chat is always visible.
 - **700px (phones)** — dropdown menus and modals become bottom sheets, and
   chat text bumps to 15px for readability.
 - **480px** — further tightening for small phones.

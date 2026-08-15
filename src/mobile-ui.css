@@ -137,31 +137,72 @@
     padding-right: 50px;
   }
 
-  /* Tab bar: compact but still swipe-scrollable. */
+  /* Slim header: hide the tab strip, keep the home tab as a back button and
+     the active thread tab as a full-width title — the standard mobile chat
+     header. Back = home tab (returns to the thread list); the home screen
+     has its own new-thread controls, so tab-new/account are hidden. */
   .tabbar {
     height: 48px;
-    padding: 0 6px;
+    padding: 0 4px;
   }
-  .tab {
-    flex-basis: 132px;
-    min-width: 116px;
-    max-width: 200px;
-    height: 40px;
-    font-size: 12px;
+  .tabbar .tabs .tab:not(.home):not(.active) {
+    display: none;
   }
-  .tab.home {
-    flex-basis: 40px;
-    min-width: 40px;
-    max-width: 40px;
-    height: 40px;
+  .tabbar .tabs .tab.home {
+    flex: 0 0 44px;
+    min-width: 44px;
+    max-width: 44px;
+    height: 44px;
+    margin: 2px 2px;
+    border-radius: 8px;
+  }
+  .tabbar .tab.active {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+    height: 48px;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .tabbar .tab.active .tab-select {
+    align-items: center;
+    padding: 0 8px;
+  }
+  .tabbar .tab.active .tab-title {
+    height: auto;
+    line-height: 48px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .tabbar .tab.active .tab-meta,
+  .tabbar .tab.active .tab-close,
+  .tabbar .tab.active .tab-popout {
+    display: none;
+  }
+  /* Tappable title hint: the title opens the thread menu (mobile-ui.js). */
+  .tabbar .tab.active .tab-select::after {
+    content: "";
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-left: 8px;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    transform: rotate(45deg) translateY(-2px);
   }
   .tab-new {
-    width: 34px;
-    height: 34px;
+    display: none;
   }
-  .tab-close,
-  .tab-popout {
-    opacity: 1;
+  .tabbar-account {
+    display: none;
+  }
+
+  /* Thread-window (popout) header: same slim height, bigger back button. */
+  .tabbar.threadbar .fb-thread-back {
+    width: 44px;
+    height: 44px;
   }
 
   /* Transcript. */
@@ -286,6 +327,93 @@
   .msg.user .bubble {
     max-width: 92%;
   }
+}
+
+/* Tab-title thread menu — injected by src/mobile-ui.js on mobile. Reuses the
+   app's own tab actions: rename (dblclick), move to new window, close. */
+@keyframes fb-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.99);
+  }
+}
+
+.fb-tab-menu {
+  position: fixed;
+  top: 52px;
+  right: 8px;
+  z-index: 50;
+  min-width: 200px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 42%, transparent);
+  font-size: 13.5px;
+  /* Matches the app's own popover family (menu-in .12s ease / modal-in). */
+  animation: fb-menu-in 0.12s ease;
+}
+.fb-tab-menu-title {
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-tab-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-tab-menu-item:hover {
+  background: var(--raised);
+}
+.fb-tab-menu-item:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+.fb-tab-menu-item.danger {
+  color: var(--danger);
+}
+
+/* Thread-window (popout) back button — the browser port has no tabs or
+   window controls there, so src/mobile-ui.js injects this into the slim
+   header. Closing the popout is the app's own "back" affordance. */
+.tabbar.threadbar .fb-thread-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tabbar.threadbar .fb-thread-back:hover,
+.tabbar.threadbar .fb-thread-back:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.tabbar.threadbar .fb-thread-back:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Global mobile hygiene (not viewport-scoped — harmless everywhere). */
