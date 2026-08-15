@@ -122,7 +122,26 @@
 - `src/mobile-ui-screenshot-fixture.html` supplies deterministic native selectors (`.tabbar`, `.composer`, `.todo-dock`, native model/effort/quota controls) and loads the real `mobile-ui.css`/`mobile-ui.js`; test does not duplicate mobile implementation rules.
 - Regression viewport is 390×844 with touch emulation. Test captures `mobile-ui-header-composer-task.png`, checks PNG dimensions/content, and asserts slim-header height, three visible composer pills, task-card separation from header and pills, and task-card width.
 - Test widens the same page to 1280×800 and asserts injected controls hide while native task dock position is no longer `fixed`, protecting desktop behavior.
-- CI installs stable Chrome through `browser-actions/setup-chrome`, runs the same Node test, and uploads screenshot artifact for visual review. Local runs skip only when Chrome is absent; CI fails when browser discovery fails.
+- CI installs stable Chrome through `browser-actions/setup-chrome`, passes its `chrome-path` output to `FB_CHROME_BIN`, runs the same Node test, and uploads screenshot artifact for visual review. Local runs skip only when Chrome is absent; CI fails when browser discovery fails.
+- Existing GitHub run `31881849921` on commit `7c3d251` failed before capture with `Chrome DevTools page target unavailable` after the original 5-second startup wait; no artifact was produced. The test now waits up to 15 seconds and the workflow uses the setup action's explicit binary output.
+- Manual dispatch `31883126075` confirmed remote `main` is still `7c3d251`; it failed with the same `Chrome DevTools page target unavailable` before capture, and `gh run download` found no artifact. Local current model-picker regression artifact passed at 390×844: `/tmp/freebuff-mobile-ui-screenshots-lr5S2Y/mobile-ui-model-picker-availability.png`, SHA-256 `d5fd7ad2d589d2bd70bc7b5855058b8b396472d90e6d93c3cfdc5fb5c6e70901`.
+
+## Mobile model session availability design
+
+- Native model options expose concurrent slot usage in `.model-badge` text such as `Premium · 1/3 tabs in use` and `Unlimited · 0/2 tabs in use`; this is the authoritative browser-visible source, so the mobile layer does not invent quota values or call private APIs.
+- On phone model sheets, `src/mobile-ui.js` converts those ratios to compact per-model labels such as `2 available` or `At capacity`, and adds a sticky `Session availability` status summary grouped by slot type.
+- The injected capacity and `Used by: …` lines remain inside native model option buttons and carry accessible labels; the summary uses `role=status`, `aria-live=polite`, and `aria-atomic=true`.
+- If native markup has no ratio or availability data, UI says `Session count unavailable` rather than guessing. Desktop model picker remains untouched.
+- A menu-scoped `MutationObserver` watches native badge text/class/disabled changes while open; a 1-second fallback refresh handles updates that do not produce a useful child mutation. Injected summary/count mutations are filtered to avoid feedback loops, and all refresh timers/observers stop when the picker closes.
+- Reset labels come only from native option `data-tooltip` text or the active `.context-quota` tooltip when it declares shared model scope. UI renders `Resets …` beside each count and says `Reset time unavailable` when metadata is absent; it never invents a reset deadline.
+- Native tab DOM exposes session titles but not each tab's model. The installed bundle keeps exact active-session model IDs in private `activeSessionsByThread` state; mobile injection must use same-origin catalog metadata (`/api/projects`) when it exposes thread `model`/active-session data, map IDs to visible model titles, and report names unavailable rather than infer from slot bucket alone.
+- Model rows should retain useful capacity context without aggressive red `0 sessions available` pills: compact `N available`/`At capacity` labels plus a neutral `Used by: …` line makes holder names visible while preserving an explicit unavailable fallback.
+- Implementation fetches `/api/projects` only while the phone model sheet is open, throttled to five seconds; it reads open tab IDs, thread titles, thread models, optional `activeSessionsByThread`, and optional model aliases. Current visible composer model/title supplies immediate fallback. Requests and records are discarded when sheet closes or a newer menu replaces them.
+- Session names are rendered under each model and added to count tooltips/ARIA labels. Duplicate titles gain project basename; missing mapping says `Session names unavailable`. Desktop model-picker CSS is untouched.
+- Resolved holder names represent open tabs, so they can safely switch through existing native `.tab-select` controls. Injected controls stop event propagation, use focusable `role="button"` spans, announce selection through shared live status, and dismiss only model-sheet overlay before native tab activation can reopen menus.
+- Holder controls render as model-menu siblings rather than descendants of disabled native option buttons; exhausted-model session names remain tappable even when native model choice is disabled. Enter/Space activation shares pointer behavior.
+- Mobile session switcher already fetches `/api/projects` for Recent rows; same response can map open/recent thread IDs to `activeSessionsByThread[threadId].model` or thread `model`, then model aliases to visible labels. Open-row model labels should remain compact two-line metadata with `Model unavailable` fallback.
+- Implemented model legend as secondary `.fb-session-menu-model` line under open and Recent titles. It updates after catalog fetch, exposes `aria-label="Model: …"`, and leaves Recent rows visible if optional model metadata is malformed or missing.
 
 ## Mobile session-close confirmation design
 
@@ -139,3 +158,18 @@
 - Real TalkBack cannot run in current workspace: project-local `adb` sees no connected device, no AVD is configured, and host has no `/dev/kvm`; prior software-emulator boot timed out. Do not repeat same emulator attempt.
 - Real VoiceOver cannot run on this Linux host: `xcrun`, `simctl`, and macOS accessibility runtime are unavailable.
 - Fallback uses Chrome DevTools `Accessibility.getFullAXTree` in screenshot regression. It verifies status-role nodes and text for selected session, confirmation, kept-open cancellation, and closed outcome. This validates browser accessibility tree semantics, not spoken TalkBack/VoiceOver output.
+
+## Live session status design
+
+- The installed orchestrator bundle exposes thread state as `turnState` (`running` while an agent turn is active) and `lastTurnOutcome` for completed outcomes; mobile UI should consume those public catalog fields rather than infer status from model slot occupancy.
+- Open-tab fallback can use explicit tab state attributes/classes and the active composer stop control. The stop control is rendered only during an active turn in the real app, while `.unseen` means attention and must not be treated as running.
+- Mobile switcher status labels use `Running` and `Stopped` beside each model label. Missing status metadata falls back to `Stopped` only for display continuity; explicit running state always wins over stale catalog state for the active tab.
+- Status is refreshed by the same-origin catalog poll while the session menu is open and by the existing tabbar mutation observer. Polling stops when menu closes or viewport leaves mobile.
+- Status gets its own `.fb-session-menu-status` element and `aria-label="Session status: …"`; model `aria-label` remains scoped to the model name so existing model legend semantics stay stable.
+
+## Mobile session model filter design
+
+- Add native `<select>` control labeled `Filter sessions by model` inside mobile session switcher, defaulting to `All models`; native select keeps touch, keyboard, and Android accessibility behavior.
+- Build filter options from visible open and Recent row model labels after catalog metadata resolves. Preserve current normalized model key across live model/status polling; reset to `All models` only when selected model disappears.
+- Filtering applies to both open and Recent rows, keeps row DOM/actions intact, sets `hidden`/`aria-hidden` on non-matches, and exposes `No sessions use <model>` when selection has no matches.
+- Include `Model unavailable` as explicit option so unknown metadata remains discoverable rather than silently excluded. Desktop tab strip and desktop session behavior remain unchanged.

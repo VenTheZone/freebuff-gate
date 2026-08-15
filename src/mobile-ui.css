@@ -400,6 +400,111 @@
   .composer-context .agent-menu .agent-menu-header {
     padding-right: 48px;
   }
+  .composer-context .agent-menu .fb-model-session-summary {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: block;
+    margin: 0 0 6px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .composer-context .agent-menu .freebuff-model-option .agent-option-title {
+    flex-wrap: wrap;
+    row-gap: 5px;
+    white-space: normal;
+  }
+  .composer-context .agent-menu .fb-model-session-count {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    margin-left: auto;
+    padding: 3px 7px;
+    border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text);
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .composer-context .agent-menu .fb-model-session-count.available {
+    border-color: color-mix(in srgb, #2eaa62 56%, var(--border));
+    background: color-mix(in srgb, #2eaa62 15%, transparent);
+    color: color-mix(in srgb, #2eaa62 82%, var(--text));
+  }
+  /* Capacity is informational, not an error: holder names below explain why
+     model cannot open without turning every full slot into alarming red. */
+  .composer-context .agent-menu .fb-model-session-count.none {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--faint) 14%, transparent);
+    color: var(--text);
+  }
+  .composer-context .agent-menu .fb-model-session-count.unknown {
+    border-color: var(--border);
+    background: color-mix(in srgb, var(--faint) 12%, transparent);
+    color: var(--muted);
+  }
+  .composer-context .agent-menu .fb-model-session-reset {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 10.5px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .composer-context .agent-menu .fb-model-session-reset.unknown {
+    color: var(--faint);
+    font-style: italic;
+  }
+  .composer-context .agent-menu .fb-model-session-users {
+    display: block;
+    max-width: 100%;
+    margin: -2px 10px 6px;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 10.5px;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .composer-context .agent-menu .fb-model-session-users.unknown {
+    color: var(--faint);
+    font-style: italic;
+  }
+  .composer-context .agent-menu .fb-model-session-user-prefix {
+    color: var(--muted);
+  }
+  .composer-context .agent-menu .fb-model-session-user {
+    display: inline-block;
+    max-width: 100%;
+    padding: 1px 2px;
+    border-radius: 4px;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    text-underline-offset: 2px;
+    touch-action: manipulation;
+  }
+  .composer-context .agent-menu .fb-model-session-user:hover,
+  .composer-context .agent-menu .fb-model-session-user:active {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .composer-context .agent-menu .fb-model-session-user:focus-visible {
+    outline: 1px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
 
   /* Modals slide up as bottom sheets. */
   .modal-backdrop {
@@ -1084,6 +1189,46 @@
   color: var(--faint);
   font-size: 11.5px;
 }
+.fb-session-menu-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 7px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-session-menu-filter-label {
+  flex: none;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+.fb-session-menu-filter {
+  min-width: 0;
+  min-height: 32px;
+  flex: 1 1 auto;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-session-menu-filter:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.fb-session-menu-filter-empty {
+  padding: 10px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+}
+.fb-session-menu-filter-empty[hidden],
+.fb-session-menu-item[hidden] {
+  display: none !important;
+}
 .fb-session-menu-empty {
   padding: 10px 8px;
   color: var(--faint);
@@ -1135,6 +1280,63 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.fb-session-menu-main .fb-session-menu-label {
+  flex: none;
+}
+.fb-session-menu-model-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.fb-session-menu-model {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-session-menu-model.unknown {
+  color: var(--faint);
+  font-style: italic;
+}
+.fb-session-menu-item.active .fb-session-menu-model {
+  color: color-mix(in srgb, var(--accent) 72%, var(--faint));
+}
+.fb-session-menu-status {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 3px;
+  color: var(--faint);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.fb-session-menu-status::before {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.fb-session-menu-status.running {
+  color: #72d6a5;
+}
+.fb-session-menu-status.running::before {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent);
+}
+.fb-session-menu-status.stopped {
+  color: var(--faint);
 }
 .fb-session-menu-check {
   flex: none;

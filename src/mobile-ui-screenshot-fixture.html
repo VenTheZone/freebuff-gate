@@ -278,6 +278,61 @@
         background: var(--surface-2);
       }
 
+      .agent-menu {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 5px;
+        background: var(--surface-2);
+        color: var(--text);
+      }
+
+      .agent-menu-group {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .agent-option {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        min-height: 64px;
+        padding: 9px 10px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+      }
+
+      .agent-option-body {
+        display: flex;
+        min-width: 0;
+        flex: 1;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .agent-option-title {
+        font-weight: 700;
+      }
+
+      .agent-option-desc {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .model-badge {
+        margin-left: 5px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .agent-option:disabled {
+        opacity: 0.55;
+      }
+
       .composer-row {
         display: flex;
         align-items: flex-end;
@@ -337,6 +392,14 @@
             <button class="tab-popout" type="button" aria-label="Pop out">↗</button>
             <button class="tab-close" type="button" aria-label="Close">×</button>
           </div>
+          <div class="tab" data-turn-state="stopped">
+            <button class="tab-select" id="thread-tab-opus-session" type="button">
+              <span class="tab-title">Disabled model session</span>
+              <span class="tab-meta"><span>5m</span></span>
+            </button>
+            <button class="tab-popout" type="button" aria-label="Pop out">↗</button>
+            <button class="tab-close" type="button" aria-label="Close">×</button>
+          </div>
           <button class="tab-new" type="button">New</button>
         </div>
         <button class="conn-status" type="button">Connected</button>
@@ -374,12 +437,12 @@
             <form class="composer">
               <div class="composer-context">
                 <button class="agent-trigger" type="button">
-                  <span class="agent-model">GLM-5.2</span>
+                  <span class="agent-model">Fable 5</span>
                 </button>
                 <button class="effort-trigger" type="button">
                   <span class="effort-trigger-value">High</span>
                 </button>
-                <span class="context-quota" data-tooltip="Session time limit">
+                <span class="context-quota" data-tooltip="1/3 premium sessions used today. Shared across all premium models. Each lasts up to 1 hour. Resets Fri, 6:00 PM.">
                   <span class="quota-full">10 minutes remaining</span>
                   <span class="quota-compact">10m</span>
                 </span>
@@ -400,6 +463,48 @@
         </aside>
       </div>
     </main>
+    <script>
+      (() => {
+        const trigger = document.querySelector('.agent-trigger');
+        const context = document.querySelector('.composer-context');
+        trigger.addEventListener('click', () => {
+          const existing = context.querySelector('.agent-menu');
+          if (existing) {
+            existing.remove();
+            return;
+          }
+          const menu = document.createElement('div');
+          menu.className = 'agent-menu';
+          menu.id = 'agent-model-menu';
+          menu.setAttribute('role', 'listbox');
+          menu.setAttribute('aria-label', 'Coding agent and model');
+          menu.innerHTML = `
+            <div class="agent-menu-group">                <button class="agent-option freebuff-model-option active" type="button" role="option" title="Fable 5" aria-label="Freebuff: Fable 5">
+                <span class="agent-option-body">
+                  <span class="agent-option-title">Fable 5 <span class="model-badge capacity">Premium · 1/3 tabs in use</span></span>
+                  <span class="agent-option-desc">Powerful all-round coding model</span>
+                </span>
+              </button>
+              <button class="agent-option freebuff-model-option" type="button" role="option" title="Sonnet 5" aria-label="Freebuff: Sonnet 5" data-tooltip="Unlimited sessions today. Resets Sat, 8:00 PM.">
+                <span class="agent-option-body">
+                  <span class="agent-option-title">Sonnet 5 <span class="model-badge capacity">Unlimited · 0/2 tabs in use</span></span>
+                  <span class="agent-option-desc">Fast, capable everyday model</span>
+                </span>
+              </button>
+              <button class="agent-option freebuff-model-option" type="button" role="option" title="Opus 4.8" aria-label="Freebuff: Opus 4.8" data-tooltip="You've used all 3 premium sessions today. Resets Fri, 6:00 PM." disabled>
+                <span class="agent-option-body">
+                  <span class="agent-option-title">Opus 4.8 <span class="model-badge capacity">Premium · 3/3 tabs in use</span></span>
+                  <span class="agent-option-desc">Powerful all-round coding model</span>
+                </span>
+              </button>
+            </div>`;
+          menu.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') menu.remove();
+          });
+          context.appendChild(menu);
+        });
+      })();
+    </script>
     <script src="/mobile-ui.js"></script>
   </body>
 </html>

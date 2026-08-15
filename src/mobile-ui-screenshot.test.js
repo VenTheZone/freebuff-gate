@@ -81,6 +81,11 @@ function freePort() {
 }
 
 function createFixtureServer() {
+  const sessionStatus = {
+    screenshot: 'running',
+    'opus-session': 'stopped',
+    'recent-sonnet': 'stopped',
+  };
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname;
     const files = {
@@ -95,7 +100,65 @@ function createFixtureServer() {
         'content-type': 'application/json; charset=utf-8',
         'cache-control': 'no-store',
       });
-      response.end(JSON.stringify({ projects: [] }));
+      response.end(
+        JSON.stringify({
+          projects: [
+            {
+              path: '/workspace/freebuff',
+              freebuff: {
+                models: [
+                  { id: 'fable-5', displayName: 'Fable 5' },
+                  { id: 'sonnet-5', displayName: 'Sonnet 5' },
+                  { id: 'opus-4.8', displayName: 'Opus 4.8' },
+                ],
+                activeSessionsByThread: {
+                  screenshot: {
+                    model: 'fable-5',
+                    turnState: sessionStatus.screenshot,
+                  },
+                  'opus-session': {
+                    model: 'opus-4.8',
+                    turnState: sessionStatus['opus-session'],
+                  },
+                },
+                sessionSlots: {
+                  premium: { holders: ['screenshot', 'opus-session'] },
+                  unlimited: { holders: [] },
+                },
+              },
+              threads: [
+                {
+                  id: 'screenshot',
+                  title: 'Mobile screenshot review',
+                  model: 'fable-5',
+                  turnState: sessionStatus.screenshot,
+                  archivedAt: null,
+                  lastPromptAt: Date.now(),
+                },
+                {
+                  id: 'opus-session',
+                  title: 'Disabled model session',
+                  model: 'opus-4.8',
+                  turnState: sessionStatus['opus-session'],
+                  lastTurnOutcome: 'stopped',
+                  archivedAt: null,
+                  lastPromptAt: Date.now() - 5 * 60 * 1000,
+                },
+                {
+                  id: 'recent-sonnet',
+                  projectPath: '/workspace/freebuff',
+                  title: 'Recent model session',
+                  model: 'sonnet-5',
+                  turnState: sessionStatus['recent-sonnet'],
+                  lastTurnOutcome: 'finished',
+                  archivedAt: null,
+                  lastPromptAt: Date.now() - 15 * 60 * 1000,
+                },
+              ],
+            },
+          ],
+        }),
+      );
       return;
     }
 
@@ -120,7 +183,11 @@ function createFixtureServer() {
         reject(new Error('Fixture server did not expose an address'));
         return;
       }
-      resolve({ server, url: `http://127.0.0.1:${address.port}/` });
+      resolve({
+        server,
+        url: `http://127.0.0.1:${address.port}/`,
+        sessionStatus,
+      });
     });
   });
 }
@@ -238,7 +305,9 @@ async function launchChrome(chromePath) {
 
   try {
     let targets = [];
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    // GitHub-hosted runners can take longer than local Chrome to create its
+    // first page target after the DevTools port starts listening.
+    for (let attempt = 0; attempt < 300; attempt += 1) {
       if (child.exitCode !== null) {
         throw new Error(
           `Chrome exited before DevTools started${stderr ? `: ${stderr}` : ''}`,
@@ -465,6 +534,254 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     assert.deepEqual(dimensions, { width: 390, height: 844 });
     assert.ok(screenshot.length > 5000, 'mobile screenshot is unexpectedly empty');
 
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
+    await waitFor(
+      cdp,
+      "Boolean(document.querySelector('.fb-model-session-summary')) && Boolean(document.querySelector('.fb-model-sheet-close')) && document.querySelectorAll('.fb-model-session-count').length === 3 && document.querySelector('.fb-model-session-users').textContent === 'Used by: Mobile screenshot review'",
+    );
+    const availability = await evaluate(
+      cdp,
+      `(() => ({
+        summary: document.querySelector('.fb-model-session-summary').textContent,
+        role: document.querySelector('.fb-model-session-summary').getAttribute('role'),
+        live: document.querySelector('.fb-model-session-summary').getAttribute('aria-live'),
+        atomic: document.querySelector('.fb-model-session-summary').getAttribute('aria-atomic'),
+        summaryVisible: (() => {
+          const element = document.querySelector('.fb-model-session-summary');
+          const box = element.getBoundingClientRect();
+          return getComputedStyle(element).display !== 'none' && box.width > 0 && box.height > 0;
+        })(),
+        counts: Array.from(document.querySelectorAll('.fb-model-session-count')).map((element) => {
+          const box = element.getBoundingClientRect();
+          const option = element.closest('.freebuff-model-option');
+          const reset = option && option.querySelector('.fb-model-session-reset');
+          const resetBox = reset && reset.getBoundingClientRect();
+          const users = option && option.parentElement
+            ? Array.from(option.parentElement.querySelectorAll('.fb-model-session-users')).find(
+                (candidate) => candidate.getAttribute('data-fb-model-session-for') === option.getAttribute('title'),
+              )
+            : null;
+          const usersBox = users && users.getBoundingClientRect();
+          const usersStyle = users && getComputedStyle(users);
+          return {
+            text: element.textContent,
+            className: element.className,
+            title: element.title,
+            ariaLabel: element.getAttribute('aria-label'),
+            color: getComputedStyle(element).color,
+            visible: getComputedStyle(element).display !== 'none' && box.width > 0 && box.height > 0,
+            resetText: reset && reset.textContent,
+            resetVisible: Boolean(reset && getComputedStyle(reset).display !== 'none' && resetBox.width > 0 && resetBox.height > 0),
+            usersText: users && users.textContent,
+            usersVisible: Boolean(users && usersStyle.display !== 'none' && usersBox.width > 0 && usersBox.height > 0),
+            optionAria: option && option.getAttribute('aria-label'),
+          };
+        }),
+      }))()`,
+    );
+    assert.equal(
+      availability.summary,
+      'Session availability · Premium: 2 available · Unlimited: 2 available',
+    );
+    assert.equal(availability.role, 'status');
+    assert.equal(availability.live, 'polite');
+    assert.equal(availability.atomic, 'true');
+    assert.equal(availability.summaryVisible, true);
+    assert.deepEqual(
+      availability.counts.map((count) => count.text),
+      ['2 available', '2 available', 'At capacity'],
+    );
+    assert.ok(availability.counts.every((count) => count.visible));
+    assert.ok(availability.counts.every((count) => count.usersVisible));
+    assert.match(availability.counts[0].className, /available/);
+    assert.match(availability.counts[2].className, /none/);
+    assert.equal(
+      availability.counts[0].usersText,
+      'Used by: Mobile screenshot review',
+    );
+    assert.equal(availability.counts[1].usersText, 'Session names unavailable');
+    assert.equal(availability.counts[2].usersText, 'Used by: Disabled model session');
+    assert.equal(
+      availability.counts[0].ariaLabel,
+      'Session availability: 2 available. Used by: Mobile screenshot review',
+    );
+    assert.equal(
+      availability.counts[0].title,
+      '2 available · 1/3 used · Used by: Mobile screenshot review',
+    );
+    assert.notEqual(availability.counts[2].color, 'rgb(255, 130, 151)');
+    assert.deepEqual(
+      availability.counts.map((count) => count.resetText),
+      ['Resets Fri, 6:00 PM', 'Resets Sat, 8:00 PM', 'Resets Fri, 6:00 PM'],
+    );
+    assert.ok(availability.counts.every((count) => count.resetVisible));
+    assert.match(availability.counts[0].optionAria, /Resets Fri, 6:00 PM/);
+    assert.ok(
+      hasAccessibleStatus(await accessibilityNodes(cdp), availability.summary),
+      'model session availability missing from Chromium accessibility tree',
+    );
+
+    await evaluate(
+      cdp,
+      `(() => {
+        const badge = document.querySelector(
+          '.freebuff-model-option[title="Fable 5"] .model-badge',
+        );
+        const sonnet = document.querySelector(
+          '.freebuff-model-option[title="Sonnet 5"]',
+        );
+        badge.textContent = 'Premium · 2/3 tabs in use';
+        sonnet.setAttribute(
+          'data-tooltip',
+          'Unlimited sessions today. Resets Sun, 9:00 PM.',
+        );
+        return true;
+      })()`,
+    );
+    await waitFor(
+      cdp,
+      `(() => {
+        const summary = document.querySelector('.fb-model-session-summary');
+        const count = document.querySelector(
+          '.freebuff-model-option[title="Fable 5"] .fb-model-session-count',
+        );
+        return Boolean(summary && count) &&
+          summary.textContent.includes('Premium: 1 available') &&
+          count.textContent === '1 available' &&
+          document.querySelector(
+            '.freebuff-model-option[title="Sonnet 5"] .fb-model-session-reset',
+          ).textContent === 'Resets Sun, 9:00 PM';
+      })()`,
+    );
+    const refreshedAvailability = await evaluate(
+      cdp,
+      `(() => ({
+        summary: document.querySelector('.fb-model-session-summary').textContent,
+        count: document.querySelector(
+          '.freebuff-model-option[title="Fable 5"] .fb-model-session-count',
+        ).textContent,
+        detail: document.querySelector(
+          '.freebuff-model-option[title="Fable 5"] .fb-model-session-count',
+        ).title,
+        reset: document.querySelector(
+          '.freebuff-model-option[title="Sonnet 5"] .fb-model-session-reset',
+        ).textContent,
+      }))()`,
+    );
+    assert.equal(
+      refreshedAvailability.summary,
+      'Session availability · Premium: 1 available · Unlimited: 2 available',
+    );
+    assert.equal(refreshedAvailability.count, '1 available');
+    assert.equal(
+      refreshedAvailability.detail,
+      '1 available · 2/3 used · Used by: Mobile screenshot review',
+    );
+    assert.equal(refreshedAvailability.reset, 'Resets Sun, 9:00 PM');
+    assert.ok(
+      hasAccessibleStatus(
+        await accessibilityNodes(cdp),
+        refreshedAvailability.summary,
+      ),
+      'refreshed model session availability missing from Chromium accessibility tree',
+    );
+
+    const modelScreenshot = await capture(
+      cdp,
+      path.join(outputDir, 'mobile-ui-model-picker-availability.png'),
+    );
+    assert.deepEqual(pngDimensions(modelScreenshot), { width: 390, height: 844 });
+    assert.ok(modelScreenshot.length > 5000, 'model picker screenshot is unexpectedly empty');
+
+    const sessionLink = await evaluate(
+      cdp,
+      `(() => {
+        const link = document.querySelector('.fb-model-session-user');
+        return {
+          text: link && link.textContent,
+          role: link && link.getAttribute('role'),
+          tabIndex: link && link.getAttribute('tabindex'),
+          ariaLabel: link && link.getAttribute('aria-label'),
+        };
+      })()`,
+    );
+    assert.deepEqual(sessionLink, {
+      text: 'Mobile screenshot review',
+      role: 'button',
+      tabIndex: '0',
+      ariaLabel: 'Switch to session “Mobile screenshot review”',
+    });
+    await evaluate(cdp, "document.querySelector('.fb-model-session-user').click()");
+    await waitFor(cdp, "!document.querySelector('.agent-menu')");
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-mobile-live-region').textContent.includes('Selected session: “Mobile screenshot review”.')",
+    );
+    const directSelection = await evaluate(
+      cdp,
+      `(() => ({
+        status: document.querySelector('.fb-mobile-live-region').textContent,
+        active: document.querySelector('.tab.active .tab-title').textContent,
+      }))()`,
+    );
+    assert.equal(
+      directSelection.status,
+      'Selected session: “Mobile screenshot review”.',
+    );
+    assert.equal(directSelection.active, 'Mobile screenshot review');
+
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-model-session-user'))");
+    const disabledSessionLink = await evaluate(
+      cdp,
+      `(() => {
+        const link = document.querySelector(
+          '.fb-model-session-users[data-fb-model-session-for="Opus 4.8"] .fb-model-session-user',
+        );
+        return {
+          text: link && link.textContent,
+          pointerEvents: link && getComputedStyle(link).pointerEvents,
+          ariaLabel: link && link.getAttribute('aria-label'),
+        };
+      })()`,
+    );
+    assert.deepEqual(disabledSessionLink, {
+      text: 'Disabled model session',
+      pointerEvents: 'auto',
+      ariaLabel: 'Switch to session “Disabled model session”',
+    });
+    await evaluate(
+      cdp,
+      'document.querySelector(\'.fb-model-session-users[data-fb-model-session-for="Opus 4.8"] .fb-model-session-user\').click()',
+    );
+    await waitFor(cdp, "!document.querySelector('.agent-menu')");
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-mobile-live-region').textContent.includes('Selected session: “Disabled model session”.')",
+    );
+
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-model-session-user'))");
+    await evaluate(
+      cdp,
+      `(() => {
+        const link = document.querySelector('.fb-model-session-user');
+        link.focus();
+        link.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        return document.activeElement === link;
+      })()`,
+    );
+    await waitFor(cdp, "!document.querySelector('.agent-menu')");
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-mobile-live-region').textContent.includes('Selected session: “Mobile screenshot review”.')",
+    );
+
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-model-sheet-close'))");
+    await evaluate(cdp, "document.querySelector('.fb-model-sheet-close').click()");
+    await waitFor(cdp, "!document.querySelector('.agent-menu')");
+
     await evaluate(
       cdp,
       `(() => {
@@ -477,6 +794,224 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     );
     await evaluate(cdp, "document.querySelector('.fb-session-switch').click()");
     await waitFor(cdp, "Boolean(document.querySelector('.fb-session-menu-close'))");
+    await waitFor(
+      cdp,
+      "document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-model').length === 2 && document.querySelector('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-model').textContent === 'Fable 5' && document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-model')[1].textContent === 'Opus 4.8' && document.querySelector('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-model').getAttribute('aria-label') === 'Model: Fable 5' && document.querySelector('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-status').textContent === 'Running' && document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-status')[1].textContent === 'Stopped'",
+    );
+    const sessionModelLegend = await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not(.recent)')).map((row) => ({
+        title: row.querySelector('.fb-session-menu-label').textContent,
+        model: row.querySelector('.fb-session-menu-model').textContent,
+        modelAria: row.querySelector('.fb-session-menu-model').getAttribute('aria-label'),
+        status: row.querySelector('.fb-session-menu-status').textContent,
+        statusAria: row.querySelector('.fb-session-menu-status').getAttribute('aria-label'),
+      }))`,
+    );
+    assert.deepEqual(sessionModelLegend, [
+      {
+        title: 'Mobile screenshot review',
+        model: 'Fable 5',
+        modelAria: 'Model: Fable 5',
+        status: 'Running',
+        statusAria: 'Session status: Running',
+      },
+      {
+        title: 'Disabled model session',
+        model: 'Opus 4.8',
+        modelAria: 'Model: Opus 4.8',
+        status: 'Stopped',
+        statusAria: 'Session status: Stopped',
+      },
+    ]);
+    const sessionStatusScreenshot = await capture(
+      cdp,
+      path.join(outputDir, 'mobile-ui-session-status.png'),
+    );
+    assert.deepEqual(pngDimensions(sessionStatusScreenshot), {
+      width: 390,
+      height: 844,
+    });
+    assert.ok(
+      sessionStatusScreenshot.length > 5000,
+      'session status screenshot is unexpectedly empty',
+    );
+    const sessionStatusSemantics = await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not(.recent) .fb-session-menu-status')).map((status) => {
+        const box = status.getBoundingClientRect();
+        const style = getComputedStyle(status);
+        return {
+          text: status.textContent,
+          aria: status.getAttribute('aria-label'),
+          visible: style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0,
+        };
+      })`,
+    );
+    assert.deepEqual(sessionStatusSemantics, [
+      { text: 'Running', aria: 'Session status: Running', visible: true },
+      { text: 'Stopped', aria: 'Session status: Stopped', visible: true },
+    ]);
+    await waitFor(
+      cdp,
+      "Boolean(document.querySelector('.fb-session-menu-item.recent .fb-session-menu-model')) && document.querySelector('.fb-session-menu-item.recent .fb-session-menu-model').textContent === 'Sonnet 5' && document.querySelector('.fb-session-menu-item.recent .fb-session-menu-status').textContent === 'Stopped'",
+    );
+    const recentRows = await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-session-menu-item.recent')).map((row) => ({
+        title: row.querySelector('.fb-session-menu-label').textContent,
+        model: row.querySelector('.fb-session-menu-model').textContent,
+        modelAria: row.querySelector('.fb-session-menu-model').getAttribute('aria-label'),
+        status: row.querySelector('.fb-session-menu-status').textContent,
+        statusAria: row.querySelector('.fb-session-menu-status').getAttribute('aria-label'),
+      }))`,
+    );
+    assert.deepEqual(recentRows, [
+      {
+        title: 'Recent model session',
+        model: 'Sonnet 5',
+        modelAria: 'Model: Sonnet 5',
+        status: 'Stopped',
+        statusAria: 'Session status: Stopped',
+      },
+    ]);
+    const modelFilterInfo = await evaluate(
+      cdp,
+      `(() => {
+        const filter = document.querySelector('.fb-session-menu-filter');
+        return {
+          tag: filter && filter.tagName,
+          ariaLabel: filter && filter.getAttribute('aria-label'),
+          value: filter && filter.value,
+          options: filter ? Array.from(filter.options).map((option) => option.textContent) : [],
+        };
+      })()`,
+    );
+    assert.deepEqual(modelFilterInfo, {
+      tag: 'SELECT',
+      ariaLabel: 'Filter sessions by model',
+      value: 'all',
+      options: ['All models', 'Fable 5', 'Opus 4.8', 'Sonnet 5'],
+    });
+    await evaluate(
+      cdp,
+      `(() => {
+        const filter = document.querySelector('.fb-session-menu-filter');
+        filter.value = 'opus48';
+        filter.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await waitFor(
+      cdp,
+      `(() => {
+        const rows = Array.from(document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]'));
+        const visible = rows.filter((row) => !row.hidden).map((row) => row.getAttribute('data-fb-session-id'));
+        return visible.length === 1 && visible[0] === 'opus-session' &&
+          document.querySelector('.fb-session-menu-filter').value === 'opus48';
+      })()`,
+    );
+    const opusFilterRows = await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]')).map((row) => ({
+        id: row.getAttribute('data-fb-session-id'),
+        hidden: row.hidden,
+        ariaHidden: row.getAttribute('aria-hidden'),
+      }))`,
+    );
+    assert.deepEqual(opusFilterRows, [
+      { id: 'screenshot', hidden: true, ariaHidden: 'true' },
+      { id: 'opus-session', hidden: false, ariaHidden: 'false' },
+      { id: 'recent-sonnet', hidden: true, ariaHidden: 'true' },
+    ]);
+    await evaluate(
+      cdp,
+      `(() => {
+        const filter = document.querySelector('.fb-session-menu-filter');
+        filter.value = 'sonnet5';
+        filter.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-session-menu-item[data-fb-session-id=\\\"recent-sonnet\\\"]').hidden === false && document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not([hidden])').length === 1",
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const recent = document.querySelector('.fb-session-menu-item[data-fb-session-id="recent-sonnet"]');
+        if (recent) recent.remove();
+        const filter = document.querySelector('.fb-session-menu-filter');
+        filter.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-session-menu-filter-empty').hidden === false && document.querySelector('.fb-session-menu-filter-empty').textContent === 'No sessions use Sonnet 5.'",
+    );
+    const noMatchFilter = await evaluate(
+      cdp,
+      `(() => {
+        const empty = document.querySelector('.fb-session-menu-filter-empty');
+        return {
+          text: empty.textContent,
+          role: empty.getAttribute('role'),
+          live: empty.getAttribute('aria-live'),
+          hidden: empty.hidden,
+        };
+      })()`,
+    );
+    assert.deepEqual(noMatchFilter, {
+      text: 'No sessions use Sonnet 5.',
+      role: 'status',
+      live: 'polite',
+      hidden: false,
+    });
+    await evaluate(cdp, "document.querySelector('.fb-session-switch').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-session-menu')");
+    await evaluate(cdp, "document.querySelector('.fb-session-switch').click()");
+    await waitFor(
+      cdp,
+      "Boolean(document.querySelector('.fb-session-menu-filter')) && Boolean(document.querySelector('.fb-session-menu-item.recent'))",
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const filter = document.querySelector('.fb-session-menu-filter');
+        filter.value = 'all';
+        filter.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`,
+    );
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-session-menu-filter').value === 'all' && document.querySelectorAll('.fb-session-menu-item[data-fb-session-id]:not([hidden])').length === 3",
+    );
+    fixture.sessionStatus.screenshot = 'stopped';
+    await evaluate(
+      cdp,
+      "(() => { const stop = document.querySelector('.composer .composer-row .stop'); if (stop) stop.style.display = 'none'; return true; })()",
+    );
+    await waitFor(
+      cdp,
+      "document.querySelector('.fb-session-menu-item[data-fb-session-id=\\\"screenshot\\\"] .fb-session-menu-status').textContent === 'Stopped'",
+    );
+    const liveSessionStatus = await evaluate(
+      cdp,
+      `(() => ({
+        status: document.querySelector('.fb-session-menu-item[data-fb-session-id="screenshot"] .fb-session-menu-status').textContent,
+        className: document.querySelector('.fb-session-menu-item[data-fb-session-id="screenshot"] .fb-session-menu-status').className,
+        aria: document.querySelector('.fb-session-menu-item[data-fb-session-id="screenshot"] .fb-session-menu-status').getAttribute('aria-label'),
+      }))()`,
+    );
+    assert.deepEqual(liveSessionStatus, {
+      status: 'Stopped',
+      className: 'fb-session-menu-status stopped',
+      aria: 'Session status: Stopped',
+    });
+
     await evaluate(cdp, "document.querySelector('.fb-session-menu-select').click()");
     await waitFor(cdp, "!document.querySelector('.fb-session-menu')");
     await waitFor(

@@ -413,8 +413,16 @@ for narrow viewports:
   (native tab activation → thread load), and offers **New session** (the
   app's `.tab-new`) and **All sessions** (the home tab) shortcuts.  Each
   session row has a **close button** that closes it via the app's own
-  `.tab-close` (which stopPropagates, so it won't also switch to it). Before
-  native close runs, a confirmation popup asks **Close session?** with red
+  `.tab-close` (which stopPropagates, so it won't also switch to it). Each
+  open and Recent row also shows a compact model label beneath its session
+  title; missing catalog metadata reads `Model unavailable` rather than
+  guessing. A live `Running` or `Stopped` status appears beside each model
+  label, sourced from native `turnState`/`lastTurnOutcome` metadata with the
+  active tab/composer state as a live fallback; status polling stops when the
+  switcher closes. A touch-friendly **Filter sessions by model** select can
+  show only rows using Fable, Opus, Sonnet, or another resolved model; `All
+  models` restores the full list and unknown metadata remains filterable as
+  `Model unavailable`. Before native close runs, a confirmation popup asks **Close session?** with red
   **Yes** and green **No** actions. A visible live status message says
   **Confirmation required** and gives same choices to screen readers through
   `role="status"`, `aria-live="assertive"`, and `aria-atomic="true"`. A shared
@@ -511,8 +519,22 @@ for narrow viewports:
   you left it in; scrolling the chat no longer dismisses it (only an
   outside tap, Escape, or the chevron does).
   **Model sheet note:** the full-screen sheet replaces the anchored popup
-  only on phones; the effort selector beside it keeps its native anchored
-  menu. Other dropdown menus (workspace/settings, effort selector) stay
+  only on phones; each model row now shows compact concurrent capacity when
+  app reports it (for example, `2 available` or `At capacity`) without using
+  alarming red for normal slot exhaustion. A `Used by: Session name` line
+  identifies open sessions consuming that model when same-origin catalog data
+  exposes the mapping; tap a listed session name to jump directly to its open
+  tab. Keyboard Enter/Space works too. Disabled model rows keep holder names
+  tappable; otherwise UI says `Session names unavailable` instead of guessing
+  by Premium/Unlimited bucket. Sticky `Session availability`
+  summary keeps grouped counts visible while scrolling. Each model also shows
+  its native quota reset time beside capacity; if app exposes no reset metadata,
+  UI says `Reset time unavailable` instead of guessing. While sheet stays open,
+  native slot-badge and session metadata changes refresh automatically through
+  scoped observers with low-frequency fallback polls; updated values remain
+  announced through the live status.
+  The effort selector beside it keeps its native
+  anchored menu. Other dropdown menus (workspace/settings, effort selector) stay
   anchored to their triggers but widen and scroll (they must NOT become
   fixed bottom sheets: those anchor upward with `bottom: calc(100% + …)`,
   which goes off-screen under fixed positioning). Modals become bottom
@@ -524,10 +546,12 @@ for narrow viewports:
 
 Automated mobile regression coverage runs the injected CSS and JavaScript in a
 native-UI fixture at a 390×844 phone viewport. It captures
-`mobile-ui-header-composer-task.png` plus
+`mobile-ui-header-composer-task.png`,
+`mobile-ui-model-picker-availability.png`, `mobile-ui-session-status.png`, plus
 `mobile-ui-session-close-confirm.png` and asserts slim-header bounds, visible
 model/reasoning/time pills, task-card separation from both header and composer
-pills, close-confirmation button colors, visible live-region semantics,
+pills, live Running/Stopped session status labels, model-filter option and
+row visibility, close-confirmation button colors, visible live-region semantics,
 selected-session announcements, close outcomes, Escape, browser Back, backdrop
 cancel, focus restoration, and desktop cleanup
 after widening the viewport. The test uses Chrome's

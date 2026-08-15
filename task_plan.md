@@ -155,6 +155,67 @@ Selected project:
 - Query Chrome DevTools accessibility tree for selection and close outcome status announcements. **Done.**
 - Run spoken TalkBack and VoiceOver pass on real device or hardware-accelerated CI/macOS host. **Blocked by host/device availability.**
 
+### Phase 15 — Mobile model session availability (complete)
+
+- Read concurrent slot usage from native model-option badges instead of private state or guessed quotas. **Done.**
+- Show per-model available session counts and a sticky grouped summary in the phone model sheet. **Done.**
+- Preserve desktop picker behavior and provide an explicit unavailable state when native data is absent. **Done.**
+- Cover counts, exhausted models, status semantics, and model-sheet screenshot in Chromium regression. **Done.**
+
+### Phase 16 — GitHub screenshot validation (blocked pending publication)
+
+- Inspect latest remote screenshot run and artifact state. **Done: run `31881849921` failed before capture; no artifact.**
+- Harden Chrome setup path and startup wait for hosted runners. **Done locally.**
+- Commit/push current model availability and CI fixes, dispatch workflow, and inspect uploaded model-picker PNG. **Pending user authorization to publish; remote dispatch `31883126075` used stale `7c3d251` and produced no artifact.**
+
+### Phase 17 — Live model session-slot refresh (complete locally)
+
+- Observe native model-slot badge changes while phone picker remains open. **Done.**
+- Refresh counts without reacting to injected summary/count mutations. **Done.**
+- Stop observer, fallback timer, and polling when picker closes. **Done.**
+- Cover live ratio change, refreshed summary, detail tooltip, and accessibility tree in Chromium regression. **Done.**
+
+### Phase 18 — Model quota reset labels (complete locally)
+
+- Read reset metadata only from native option/context tooltips. **Done.**
+- Show `Resets …` beside each model count and expose it to screen readers. **Done.**
+- Show `Reset time unavailable` when native metadata is absent. **Done.**
+- Cover per-model reset labels and live reset changes in Chromium regression. **Done.**
+
+### Phase 19 — Model session-name clarity (complete locally)
+
+- Keep model availability counts compact and non-alarming on phones. **Done: `N available`/`At capacity`; capacity is neutral, not red.**
+- Resolve open session titles from same-origin thread catalog metadata when available. **Done; active visible composer session is also used as a safe fallback.**
+- Show session names using each model beside its availability/reset details without guessing when native metadata is missing. **Done: `Used by: …` or `Session names unavailable`.**
+- Refresh names while picker stays open and cover mapping, fallback, accessibility, and styling in Chromium regression. **Done: 24-test suite and 390×844 model-picker capture pass.**
+
+### Phase 20 — Direct model-to-session switching (complete locally)
+
+- Make each resolved `Used by: …` session name keyboard and touch activatable. **Done: focusable role-button controls.**
+- Select matching open tab through native `.tab-select` without changing model accidentally. **Done: propagation blocked; disabled model rows use sibling controls.**
+- Announce selected session, close model sheet safely, and cover pointer/keyboard activation in Chromium regression. **Done: active and exhausted-model holder tests pass.**
+
+### Phase 21 — Session-switcher model legend (complete locally)
+
+- Show compact model label beneath each open session in mobile switcher. **Done.**
+- Use catalog/active-session metadata and current composer fallback; never infer model from slot tier. **Done.**
+- Include model label for Recent rows when available and explicit fallback when unavailable. **Done.**
+- Cover legend rendering and metadata refresh in Chromium regression without changing desktop tabs. **Done: active, exhausted, and Recent rows covered.**
+
+### Phase 22 — Live session status legend (complete locally)
+
+- Resolve each session's running/stopped state from native catalog state and live tab/composer state without guessing model or quota data. **Done.**
+- Show compact status beside model labels for open and Recent mobile session rows, with accessible labels and neutral stopped styling. **Done.**
+- Refresh status while the switcher stays open and react to native tab state changes without disrupting focus or selection. **Done: one-second menu-scoped polling plus tabbar observer.**
+- Cover initial status, live running-to-stopped change, Recent status, accessibility semantics, and desktop scoping in Chromium regression. **Done.**
+
+### Phase 23 — Mobile session model filter (complete locally)
+
+- Add accessible `All models`/model select control to mobile session switcher without changing desktop tabs. **Done.**
+- Filter open and Recent rows by resolved visible model label, including explicit `Model unavailable` fallback. **Done.**
+- Keep filter selection stable while catalog/model/status data refreshes and show a clear no-match state. **Done: option DOM is preserved when labels do not change.**
+- Cover model selection, row visibility, Recent filtering, accessibility, reset to All models, and desktop scoping in Chromium regression. **Done.**
+
 ## Acceptance criteria
 
 - New user needs only `freebuff phone connect` and QR scan.
@@ -198,3 +259,5 @@ Selected project:
 | Screenshot test edit matched duplicate close sequence | First confirmation-flow replacement used a short repeated block | Replaced longer context-specific block; syntax and interaction test pass. |
 | `find /tmp` reported `Permission denied` | Artifact discovery traversed system-private temporary directories | Verified exact test output directory directly; both 390×844 PNGs exist. |
 | Real screen-reader runtime unavailable | Linux host has no ADB device/AVD/KVM and no macOS VoiceOver tooling | Ran Chrome CDP accessibility-tree fallback; documented spoken TalkBack/VoiceOver as device-host validation. |
+| `Chrome DevTools page target unavailable` in GitHub run `31881849921` | `browser-actions/setup-chrome` binary path was not passed explicitly and original launch wait was 5 seconds | Pass `steps.setup-chrome.outputs.chrome-path` as `FB_CHROME_BIN` and wait up to 15 seconds; rerun after current changes are published. |
+| `Chrome DevTools page target unavailable` in GitHub run `31883126075` | Manual dispatch ran remote `main` at stale `7c3d251`; remote workflow lacked local Chrome-path hardening and failed before capture | Publish current workflow/source changes, then dispatch again; no remote artifact exists. |

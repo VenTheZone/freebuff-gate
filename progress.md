@@ -233,6 +233,7 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Running tailnet proxy served `fb-mobile-ui`, `.thread-bottom .todo-dock`, `z-index: 48`, and `fb-todo-in` markers.
 - `git diff --check` passed.
 
+
 ## 2026-08-15 — Mobile floating-card collision planning
 
 - Identified top floating layers: persistent `.todo-dock`, `.fb-tab-menu`, `.fb-session-menu`, `.composer-context`, full-screen model sheet, and bottom composer pills.
@@ -255,6 +256,7 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Collision layout static assertions passed.
 - Running tailnet proxy served collision-aware mobile layer markers.
 - `git diff --check` passed.
+
 
 ## Final verification
 
@@ -318,3 +320,155 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Linux host has no `xcrun`, `simctl`, or macOS VoiceOver runtime.
 - Extended Chromium regression with `Accessibility.getFullAXTree`; selected-session, confirmation, kept-open, and closed-outcome status text/roles pass.
 - Real spoken TalkBack/VoiceOver pass remains blocked until Android hardware/accelerated emulator or macOS/iOS host is available.
+
+## 2026-08-15 — Mobile model session availability added
+
+- Inspected native orchestrator model-picker bundle. Its model rows expose concurrent slot usage through `.model-badge` ratios such as `Premium · 1/3 tabs in use`; no private API or guessed quota is needed.
+- Added phone model-sheet decoration: each model now shows available session count, exhausted models show `0 sessions available`, and a sticky grouped `Session availability` summary remains visible while scrolling.
+- Unknown native availability stays explicit as `Session count unavailable`; desktop picker behavior remains untouched.
+- Added fixture model menu and Chromium coverage for Premium/Unlimited counts, exhausted state, accessible live-region semantics, and `mobile-ui-model-picker-availability.png`.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Mobile screenshot/interaction test passed: **1/1** with model availability assertions and 390×844 model-sheet capture.
+
+## 2026-08-15 — Live session status started
+
+- User requested live `Running`/`Stopped` status beside each mobile session's model label.
+- Existing switcher already resolves model labels from `/api/projects`; native bundle inspection confirmed public `turnState`/`lastTurnOutcome` fields and active composer stop control for live fallback.
+- Planned status map, separate accessible status element, mobile-menu polling, and Chromium running-to-stopped regression.
+- No implementation changes made in this phase yet.
+
+## 2026-08-15 — GitHub screenshot run inspected
+
+- `gh` authentication is active; workflow `Mobile UI screenshot regression` is enabled.
+- Latest remote run `31881849921` used commit `7c3d251` and failed before screenshot capture with `Chrome DevTools page target unavailable`; GitHub produced no artifact.
+- Local model-picker fallback passed and wrote `/tmp/freebuff-mobile-ui-screenshots-current/mobile-ui-model-picker-availability.png` (390×844, 40,939 bytes after live-refresh capture). SHA-256: `4a8cff1e03ab1a8c76083e6842557b50c1c303eec8ef79f6d4ad9c4b935e41bd`.
+- Hardened pending CI retry: workflow passes setup-chrome's explicit `chrome-path`; CDP launch wait increased from 5 to 15 seconds.
+- Current model-availability and CI-fix changes remain uncommitted, so GitHub cannot run this exact version until user authorizes commit/push.
+
+## 2026-08-15 — Live model session-slot refresh added
+
+- Added a model-menu-scoped `MutationObserver` for native slot badge text, class, disabled, and tooltip changes while picker remains open.
+- Added a 1-second fallback refresh and filtered injected summary/count mutations to avoid observer feedback loops.
+- Refresh lifecycle stops cleanly when menu closes or viewport leaves phone mode.
+- Chromium regression now mutates native `Premium · 1/3 tabs in use` to `2/3` while sheet stays open and verifies count, summary, tooltip, and accessibility tree update live.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Mobile screenshot/interaction test passed: **1/1** with live refresh assertions.
+
+## 2026-08-15 — Model quota reset labels added
+
+- Native option `data-tooltip` and active context-quota tooltip now provide reset metadata without private API access.
+- Added `Resets …` line beside each model's session count; active shared premium/free reset hints are applied only to matching slot groups.
+- Added `Reset time unavailable` fallback and appended reset text to model option accessible names.
+- Regression changes native reset tooltip while picker remains open and verifies visual text, tooltip, and accessibility output update.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Mobile screenshot/interaction test passed: **1/1** with reset-label and live-refresh assertions.
+
+## 2026-08-15 — Model session-name clarity started
+
+- User reports red session-availability labels do not explain which session is consuming a model slot.
+- Installed native bundle confirms tab titles are rendered in DOM, while exact active-session model IDs live in private `activeSessionsByThread` state.
+- Chosen boundary: read only same-origin thread catalog metadata when available, map model IDs to visible option titles, and show explicit unavailable fallback instead of guessing by Premium/Unlimited bucket.
+
+## 2026-08-15 — Model session-name clarity implemented
+
+- Replaced verbose/red `N sessions available` capacity pills with compact `N available` or neutral `At capacity` labels.
+- Added open-session title mapping from `/api/projects` thread metadata plus immediate active composer fallback; names render as `Used by: …` beside reset details and enter option tooltips/ARIA labels.
+- Added duplicate-title project disambiguation and `Session names unavailable` fallback when same-origin data cannot safely map a model.
+- Added fixture catalog metadata and regression assertions for holder names, fallback labels, live capacity updates, neutral exhausted styling, and 390×844 model-picker screenshot.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Full Node suite passed: **24/24**.
+- Mobile screenshot regression passed: **1/1**.
+- `git diff --check` passed.
+
+
+## 2026-08-15 — Direct model-to-session switching started
+
+- User asked for each `Used by: …` session name in model picker to be tappable.
+- Resolved names refer to open tabs; implementation will reuse existing `clickNativeTabSelect` and shared live-region announcement rather than private store access.
+
+## 2026-08-15 — Direct model-to-session switching implemented
+
+- Rendered each resolved holder as a focusable `role="button"` session control; controls sit outside disabled native model buttons so exhausted-model holders remain tappable.
+- Pointer and Enter activation stop model-option propagation, select matching native tab, announce `Selected session: “…”`, and close only model sheet.
+- Added Chromium regression coverage for active holder click, disabled-row holder click, keyboard activation, ARIA labels, and direct-selection announcements.
+
+## Verification
+
+- All JavaScript syntax checks passed.
+- Full Node suite passed: **24/24**.
+- Mobile screenshot regression passed: **1/1**.
+- `bash -n install-mobile-connect.sh` passed.
+- `git diff --check` passed.
+
+## 2026-08-15 — Session-switcher model legend implemented
+
+- Added compact model line beneath every open and Recent session title in mobile switcher.
+- Reused `/api/projects` catalog plus `activeSessionsByThread`/thread model fields, visible model aliases, and current composer fallback; unknown mapping shows `Model unavailable`.
+- Added ARIA model labels, optional metadata error isolation, and safe project-path fallback so malformed model data cannot hide Recent rows.
+- Extended Chromium regression for Fable, Opus, and Recent Sonnet model labels without changing desktop tabs.
+
+## Verification
+
+- All JavaScript syntax checks passed.
+- Full Node suite passed: **24/24**.
+- Mobile screenshot regression passed: **1/1**.
+- `bash -n install-mobile-connect.sh` passed.
+- `git diff --check` passed.
+
+## 2026-08-15 — Live session status implemented
+
+- Added `Running`/`Stopped` status extraction from catalog `turnState`, `lastTurnOutcome`, active-session metadata, explicit tab state, and active composer stop visibility.
+- Added separate status element beside each open and Recent model label with compact dot styling, `aria-label="Session status: …"`, and neutral stopped color.
+- Added one-second `/api/projects` polling while session switcher remains open; existing tabbar observer refreshes status on native state changes, and polling stops on close/desktop rotation.
+- Extended fixture catalog with mutable running/stopped state and regression changes active session from Running to Stopped while menu stays open.
+- Added `mobile-ui-session-status.png` capture at 390×844; status rows are checked for visible bounds and ARIA labels.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Mobile screenshot/status regression passed: **1/1**.
+- `git diff --check` passed.
+
+## 2026-08-15 — GitHub screenshot dispatch attempted
+
+- Confirmed `gh` auth and workflow `334976202` are active.
+- Dispatched run `31883126075` against remote `main`; it used stale commit `7c3d251`, failed before capture with `Chrome DevTools page target unavailable`, and uploaded no artifact.
+- `gh run download 31883126075` returned `no valid artifacts found to download`.
+- Local current model-picker artifact remains valid: 390×844 PNG at `/tmp/freebuff-mobile-ui-screenshots-lr5S2Y/mobile-ui-model-picker-availability.png`, SHA-256 `d5fd7ad2d589d2bd70bc7b5855058b8b396472d90e6d93c3cfdc5fb5c6e70901`.
+
+## 2026-08-15 — Mobile session model filter started
+
+- User requested filtering mobile session switcher rows to one model.
+- Existing switcher already renders resolved model labels for open and Recent rows and polls catalog metadata; filter will operate on those labels without private state or desktop changes.
+- Chosen control: native touch-friendly select with `All models`, resolved model options, explicit `Model unavailable`, stable selection during refresh, and no-match status.
+
+## 2026-08-15 — Mobile session model filter implemented
+
+- Added native `Filter sessions by model` select to mobile session switcher.
+- Filter hides non-matching open and Recent rows while preserving native selection/close/open actions; `All models` restores all rows and unknown model metadata remains selectable.
+- Added polite no-match status and `aria-hidden` row state; model option DOM is reused during one-second status polling so focus and selection remain stable.
+- Extended Chromium regression for filter options, accessible label, Fable/Opus/Sonnet filtering, row visibility, no-match status, reset behavior, and 390×844 session-menu artifact.
+
+## Verification
+
+- `node --check src/mobile-ui.js` passed.
+- `node --check src/mobile-ui-screenshot.test.js` passed.
+- Mobile screenshot/filter regression passed: **1/1**.
+- `git diff --check` passed.

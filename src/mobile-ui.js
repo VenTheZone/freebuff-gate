@@ -1026,6 +1026,593 @@
     modelSheetBound = true;
     waitForEl('body', function () {
       var closeBtn = null;
+      var availabilitySummary = null;
+      var availabilityObserver = null;
+      var availabilityObservedMenu = null;
+      var availabilityRefreshTimer = null;
+      var availabilityPollTimer = null;
+      var availabilityPolledMenu = null;
+      var sessionUsage = null;
+      var sessionUsageRequest = null;
+      var sessionUsageMenu = null;
+      function modelSessionAvailability(option) {
+        var badges = Array.prototype.slice.call(
+          option.querySelectorAll('.model-badge'),
+        );
+        var badgeText = badges
+          .map(function (badge) {
+            return badge.textContent.trim();
+          })
+          .join(' · ');
+        var ratio = badgeText.match(
+          /(\d+)\s*\/\s*(\d+)\s+tabs?\s+in\s+use/i,
+        );
+        var bucketMatch = badgeText.match(/\b(Premium|Unlimited)\b/i);
+        var bucket = bucketMatch ? bucketMatch[1] : 'Sessions';
+        if (ratio) {
+          var used = Number(ratio[1]);
+          var limit = Number(ratio[2]);
+          var available = Math.max(0, limit - used);
+          return {
+            bucket: bucket,
+            available: available,
+            text: available > 0 ? available + ' available' : 'At capacity',
+            detail: available + ' available · ' + used + '/' + limit + ' used',
+            state: available > 0 ? 'available' : 'none',
+          };
+        }
+        var tooltip = option.getAttribute('data-tooltip') || '';
+        if (/all \d+ .*tabs? are in use/i.test(tooltip)) {
+          return {
+            bucket: bucket,
+            available: 0,
+            text: 'At capacity',
+            detail: 'No session slots available',
+            state: 'none',
+          };
+        }
+        if (option.disabled || option.getAttribute('aria-disabled') === 'true') {
+          return {
+            bucket: bucket,
+            available: null,
+            text: 'Unavailable',
+            detail: 'Session availability unavailable',
+            state: 'unknown',
+          };
+        }
+        return {
+          bucket: bucket,
+          available: null,
+          text: 'Session count unavailable',
+          detail: 'Session availability is not reported',
+          state: 'unknown',
+        };
+      }
+      function resetLabelFromText(text) {
+        var match = String(text || '').match(
+          /\bresets?\s+(.+?)(?:\.|$)/i,
+        );
+        return match ? 'Resets ' + match[1].trim() : '';
+      }
+      function modelSessionResetLabel(option, bucket) {
+        var ownReset = resetLabelFromText(option.getAttribute('data-tooltip'));
+        if (ownReset) return ownReset;
+        var context = document.querySelector('.composer .context-quota');
+        var contextTooltip = context
+          ? context.getAttribute('data-tooltip') || ''
+          : '';
+        var contextReset = resetLabelFromText(contextTooltip);
+        if (!contextReset) return '';
+        if (
+          (bucket === 'Premium' &&
+            /shared across all premium models/i.test(contextTooltip)) ||
+          (bucket === 'Unlimited' &&
+            /shared across all available free models/i.test(contextTooltip)) ||
+          option.classList.contains('active')
+        ) {
+          return contextReset;
+        }
+        return '';
+      }
+      function normalizeModelKey(value) {
+        return String(value || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '');
+      }
+      function projectName(projectPath) {
+        return String(projectPath || '')
+          .split(/[\\/]/)
+          .filter(Boolean)
+          .pop() || '';
+      }
+      function addModelAlias(aliases, id, label) {
+        var idKey = normalizeModelKey(id);
+        var labelText = String(label || '').trim();
+        if (idKey && labelText) aliases[idKey] = labelText;
+      }
+      function visibleModelTitle(option) {
+        return (option && option.getAttribute('title')) || 'Model';
+      }
+      function activeDomSessionRecord() {
+        var tab = document.querySelector(
+          '.tabbar:not(.threadbar) .tab.active:not(.home)',
+        );
+        var title = tab && tab.querySelector('.tab-title');
+        var model = document.querySelector('.composer .agent-model');
+        var modelText = model && model.textContent.trim();
+        if (!tab || !title || !modelText) return null;
+        var select = tab.querySelector('.tab-select');
+        return {
+          id: select && select.id ? select.id.replace(/^thread-tab-/, '') : '',
+          title: title.textContent.trim() || 'Current session',
+          modelId: modelText,
+          modelLabel: modelText,
+          projectPath: '',
+        };
+      }
+      function parseSessionUsage(data) {
+        var aliases = {};
+        var records = [];
+        var open = {};
+        Array.prototype.slice
+          .call(
+            document.querySelectorAll(
+              '.tabbar:not(.threadbar) .tab:not(.home)',
+            ),
+          )
+          .forEach(function (tab) {
+            var select = tab.querySelector('.tab-select');
+            if (!select || !select.id) return;
+            open[select.id.replace(/^thread-tab-/, '')] = true;
+          });
+        ((data && data.projects) || []).forEach(function (project) {
+          var freebuff = project && project.freebuff;
+          (freebuff && freebuff.models ? freebuff.models : []).forEach(
+            function (model) {
+              addModelAlias(aliases, model && model.id, model && (model.displayName || model.label));
+            },
+          );
+          var active =
+            (freebuff && freebuff.activeSessionsByThread) ||
+            project.activeSessionsByThread ||
+            {};
+          var activeIds = Object.keys(active);
+          var holders = {};
+          var holderCount = 0;
+          ['premium', 'unlimited'].forEach(function (tier) {
+            var slot = freebuff && freebuff.sessionSlots
+              ? freebuff.sessionSlots[tier]
+              : null;
+            (slot && Array.isArray(slot.holders) ? slot.holders : []).forEach(
+              function (id) {
+                holders[id] = true;
+                holderCount += 1;
+              },
+            );
+          });
+          var hasUsageMetadata = activeIds.length > 0 || holderCount > 0;
+          (project && project.threads ? project.threads : []).forEach(
+            function (thread) {
+              if (!thread || !thread.id || !open[thread.id]) return;
+              var activeSession = active[thread.id];
+              if (hasUsageMetadata && !activeSession && !holders[thread.id]) {
+                return;
+              }
+              var modelId =
+                (activeSession && activeSession.model) ||
+                (!hasUsageMetadata ? thread.model : '') ||
+                thread.model ||
+                '';
+              if (!modelId) return;
+              var modelLabel = aliases[normalizeModelKey(modelId)] || modelId;
+              records.push({
+                id: thread.id,
+                title: thread.title || 'Session',
+                modelId: modelId,
+                modelLabel: modelLabel,
+                projectPath: project.path || project.projectPath || '',
+              });
+            },
+          );
+        });
+        var domRecord = activeDomSessionRecord();
+        if (domRecord) records.push(domRecord);
+        var unique = {};
+        records = records.filter(function (record) {
+          var key =
+            (record.id || record.title) + ':' + normalizeModelKey(record.modelLabel || record.modelId);
+          if (unique[key]) return false;
+          unique[key] = true;
+          return true;
+        });
+        return { loaded: true, records: records, aliases: aliases, checkedAt: Date.now() };
+      }
+      function refreshSessionUsage(menu) {
+        if (!menu || !document.documentElement.contains(menu)) return;
+        var now = Date.now();
+        if (
+          sessionUsageMenu === menu &&
+          sessionUsage &&
+          now - sessionUsage.checkedAt < 5000
+        ) {
+          return;
+        }
+        if (sessionUsageRequest && sessionUsageMenu === menu) return;
+        sessionUsageMenu = menu;
+        var request = fetch('/api/projects', {
+          headers: { Accept: 'application/json' },
+        })
+          .then(function (response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+          })
+          .then(function (data) {
+            if (sessionUsageRequest !== request || sessionUsageMenu !== menu) {
+              return;
+            }
+            sessionUsage = parseSessionUsage(data);
+            if (
+              document.documentElement.contains(menu) &&
+              window.matchMedia('(max-width: 700px)').matches
+            ) {
+              syncModelAvailability(menu);
+            }
+          })
+          .catch(function () {
+            if (sessionUsageRequest !== request || sessionUsageMenu !== menu) {
+              return;
+            }
+            sessionUsage = {
+              loaded: false,
+              records: [],
+              aliases: {},
+              checkedAt: Date.now(),
+            };
+          });
+        sessionUsageRequest = request;
+        request.then(function () {
+          if (sessionUsageRequest === request) sessionUsageRequest = null;
+        });
+      }
+      function modelSessionUserRecords(option) {
+        var titleKey = normalizeModelKey(visibleModelTitle(option));
+        var records = sessionUsage ? sessionUsage.records : [];
+        var matches = [];
+        records.forEach(function (record) {
+          var modelKeys = [record.modelId, record.modelLabel].map(normalizeModelKey);
+          if (!titleKey || modelKeys.indexOf(titleKey) < 0) return;
+          var name = String(record.title || 'Session').trim();
+          var duplicateTitle = records.some(function (other) {
+            return (
+              other !== record &&
+              String(other.title || '').trim() === name &&
+              other.projectPath !== record.projectPath
+            );
+          });
+          if (duplicateTitle) {
+            var project = projectName(record.projectPath);
+            if (project) name += ' (' + project + ')';
+          }
+          if (
+            !name ||
+            matches.some(function (match) {
+              return match.name === name;
+            })
+          ) {
+            return;
+          }
+          matches.push({ record: record, name: name });
+        });
+        return matches;
+      }
+      function findOpenSessionTab(record) {
+        if (!record || !record.id) return null;
+        var expectedId = 'thread-tab-' + record.id;
+        var tabs = document.querySelectorAll(
+          '.tabbar:not(.threadbar) .tab:not(.home)',
+        );
+        for (var i = 0; i < tabs.length; i++) {
+          var select = tabs[i].querySelector('.tab-select');
+          if (select && (select.id === expectedId || select.id === record.id)) {
+            return tabs[i];
+          }
+        }
+        return null;
+      }
+      function selectOpenSession(record, displayName) {
+        var tab = findOpenSessionTab(record);
+        if (!tab || !clickNativeTabSelect(tab)) return false;
+        mobileLiveRegion.announce(
+          'Selected session: “' + displayName + '”.',
+          'polite',
+        );
+        closeModelSheet();
+        return true;
+      }
+      function isInjectedAvailabilityNode(node) {
+        var element =
+          node && node.nodeType === 1
+            ? node
+            : node && node.parentElement
+              ? node.parentElement
+              : null;
+        return !!(
+          element &&
+          element.closest &&
+          element.closest(
+            '.fb-model-session-summary, .fb-model-session-count, .fb-model-session-reset, .fb-model-session-users',
+          )
+        );
+      }
+      function scheduleAvailabilityRefresh(menu) {
+        if (
+          availabilityRefreshTimer ||
+          !menu ||
+          !document.documentElement.contains(menu)
+        ) {
+          return;
+        }
+        availabilityRefreshTimer = window.setTimeout(function () {
+          availabilityRefreshTimer = null;
+          if (
+            document.documentElement.contains(menu) &&
+            window.matchMedia('(max-width: 700px)').matches
+          ) {
+            syncModelAvailability(menu);
+          }
+        }, 50);
+      }
+      function observeModelAvailability(menu) {
+        if (availabilityObservedMenu === menu && availabilityObserver) return;
+        if (availabilityObserver) availabilityObserver.disconnect();
+        availabilityObserver = null;
+        availabilityObservedMenu = menu;
+        if (typeof window.MutationObserver !== 'function' || !menu) return;
+        availabilityObserver = new MutationObserver(function (records) {
+          if (
+            records.some(function (record) {
+              return ![
+                record.target,
+              ]
+                .concat(Array.prototype.slice.call(record.addedNodes || []))
+                .concat(Array.prototype.slice.call(record.removedNodes || []))
+                .every(isInjectedAvailabilityNode);
+            })
+          ) {
+            scheduleAvailabilityRefresh(menu);
+          }
+        });
+        availabilityObserver.observe(menu, {
+          attributes: true,
+          attributeFilter: ['class', 'disabled', 'aria-disabled', 'data-tooltip'],
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+      }
+      function stopAvailabilityPolling() {
+        if (availabilityRefreshTimer) {
+          window.clearTimeout(availabilityRefreshTimer);
+          availabilityRefreshTimer = null;
+        }
+        if (availabilityPollTimer) {
+          window.clearInterval(availabilityPollTimer);
+          availabilityPollTimer = null;
+        }
+        availabilityPolledMenu = null;
+      }
+      function startAvailabilityPolling(menu) {
+        if (!menu) return;
+        if (availabilityPollTimer && availabilityPolledMenu === menu) return;
+        if (availabilityPollTimer) window.clearInterval(availabilityPollTimer);
+        availabilityPolledMenu = menu;
+        availabilityPollTimer = window.setInterval(function () {
+          if (
+            !document.documentElement.contains(menu) ||
+            !window.matchMedia('(max-width: 700px)').matches
+          ) {
+            stopAvailabilityPolling();
+            return;
+          }
+          syncModelAvailability(menu);
+        }, 1000);
+      }
+      function clearModelAvailability(menu) {
+        stopAvailabilityPolling();
+        if (availabilityObserver) availabilityObserver.disconnect();
+        availabilityObserver = null;
+        availabilityObservedMenu = null;
+        var scope = menu || document;
+        Array.prototype.slice
+          .call(
+            scope.querySelectorAll(
+              '.fb-model-session-summary, .fb-model-session-count, .fb-model-session-reset, .fb-model-session-users',
+            ),
+          )
+          .forEach(function (element) {
+            element.remove();
+          });
+        Array.prototype.slice
+          .call(scope.querySelectorAll('.freebuff-model-option'))
+          .forEach(function (option) {
+            var injectedLabel = option.getAttribute(
+              'data-fb-model-session-aria',
+            );
+            var baseLabel = option.getAttribute(
+              'data-fb-model-session-aria-base',
+            );
+            if (injectedLabel !== null) {
+              if (baseLabel) option.setAttribute('aria-label', baseLabel);
+              else option.removeAttribute('aria-label');
+              option.removeAttribute('data-fb-model-session-aria');
+              option.removeAttribute('data-fb-model-session-aria-base');
+            }
+          });
+        availabilitySummary = null;
+        sessionUsage = null;
+        sessionUsageMenu = null;
+        sessionUsageRequest = null;
+      }
+      function syncModelAvailability(menu) {
+        if (!menu) return;
+        refreshSessionUsage(menu);
+        observeModelAvailability(menu);
+        startAvailabilityPolling(menu);
+        var options = Array.prototype.slice.call(
+          menu.querySelectorAll('.freebuff-model-option'),
+        );
+        if (!options.length) return;
+        if (!availabilitySummary || !menu.contains(availabilitySummary)) {
+          availabilitySummary = document.createElement('div');
+          availabilitySummary.className = 'fb-model-session-summary';
+          availabilitySummary.setAttribute('role', 'status');
+          availabilitySummary.setAttribute('aria-live', 'polite');
+          availabilitySummary.setAttribute('aria-atomic', 'true');
+          menu.insertBefore(availabilitySummary, menu.firstChild);
+        }
+        var buckets = {};
+        options.forEach(function (option) {
+          var availability = modelSessionAvailability(option);
+          var resetLabel = modelSessionResetLabel(option, availability.bucket);
+          var userRecords = modelSessionUserRecords(option);
+          var usersText = userRecords.length
+            ? 'Used by: ' +
+              userRecords
+                .map(function (match) {
+                  return match.name;
+                })
+                .join(', ')
+            : 'Session names unavailable';
+          var title = option.querySelector('.agent-option-title');
+          if (title) {
+            var count = title.querySelector('.fb-model-session-count');
+            if (!count) {
+              count = document.createElement('span');
+              count.className = 'fb-model-session-count';
+              title.appendChild(count);
+            }
+            var countClass =
+              'fb-model-session-count ' + availability.state;
+            var countAriaLabel =
+              'Session availability: ' + availability.text + '. ' + usersText;
+            if (count.className !== countClass) count.className = countClass;
+            if (count.textContent !== availability.text) {
+              count.textContent = availability.text;
+            }
+            var countDetail = availability.detail + ' · ' + usersText;
+            if (count.title !== countDetail) {
+              count.title = countDetail;
+            }
+            if (count.getAttribute('aria-label') !== countAriaLabel) {
+              count.setAttribute('aria-label', countAriaLabel);
+            }
+          }
+          var body = option.querySelector('.agent-option-body');
+          if (body) {
+            var reset = body.querySelector('.fb-model-session-reset');
+            if (!reset) {
+              reset = document.createElement('span');
+              reset.className = 'fb-model-session-reset';
+              body.appendChild(reset);
+            }
+            var resetText = resetLabel || 'Reset time unavailable';
+            var resetClass =
+              'fb-model-session-reset' + (resetLabel ? '' : ' unknown');
+            if (reset.className !== resetClass) reset.className = resetClass;
+            if (reset.textContent !== resetText) reset.textContent = resetText;
+            reset.title = resetLabel
+              ? resetLabel
+              : 'The app did not report a reset time for this model';
+            reset.setAttribute('aria-label', resetText);
+            var users = option.nextElementSibling;
+            if (
+              !users ||
+              !users.matches('.fb-model-session-users') ||
+              users.getAttribute('data-fb-model-session-for') !== visibleModelTitle(option)
+            ) {
+              users = document.createElement('div');
+              users.className = 'fb-model-session-users';
+              option.parentNode.insertBefore(users, option.nextSibling);
+            }
+            users.setAttribute('data-fb-model-session-for', visibleModelTitle(option));
+            var usersClass =
+              'fb-model-session-users' +
+              (usersText.indexOf('Used by: ') === 0 ? '' : ' unknown');
+            if (users.className !== usersClass) users.className = usersClass;
+            if (users.getAttribute('data-fb-model-session-text') !== usersText) {
+              users.textContent = '';
+              if (!userRecords.length) {
+                users.textContent = usersText;
+              } else {
+                var prefix = document.createElement('span');
+                prefix.className = 'fb-model-session-user-prefix';
+                prefix.textContent = 'Used by: ';
+                users.appendChild(prefix);
+                userRecords.forEach(function (match, index) {
+                  if (index > 0) users.appendChild(document.createTextNode(', '));
+                  var user = document.createElement('span');
+                  user.className = 'fb-model-session-user';
+                  user.setAttribute('role', 'button');
+                  user.setAttribute('tabindex', '0');
+                  user.setAttribute(
+                    'aria-label',
+                    'Switch to session “' + match.name + '”',
+                  );
+                  user.title = 'Switch to ' + match.name;
+                  user.textContent = match.name;
+                  function activate(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    selectOpenSession(match.record, match.name);
+                  }
+                  user.addEventListener('click', activate);
+                  user.addEventListener('keydown', function (event) {
+                    if (event.key === 'Enter' || event.key === ' ') activate(event);
+                  });
+                  users.appendChild(user);
+                });
+              }
+              users.setAttribute('data-fb-model-session-text', usersText);
+            }
+            users.title = usersText;
+            users.setAttribute('aria-label', usersText);
+          }
+          var currentAria = option.getAttribute('aria-label') || '';
+          var previousInjectedAria = option.getAttribute(
+            'data-fb-model-session-aria',
+          );
+          var hasBaseAria = option.hasAttribute(
+            'data-fb-model-session-aria-base',
+          );
+          var baseAria = hasBaseAria
+            ? option.getAttribute('data-fb-model-session-aria-base') || ''
+            : currentAria;
+          if (!hasBaseAria || currentAria !== previousInjectedAria) {
+            baseAria = currentAria;
+            option.setAttribute('data-fb-model-session-aria-base', baseAria);
+          }
+          var nextAria = [
+            baseAria || option.getAttribute('title') || 'Model',
+            availability.text,
+            usersText,
+            resetLabel || 'Reset time unavailable',
+          ].join('. ') + '.';
+          if (currentAria !== nextAria) option.setAttribute('aria-label', nextAria);
+          option.setAttribute('data-fb-model-session-aria', nextAria);
+          if (availability.available !== null && !buckets[availability.bucket]) {
+            buckets[availability.bucket] = availability;
+          }
+        });
+        var bucketText = Object.keys(buckets).map(function (bucket) {
+          return bucket + ': ' + buckets[bucket].text;
+        });
+        var summaryText = bucketText.length
+          ? 'Session availability · ' + bucketText.join(' · ')
+          : 'Session availability is not reported for these models';
+        if (availabilitySummary.textContent !== summaryText) {
+          availabilitySummary.textContent = summaryText;
+        }
+      }
       function closeModelSheet() {
         var menu = document.querySelector('.composer-context .agent-menu');
         if (menu) {
@@ -1046,6 +1633,7 @@
         var narrow = window.matchMedia('(max-width: 700px)').matches;
         var menu = document.querySelector('.composer-context .agent-menu');
         if (!menu || !narrow) {
+          clearModelAvailability(menu);
           mobileOverlay.dismiss('model-sheet');
           if (closeBtn) {
             closeBtn.remove();
@@ -1056,6 +1644,7 @@
         mobileOverlay.open('model-sheet', closeModelSheet, {
           parent: 'context-card',
         });
+        syncModelAvailability(menu);
         if (closeBtn) return;
         closeBtn = document.createElement('button');
         closeBtn.type = 'button';
@@ -1272,6 +1861,13 @@
       var menu = null;
       var openedActive = null;
       var openedIds = null;
+      var sessionModels = {};
+      var sessionModelAliases = {};
+      var sessionStatuses = {};
+      var sessionStatusPollTimer = null;
+      var modelFilter = null;
+      var modelFilterEmpty = null;
+      var modelFilterValue = 'all';
 
       function sessionTabs() {
         return Array.prototype.slice.call(
@@ -1299,6 +1895,282 @@
         if (!s || !s.id) return '';
         return s.id.indexOf('thread-tab-') === 0 ? s.id.slice(11) : s.id;
       }
+      function normalizeSessionModelKey(value) {
+        return String(value || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '');
+      }
+      function sessionModelValue(value) {
+        if (typeof value === 'string') return value.trim();
+        if (!value || typeof value !== 'object') return '';
+        return String(value.displayName || value.label || value.id || '').trim();
+      }
+      function sessionStatusValue(value) {
+        if (value === true) return 'Running';
+        if (value === false) return 'Stopped';
+        var raw = '';
+        if (typeof value === 'string') {
+          raw = value;
+        } else if (value && typeof value === 'object') {
+          if (value.running === true || value.isRunning === true) return 'Running';
+          if (value.running === false || value.isRunning === false) return 'Stopped';
+          raw =
+            value.turnState ||
+            value.status ||
+            value.state ||
+            value.runState ||
+            value.sessionState ||
+            value.lastTurnOutcome ||
+            '';
+        }
+        raw = String(raw || '').trim().toLowerCase();
+        if (!raw) return '';
+        if (
+          /not\s+running|stopped|finished|failed|error|complete|completed|idle|paused|cancelled|canceled|success|auto-stopped/.test(
+            raw,
+          )
+        ) {
+          return 'Stopped';
+        }
+        if (/running|streaming|generating|working|queued|pending|resuming|active/.test(raw)) {
+          return 'Running';
+        }
+        return '';
+      }
+      function sessionStatusFromTab(tab) {
+        if (!tab) return '';
+        var stateNode = tab.querySelector(
+          '[data-turn-state], [data-status], [data-session-status]',
+        );
+        var explicit = [
+          tab.getAttribute('data-turn-state'),
+          tab.getAttribute('data-status'),
+          tab.getAttribute('data-session-status'),
+          stateNode && stateNode.getAttribute('data-turn-state'),
+          stateNode && stateNode.getAttribute('data-status'),
+          stateNode && stateNode.getAttribute('data-session-status'),
+        ];
+        for (var i = 0; i < explicit.length; i++) {
+          var explicitStatus = sessionStatusValue(explicit[i]);
+          if (explicitStatus) return explicitStatus;
+        }
+        var classes = String(tab.className || '');
+        if (/(^|[\s-])(running|streaming|working|generating)(?:$|[\s-])/i.test(classes)) {
+          return 'Running';
+        }
+        if (/(^|[\s-])(stopped|finished|idle|paused)(?:$|[\s-])/i.test(classes)) {
+          return 'Stopped';
+        }
+        if (tab.classList.contains('active')) {
+          var stop = document.querySelector('.composer .composer-row .stop');
+          if (stop) {
+            var style = window.getComputedStyle(stop);
+            if (
+              style.display !== 'none' &&
+              style.visibility !== 'hidden' &&
+              !stop.disabled
+            ) {
+              return 'Running';
+            }
+          }
+        }
+        return '';
+      }
+      function sessionStatusForThreadId(id) {
+        var tabs = sessionTabs();
+        for (var i = 0; i < tabs.length; i++) {
+          if (threadIdOf(tabs[i]) !== id) continue;
+          var domStatus = sessionStatusFromTab(tabs[i]);
+          if (domStatus) return domStatus;
+          break;
+        }
+        return (id && sessionStatuses[id]) || 'Stopped';
+      }
+      function sessionStatusForThread(thread) {
+        return (
+          sessionStatusValue(thread) ||
+          sessionStatusForThreadId(thread && thread.id) ||
+          'Stopped'
+        );
+      }
+      function addSessionModelAlias(aliases, id, label) {
+        var key = normalizeSessionModelKey(id);
+        var text = sessionModelValue(label);
+        if (key && text) aliases[key] = text;
+      }
+      function updateSessionModelMap(data) {
+        var next = {};
+        var aliases = {};
+        var statuses = {};
+        ((data && data.projects) || []).forEach(function (project) {
+          var freebuff = project && project.freebuff;
+          (freebuff && freebuff.models ? freebuff.models : []).forEach(function (model) {
+            addSessionModelAlias(
+              aliases,
+              model && model.id,
+              model && (model.displayName || model.label),
+            );
+          });
+          var active =
+            (freebuff && freebuff.activeSessionsByThread) ||
+            (project && project.activeSessionsByThread) ||
+            {};
+          (project && project.threads ? project.threads : []).forEach(function (thread) {
+            if (!thread || !thread.id) return;
+            var activeSession = active[thread.id];
+            var status =
+              sessionStatusValue(activeSession) || sessionStatusValue(thread);
+            if (status) statuses[thread.id] = status;
+            var modelId =
+              sessionModelValue(activeSession && activeSession.model) ||
+              sessionModelValue(thread.model);
+            if (!modelId) return;
+            next[thread.id] =
+              aliases[normalizeSessionModelKey(modelId)] || modelId;
+          });
+        });
+        sessionModels = next;
+        sessionModelAliases = aliases;
+        sessionStatuses = statuses;
+        renderSessionModelLegend();
+      }
+      function currentComposerModel() {
+        var model = document.querySelector('.composer .agent-model');
+        return model ? model.textContent.trim() : '';
+      }
+      function modelLabelForThreadId(id) {
+        if (id && sessionModels[id]) return sessionModels[id];
+        var active = activeTab();
+        if (id && active && threadIdOf(active) === id) {
+          return currentComposerModel() || 'Model unavailable';
+        }
+        return 'Model unavailable';
+      }
+      function modelLabelForThread(thread) {
+        if (!thread) return 'Model unavailable';
+        if (sessionModels[thread.id]) return sessionModels[thread.id];
+        var modelId = sessionModelValue(thread.model);
+        return modelId
+          ? sessionModelAliases[normalizeSessionModelKey(modelId)] || modelId
+          : 'Model unavailable';
+      }
+      function makeSessionModelLine(main, modelLabel, sessionId, thread) {
+        var line = document.createElement('span');
+        line.className = 'fb-session-menu-model-line';
+        var model = document.createElement('span');
+        model.className =
+          'fb-session-menu-model' +
+          (modelLabel === 'Model unavailable' ? ' unknown' : '');
+        model.textContent = modelLabel;
+        model.title = modelLabel;
+        model.setAttribute('aria-label', 'Model: ' + modelLabel);
+        line.appendChild(model);
+        var statusLabel = thread
+          ? sessionStatusForThread(thread)
+          : sessionStatusForThreadId(sessionId);
+        var status = document.createElement('span');
+        status.className =
+          'fb-session-menu-status ' + statusLabel.toLowerCase();
+        status.textContent = statusLabel;
+        status.title = 'Session status: ' + statusLabel;
+        status.setAttribute('aria-label', 'Session status: ' + statusLabel);
+        line.appendChild(status);
+        main.appendChild(line);
+      }
+      function renderSessionModelLegend() {
+        if (!menu) return;
+        Array.prototype.slice
+          .call(menu.querySelectorAll('[data-fb-session-id]'))
+          .forEach(function (row) {
+            var model = row.querySelector('.fb-session-menu-model');
+            if (!model) return;
+            var sessionId = row.getAttribute('data-fb-session-id');
+            var label = modelLabelForThreadId(sessionId);
+            var unknown = label === 'Model unavailable';
+            model.className = 'fb-session-menu-model' + (unknown ? ' unknown' : '');
+            model.textContent = label;
+            model.title = label;
+            model.setAttribute('aria-label', 'Model: ' + label);
+            var status = row.querySelector('.fb-session-menu-status');
+            if (!status) return;
+            var statusLabel = sessionStatusForThreadId(sessionId);
+            status.className =
+              'fb-session-menu-status ' + statusLabel.toLowerCase();
+            status.textContent = statusLabel;
+            status.title = 'Session status: ' + statusLabel;
+            status.setAttribute('aria-label', 'Session status: ' + statusLabel);
+          });
+        syncSessionModelFilter();
+      }
+      function sessionModelRows() {
+        if (!menu) return [];
+        return Array.prototype.slice.call(
+          menu.querySelectorAll('.fb-session-menu-item[data-fb-session-id]'),
+        );
+      }
+      function applySessionModelFilter() {
+        if (!menu) return;
+        var selected = modelFilter ? modelFilter.value || 'all' : 'all';
+        modelFilterValue = selected;
+        var visible = 0;
+        sessionModelRows().forEach(function (row) {
+          var model = row.querySelector('.fb-session-menu-model');
+          var modelKey = normalizeSessionModelKey(
+            model ? model.textContent.trim() : 'Model unavailable',
+          );
+          var matches = selected === 'all' || modelKey === selected;
+          row.hidden = !matches;
+          row.setAttribute('aria-hidden', String(!matches));
+          if (matches) visible += 1;
+        });
+        if (modelFilterEmpty) {
+          var selectedOption = modelFilter
+            ? modelFilter.options[modelFilter.selectedIndex]
+            : null;
+          modelFilterEmpty.textContent = selectedOption
+            ? 'No sessions use ' + selectedOption.textContent + '.'
+            : 'No sessions match this model.';
+          modelFilterEmpty.hidden = selected === 'all' || visible > 0;
+        }
+      }
+      function syncSessionModelFilter() {
+        if (!menu || !modelFilter) return;
+        var labels = {};
+        sessionModelRows().forEach(function (row) {
+          var model = row.querySelector('.fb-session-menu-model');
+          var label = model ? model.textContent.trim() : 'Model unavailable';
+          if (!label) label = 'Model unavailable';
+          labels[normalizeSessionModelKey(label)] = label;
+        });
+        var selected = modelFilterValue || modelFilter.value || 'all';
+        if (selected !== 'all' && !labels[selected]) selected = 'all';
+        var optionData = [{ value: 'all', label: 'All models' }];
+        Object.keys(labels)
+          .sort(function (a, b) {
+            return labels[a].localeCompare(labels[b]);
+          })
+          .forEach(function (key) {
+            optionData.push({ value: key, label: labels[key] });
+          });
+        var optionsMatch =
+          modelFilter.options.length === optionData.length &&
+          optionData.every(function (item, index) {
+            var option = modelFilter.options[index];
+            return option.value === item.value && option.textContent === item.label;
+          });
+        if (!optionsMatch) {
+          modelFilter.textContent = '';
+          optionData.forEach(function (item) {
+            var option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+            modelFilter.appendChild(option);
+          });
+        }
+        modelFilterValue = selected;
+        modelFilter.value = selected;
+        applySessionModelFilter();
+      }
       // Recent (closed) sessions from the app's own catalog API, for the
       // dropdown's "Recent" section: non-archived, titled, not already open as
       // a tab, newest activity first. Same-origin, so it works in the browser
@@ -1310,6 +2182,11 @@
             return r.json();
           })
           .then(function (data) {
+            // Model labels are enhancement data; malformed catalog metadata
+            // must not hide Recent session rows.
+            try {
+              updateSessionModelMap(data);
+            } catch (e) {}
             var open = {};
             sessionTabs().forEach(function (t) {
               var id = threadIdOf(t);
@@ -1428,14 +2305,42 @@
           target.click(); // the app's open-thread action
         }, 50);
       }
+      function stopSessionStatusPolling() {
+        if (sessionStatusPollTimer) {
+          window.clearInterval(sessionStatusPollTimer);
+          sessionStatusPollTimer = null;
+        }
+      }
+      function startSessionStatusPolling() {
+        stopSessionStatusPolling();
+        sessionStatusPollTimer = window.setInterval(function () {
+          if (
+            !menu ||
+            !document.documentElement.contains(menu) ||
+            !window.matchMedia(MOBILE).matches
+          ) {
+            stopSessionStatusPolling();
+            return;
+          }
+          fetchRecent()
+            .then(function () {
+              if (menu) renderSessionModelLegend();
+            })
+            .catch(function () {});
+        }, 1000);
+      }
       function close() {
+        stopSessionStatusPolling();
         if (menu) {
           menu.remove();
           menu = null;
           openedActive = null;
         }
+        modelFilter = null;
+        modelFilterEmpty = null;
         mobileOverlay.dismiss('session-menu');
       }
+
       function open() {
         close();
         openedActive = activeTab();
@@ -1451,6 +2356,29 @@
         head.textContent = 'Sessions';
         menu.appendChild(head);
 
+        var filterRow = document.createElement('div');
+        filterRow.className = 'fb-session-menu-filter-row';
+        var filterLabel = document.createElement('span');
+        filterLabel.className = 'fb-session-menu-filter-label';
+        filterLabel.textContent = 'Model';
+        modelFilter = document.createElement('select');
+        modelFilter.className = 'fb-session-menu-filter';
+        modelFilter.setAttribute('aria-label', 'Filter sessions by model');
+        modelFilter.addEventListener('change', function () {
+          modelFilterValue = modelFilter.value || 'all';
+          applySessionModelFilter();
+        });
+        filterRow.appendChild(filterLabel);
+        filterRow.appendChild(modelFilter);
+        menu.appendChild(filterRow);
+        modelFilterEmpty = document.createElement('div');
+        modelFilterEmpty.className = 'fb-session-menu-filter-empty';
+        modelFilterEmpty.setAttribute('role', 'status');
+        modelFilterEmpty.setAttribute('aria-live', 'polite');
+        modelFilterEmpty.hidden = true;
+        menu.appendChild(modelFilterEmpty);
+        syncSessionModelFilter();
+
         if (tabs.length === 0) {
           var empty = document.createElement('div');
           empty.className = 'fb-session-menu-empty';
@@ -1459,8 +2387,10 @@
         }
         tabs.forEach(function (tab) {
           var active = tab.classList.contains('active');
+          var sessionId = threadIdOf(tab);
           var row = document.createElement('div');
           row.className = 'fb-session-menu-item' + (active ? ' active' : '');
+          row.setAttribute('data-fb-session-id', sessionId);
 
           // Select area: switches to this session via the app's own
           // .tab-select activation.
@@ -1469,10 +2399,14 @@
           sel.className = 'fb-session-menu-select';
           sel.setAttribute('role', 'menuitemradio');
           sel.setAttribute('aria-checked', String(active));
+          var main = document.createElement('span');
+          main.className = 'fb-session-menu-main';
           var label = document.createElement('span');
           label.className = 'fb-session-menu-label';
           label.textContent = titleOf(tab);
-          sel.appendChild(label);
+          main.appendChild(label);
+          makeSessionModelLine(main, modelLabelForThreadId(sessionId), sessionId);
+          sel.appendChild(main);
           if (active) {
             var check = document.createElement('span');
             check.className = 'fb-session-menu-check';
@@ -1522,6 +2456,7 @@
 
           menu.appendChild(row);
         });
+        syncSessionModelFilter();
 
         // Recent (closed) sessions — filled from /api/projects once it
         // resolves; the whole section is dropped when there are none. The
@@ -1539,6 +2474,7 @@
             b.type = 'button';
             b.className = 'fb-session-menu-item recent';
             b.setAttribute('role', 'menuitem');
+            b.setAttribute('data-fb-session-id', th.id || '');
             // Two-line row: title on top, project name underneath (basename,
             // same as the app's own project labels) so sessions from
             // different projects are easy to tell apart.
@@ -1550,10 +2486,13 @@
             main.appendChild(label);
             var proj = document.createElement('span');
             proj.className = 'fb-session-menu-project';
+            var projectPath = th.projectPath || '';
             proj.textContent =
-              th.projectPath.split(/[\\/]/).filter(Boolean).pop() ||
-              th.projectPath;
+              projectPath.split(/[\\/]/).filter(Boolean).pop() ||
+              projectPath ||
+              'Project unavailable';
             main.appendChild(proj);
+            makeSessionModelLine(main, modelLabelForThread(th), th.id || '', th);
             b.appendChild(main);
             var time = document.createElement('span');
             time.className = 'fb-session-menu-time';
@@ -1568,6 +2507,7 @@
             });
             recentList.appendChild(b);
           });
+          syncSessionModelFilter();
         }
         function recentHead() {
           var sec = document.createElement('div');
@@ -1655,6 +2595,7 @@
         document.body.appendChild(menu);
         attachSwipeDownClose(menu, close);
         mobileOverlay.open('session-menu', close);
+        startSessionStatusPolling();
       }
 
       // Trigger: a list icon in the slim header, before the status pill.
@@ -1733,6 +2674,7 @@
         }
         btn.style.display = sessionTabs().length > 0 ? '' : 'none';
         syncAttention();
+        if (menu) renderSessionModelLegend();
         if (!menu) return;
         if (activeTab() !== openedActive) {
           close();

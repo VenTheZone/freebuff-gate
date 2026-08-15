@@ -39,6 +39,7 @@ jobs:
           node-version: "22"
 
       - name: Set up Chrome
+        id: setup-chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
@@ -46,6 +47,7 @@ jobs:
       - name: Capture mobile regression screenshot
         shell: bash
         env:
+          FB_CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           FB_MOBILE_SCREENSHOT_DIR: ${{ runner.temp }}/freebuff-mobile-ui-screenshots
         run: |
           set -euo pipefail
