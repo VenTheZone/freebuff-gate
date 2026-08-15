@@ -6,6 +6,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -48,9 +49,10 @@ class MobilePairingE2EInstrumentedTest {
                 activity.findViewById<Button>(R.id.pairButton).performClick()
             }
 
+            val failureDetails = waitForRelayPage(scenario, webOrigin)
             assertTrue(
-                "Android app did not load relay UI",
-                waitForRelayPage(scenario, webOrigin),
+                "Android app did not load relay UI: $failureDetails",
+                failureDetails == null,
             )
         } finally {
             scenario.close()
@@ -74,19 +76,25 @@ class MobilePairingE2EInstrumentedTest {
         scenario: ActivityScenario<MainActivity>,
         expectedOrigin: String,
         timeoutMs: Long = 45_000L,
-    ): Boolean {
+    ): String? {
         val deadline = System.currentTimeMillis() + timeoutMs
+        var lastSnapshot = "state=unknown"
         while (System.currentTimeMillis() < deadline) {
             var ready = false
             scenario.onActivity { activity ->
                 val webView = activity.findViewById<WebView>(R.id.webView)
+                val state = activity.findViewById<TextView>(R.id.connectionState).text
+                    ?.toString()
+                    ?.replace('\n', '|')
+                    .orEmpty()
+                lastSnapshot = "state=$state visibility=${webView.visibility} url=${webView.url} title=${webView.title} progress=${webView.progress} contentHeight=${webView.contentHeight}"
                 ready = webView.visibility == View.VISIBLE &&
                     webView.url?.startsWith(expectedOrigin) == true &&
                     webView.title == "Freebuff E2E Ready"
             }
-            if (ready) return true
+            if (ready) return null
             Thread.sleep(250)
         }
-        return false
+        return lastSnapshot
     }
 }

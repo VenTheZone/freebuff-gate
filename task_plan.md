@@ -234,7 +234,8 @@ Selected project:
 - Rename Android app display label to `Freebuff Gate` without changing package identity. **Done locally.**
 - Preserve device refresh token when gateway refresh response omits raw token; add instrumentation regression coverage. **Done locally.**
 - Build/lint debug APK and instrumentation APK. **Done locally.**
-- Commit/push source and publish clearly named Freebuff Gate test APK. **Pending.**
+- Commit/push source and publish clearly named Freebuff Gate test APK. **Done: `13aad49`, `mobile-v0.1.2-freebuff-gate-test`.**
+- Rerun Android CI after refresh fix and inspect emulator result. **In progress: run `31889798169` still fails WebView assertion; diagnostic state capture added for next run.**
 - Deploy public staging HTTPS/WSS relay and run real phone claim/reconnect/revoke test. **Blocked: no staging host, domain, or deployment credentials are present in checkout.**
 
 ## Acceptance criteria
