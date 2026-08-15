@@ -202,3 +202,4 @@
 - Freebuff Gate release `mobile-v0.1.2-freebuff-gate-test` is public and its downloaded APK hash matches the local v2-signed debug build.
 - CI run `31889798169` diagnostics showed `Pairing failed (404): Pairing request is missing or expired`; the fixture's 60-second pairing TTL expired while hosted emulator setup completed.
 - CI-only fixture TTL is now 600 seconds, with production/default pairing expiry unchanged. The next Android workflow run will validate claim, refresh, cookie exchange, and WebView load again.
+- CI run `31890651787` exposed a second refresh-parser mismatch: `/v1/sessions/refresh` omits `deviceExpiresAt` as well as raw `deviceToken`. Android now preserves both immutable values from the encrypted stored session; instrumentation coverage omits both fields.

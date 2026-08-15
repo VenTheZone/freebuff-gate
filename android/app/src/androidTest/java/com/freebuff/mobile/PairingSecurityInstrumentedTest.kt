@@ -70,7 +70,6 @@ class PairingSecurityInstrumentedTest {
             .put("deviceId", "d_test")
             .put("accessToken", "refreshed-access-token")
             .put("accessTokenExpiresAt", "2026-08-15T12:00:00Z")
-            .put("deviceExpiresAt", "2026-11-13T12:00:00Z")
             .put("relayUrl", "wss://mobile.example.test")
             .put("uiUrl", "https://mobile.example.test")
 
@@ -78,6 +77,7 @@ class PairingSecurityInstrumentedTest {
             "https://mobile.example.test",
             response,
             deviceTokenOverride = "stored-device-token",
+            deviceExpiresAtOverride = "2026-11-13T00:00:00Z",
         )
 
         assertEquals("stored-device-token", refreshed.deviceToken)

@@ -35,6 +35,7 @@ class PairingApi(rawBaseUrl: String) {
             baseUrl,
             post("/v1/sessions/refresh", request),
             deviceTokenOverride = session.deviceToken,
+            deviceExpiresAtOverride = session.deviceExpiresAt,
         )
     }
 

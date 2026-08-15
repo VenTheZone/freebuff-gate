@@ -71,6 +71,7 @@ data class PairingSession(
             baseUrl: String,
             json: JSONObject,
             deviceTokenOverride: String? = null,
+            deviceExpiresAtOverride: String? = null,
         ): PairingSession {
             return PairingSession(
                 gatewayBaseUrl = baseUrl,
@@ -78,7 +79,7 @@ data class PairingSession(
                 deviceToken = deviceTokenOverride ?: json.requiredString("deviceToken"),
                 accessToken = json.requiredString("accessToken"),
                 accessTokenExpiresAt = json.requiredString("accessTokenExpiresAt"),
-                deviceExpiresAt = json.requiredString("deviceExpiresAt"),
+                deviceExpiresAt = deviceExpiresAtOverride ?: json.requiredString("deviceExpiresAt"),
                 relayUrl = json.optionalString("relayUrl"),
                 uiUrl = json.optionalString("uiUrl"),
             )

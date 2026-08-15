@@ -232,10 +232,10 @@ Selected project:
 ### Phase 26 — Freebuff Gate live-test preparation (in progress)
 
 - Rename Android app display label to `Freebuff Gate` without changing package identity. **Done locally.**
-- Preserve device refresh token when gateway refresh response omits raw token; add instrumentation regression coverage. **Done locally.**
+- Preserve device refresh token and immutable device expiry when gateway refresh response omits both fields; add instrumentation regression coverage. **Done locally.**
 - Build/lint debug APK and instrumentation APK. **Done locally.**
 - Commit/push source and publish clearly named Freebuff Gate test APK. **Done: `13aad49`, `mobile-v0.1.2-freebuff-gate-test`.**
-- Rerun Android CI after refresh fix and inspect emulator result. **In progress: run `31889798169` exposed 60-second fixture-token expiry; CI fixture now uses 600 seconds, rerun pending.**
+- Rerun Android CI after refresh fix and inspect emulator result. **In progress: run `31890651787` exposed omitted `deviceExpiresAt`; client now preserves both immutable fields and CI fixture uses 600 seconds, rerun pending.**
 - Deploy public staging HTTPS/WSS relay and run real phone claim/reconnect/revoke test. **Blocked: no staging host, domain, or deployment credentials are present in checkout.**
 
 ## Acceptance criteria
