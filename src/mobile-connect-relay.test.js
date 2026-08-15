@@ -165,7 +165,6 @@ async function pairAndConnect(relay) {
     body: JSON.stringify({
       pairingId: qr.get('pairingId'),
       token: qr.get('token'),
-      manualCode: started.body.manualCode,
       deviceName: 'Relay test phone',
       devicePublicKey: 'ed25519:relay-test',
     }),

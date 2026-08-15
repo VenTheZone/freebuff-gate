@@ -806,7 +806,6 @@ function createRelayServer(options = {}) {
           const result = hub.store.claim({
             pairingId: body.pairingId,
             token: body.token,
-            code: body.manualCode ?? body.code,
             deviceName: body.deviceName,
             devicePublicKey: body.devicePublicKey,
           });

@@ -17,10 +17,8 @@ const {
   hashSecret,
   isLoopbackHostname,
   makePairingUrl,
-  normalizeCode,
   normalizeDeviceName,
   randomId,
-  randomManualCode,
   randomToken,
   validateAppUrl,
   validateDeviceKey,
@@ -162,12 +160,10 @@ class PairingStore {
     const expiresAt = createdAt + ttlMs;
     const pairingId = randomId('p_');
     const token = randomToken();
-    const manualCode = randomManualCode();
 
     this.state.pending[pairingId] = {
       id: pairingId,
       tokenHash: hashSecret(token),
-      codeHash: hashSecret(manualCode),
       createdAt,
       expiresAt,
       attempts: 0,
@@ -182,7 +178,6 @@ class PairingStore {
       protocolVersion: 1,
       pairingId,
       pairingUrl: makePairingUrl(appUrl.toString(), pairingId, token),
-      manualCode,
       expiresAt: new Date(expiresAt).toISOString(),
       relayUrl,
       uiUrl,
@@ -193,7 +188,6 @@ class PairingStore {
     this.cleanup();
     const pairingId = requireString(options.pairingId, 'pairingId');
     const token = requireString(options.token, 'token');
-    const code = normalizeCode(options.manualCode ?? options.code);
     const pairing = this.state.pending[pairingId];
 
     if (!pairing) {
@@ -206,8 +200,7 @@ class PairingStore {
     }
 
     const tokenMatches = verifySecret(token, pairing.tokenHash);
-    const codeMatches = verifySecret(code, pairing.codeHash);
-    if (!tokenMatches || !codeMatches) {
+    if (!tokenMatches) {
       pairing.attempts += 1;
       const locked = pairing.attempts >= MAX_PAIRING_ATTEMPTS;
       if (locked) delete this.state.pending[pairingId];
@@ -217,7 +210,7 @@ class PairingStore {
         locked ? 'pairing_locked' : 'invalid_pairing',
         locked
           ? 'Pairing request locked after too many failed attempts'
-          : 'Pairing token or confirmation code is invalid',
+          : 'Pairing token is invalid',
       );
     }
 
@@ -490,7 +483,6 @@ function createGatewayServer(options = {}) {
       const result = store.claim({
         pairingId: body.pairingId,
         token: body.token,
-        code: body.manualCode ?? body.code,
         deviceName: body.deviceName,
         devicePublicKey: body.devicePublicKey,
       });
@@ -619,7 +611,7 @@ function printUsage() {
 
 Commands:
   serve       Start local pairing control plane
-  pair        Create one-use pairing QR payload and manual code
+  pair        Create one-use pairing QR URL
   devices     List paired devices
   revoke      Revoke a paired device
 
@@ -727,7 +719,6 @@ async function runCli(argv) {
       if (options.qr) console.log(renderQrText(result.data.pairingUrl));
       console.log('Pairing ready. Scan QR above or use URL in Freebuff Android app:');
       console.log(result.data.pairingUrl);
-      console.log(`Manual confirmation code: ${result.data.manualCode}`);
       console.log(`Expires: ${result.data.expiresAt}`);
       console.log('Pairing URL is one-use. Never paste it into logs or tickets.');
     }

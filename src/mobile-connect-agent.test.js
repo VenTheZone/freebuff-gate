@@ -166,7 +166,6 @@ test('desktop relay agent forwards HTTP streams and WebSocket frames', async () 
       body: JSON.stringify({
         pairingId: qr.get('pairingId'),
         token: qr.get('token'),
-        manualCode: pairing.manualCode,
         deviceName: 'Agent test phone',
         devicePublicKey: 'ed25519:agent-test',
       }),

@@ -5,7 +5,6 @@ Native Android shell for Freebuff Gate mobile pairing.
 ## Current scope
 
 - Scan pairing URL with CameraX + ML Kit QR detection.
-- Accept six-digit terminal confirmation code.
 - Generate device identity in Android Keystore.
 - Encrypt device/session credentials with an Android Keystore AES-GCM key.
 - Track `Unpaired`, `Pairing`, `Connecting`, `Connected`, `Reconnecting`,
@@ -80,9 +79,10 @@ It posts to the URL origin:
 - `POST /v1/pairings/claim`
 - `POST /v1/sessions/refresh`
 
-Claim request includes `pairingId`, `token`, `manualCode`, `deviceName`, and
-Keystore public-key encoding. Refresh uses encrypted `deviceId` and
-`deviceToken` storage. QR token and access token never enter Android logs.
+Claim request includes `pairingId`, `token`, `deviceName`, and Keystore
+public-key encoding; the QR token alone is the pairing secret, so keep the
+pairing URL private. Refresh uses encrypted `deviceId` and `deviceToken`
+storage. QR token and access token never enter Android logs.
 
 The managed relay now exposes the data-plane contract: desktop outbound WSS,
 HTTP/SSE forwarding, browser WebSocket forwarding, and

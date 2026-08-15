@@ -476,7 +476,7 @@ function usage() {
 
 Commands:
   serve       Keep outbound WSS connector online
-  pair        Create pairing URL/code through managed relay
+  pair        Create one-use pairing URL through managed relay
 
 Examples:
   node src/mobile-connect-agent.js serve
@@ -561,7 +561,6 @@ async function runCli(argv) {
       if (options.qr) console.log(renderQrText(pairing.pairingUrl));
       console.log('Pairing ready. Scan QR above or use URL in Freebuff Android app:');
       console.log(pairing.pairingUrl);
-      console.log(`Manual confirmation code: ${pairing.manualCode}`);
       console.log(`Expires: ${pairing.expiresAt}`);
     }
     return 0;

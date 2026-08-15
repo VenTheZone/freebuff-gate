@@ -69,15 +69,12 @@ test('PairingStore keeps raw pairing secrets out of persisted state and rejects 
     const qr = new URL(pairing.pairingUrl);
     const qrData = new URLSearchParams(qr.hash.slice(1));
 
-    assert.match(pairing.manualCode, /^\d{6}$/);
     assert.match(pairing.pairingUrl, /^https:\/\/mobile\.example\.test\/pair#/);
     assert.equal(pairing.pairingUrl.includes('?token='), false);
     assert.equal(persisted.includes(qrData.get('token')), false);
-    assert.equal(persisted.includes(pairing.manualCode), false);
     const result = store.claim({
       pairingId: qrData.get('pairingId'),
       token: qrData.get('token'),
-      manualCode: pairing.manualCode,
       deviceName: 'Test phone',
       devicePublicKey: 'ed25519:test-public-key',
     });
@@ -90,7 +87,6 @@ test('PairingStore keeps raw pairing secrets out of persisted state and rejects 
       () => store.claim({
         pairingId: qrData.get('pairingId'),
         token: qrData.get('token'),
-        manualCode: pairing.manualCode,
         devicePublicKey: 'ed25519:replay',
       }),
       (error) => error.code === 'pairing_not_found' && error.status === 404,
@@ -108,15 +104,12 @@ test('PairingStore expires pending requests and supports refresh/revoke', () => 
     appUrl: 'https://mobile.example.test/pair',
   });
   const pairing = store.startPairing({ ttlMs: 1000 });
-  current += 1001;
-
-  assert.throws(
-    () => store.claim({
-      pairingId: pairing.pairingId,
-      token: new URLSearchParams(new URL(pairing.pairingUrl).hash.slice(1)).get('token'),
-      manualCode: pairing.manualCode,
-      devicePublicKey: 'ed25519:expired',
-    }),
+  current += 1001;    assert.throws(
+      () => store.claim({
+        pairingId: pairing.pairingId,
+        token: new URLSearchParams(new URL(pairing.pairingUrl).hash.slice(1)).get('token'),
+        devicePublicKey: 'ed25519:expired',
+      }),
     (error) => error.code === 'pairing_not_found' && error.status === 404,
   );
 
@@ -126,7 +119,6 @@ test('PairingStore expires pending requests and supports refresh/revoke', () => 
   const claimed = store.claim({
     pairingId: liveQrData.get('pairingId'),
     token: liveQrData.get('token'),
-    manualCode: livePairing.manualCode,
     devicePublicKey: 'ed25519:live',
   });
   const refreshed = store.refresh({
@@ -158,7 +150,6 @@ test('HTTP gateway exposes pairing, refresh, list, and revoke flows', async () =
       body: JSON.stringify({
         pairingId: started.body.pairingId,
         token: new URLSearchParams(new URL(started.body.pairingUrl).hash.slice(1)).get('token'),
-        manualCode: started.body.manualCode,
         deviceName: 'HTTP phone',
         devicePublicKey: 'ed25519:http-test',
       }),

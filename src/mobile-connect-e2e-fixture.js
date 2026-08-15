@@ -118,13 +118,11 @@ async function startFixture(options = {}) {
       // Emulator boot and APK installation can exceed one minute on hosted runners.
       ttlSeconds: 600,
     });
-    fs.mkdirSync(path.dirname(pairingFile), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(pairingFile, `${JSON.stringify({
+    fs.mkdirSync(path.dirname(pairingFile), { recursive: true, mode: 0o700 });    fs.writeFileSync(pairingFile, `${JSON.stringify({
       pairingUrl: pairing.pairingUrl,
-      manualCode: pairing.manualCode,
       relayOrigin: publicHttpUrl,
       webOrigin: publicHttpUrl,
-    })}\n`, { mode: 0o600 });
+})}\n`, { mode: 0o600 });
     return { pairing, publicHttpUrl, publicWsUrl, stop };
   } catch (error) {
     await stop();

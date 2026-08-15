@@ -96,9 +96,10 @@ node src/mobile-connect-gateway.js pair --ttl 600
 ```
 
 The command renders an ANSI QR code plus an HTTPS pairing URL whose token lives
-in the URL fragment, and prints a six-digit terminal confirmation code. The
-Android scanner reads the QR directly; `--no-qr` keeps URL-only output for CI or
-piped logs. The Android scanner scaffold lives under `android/`.
+in the URL fragment; the token alone is the pairing secret, so keep the pairing
+URL private. The Android scanner reads the QR directly; `--no-qr` keeps
+URL-only output for CI or piped logs. The Android scanner scaffold lives under
+`android/`.
 
 Manage paired devices:
 
@@ -300,7 +301,7 @@ A clean checkout needs Android SDK and Gradle; use Android Studio, CI, or the
 project-local tools described in `android/README.md`. This workspace built the
 debug APK with local Gradle 8.9 and API 35 tools. Generic debug builds can be
 used with any HTTPS relay URL carried by a terminal QR; they still require a
-reachable relay and six-digit code. `.github/workflows/android.yml`
+reachable relay and a private, unexpired pairing URL. `.github/workflows/android.yml`
 installs
 Java 17, Android API 35/build tools, Gradle 8.9, runs lint plus debug assembly,
 boots API 35 Google APIs x86_64 emulator for instrumentation tests, verifies the

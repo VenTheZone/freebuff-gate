@@ -18,10 +18,6 @@ function randomId(prefix) {
   return `${prefix}${randomToken(12)}`;
 }
 
-function randomManualCode() {
-  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
-}
-
 function hashSecret(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('base64url');
 }
@@ -35,10 +31,6 @@ function secretsEqual(left, right) {
 
 function verifySecret(secret, expectedHash) {
   return secretsEqual(hashSecret(secret), expectedHash);
-}
-
-function normalizeCode(value) {
-  return String(value ?? '').trim().replace(/\s/g, '');
 }
 
 function normalizeDeviceName(value) {
@@ -132,10 +124,8 @@ module.exports = {
   hashSecret,
   isLoopbackHostname,
   makePairingUrl,
-  normalizeCode,
   normalizeDeviceName,
   randomId,
-  randomManualCode,
   randomToken,
   secretsEqual,
   validateAppUrl,

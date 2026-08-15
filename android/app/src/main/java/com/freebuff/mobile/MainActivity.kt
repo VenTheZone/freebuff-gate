@@ -26,7 +26,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var stateLabel: TextView
     private lateinit var pairingUrlInput: EditText
-    private lateinit var confirmationCodeInput: EditText
     private lateinit var deviceNameInput: EditText
     private lateinit var pairButton: Button
     private lateinit var disconnectButton: Button
@@ -54,7 +53,6 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         stateLabel = findViewById(R.id.connectionState)
         pairingUrlInput = findViewById(R.id.pairingUrlInput)
-        confirmationCodeInput = findViewById(R.id.confirmationCodeInput)
         deviceNameInput = findViewById(R.id.deviceNameInput)
         pairButton = findViewById(R.id.pairButton)
         disconnectButton = findViewById(R.id.disconnectButton)
@@ -76,8 +74,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     pairingUrlInput.setText(value)
                     closeScanner()
-                    confirmationCodeInput.requestFocus()
-                    showState(ConnectionState.PAIRING, "QR captured; enter terminal confirmation code")
+                    deviceNameInput.requestFocus()
+                    showState(ConnectionState.PAIRING, "QR captured; tap Pair device")
                 }
             },
             onError = { message -> runOnUiThread { showState(ConnectionState.ERROR, message) } },
@@ -127,10 +125,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun claimPairing() {
         val rawUrl = pairingUrlInput.text?.toString()?.trim().orEmpty()
-        val code = confirmationCodeInput.text?.toString()?.trim().orEmpty()
         val deviceName = deviceNameInput.text?.toString()?.trim().orEmpty().ifBlank { Build.MODEL }
-        if (rawUrl.isBlank() || !code.matches(Regex("\\d{6}"))) {
-            showState(ConnectionState.ERROR, "Scan or paste pairing URL and enter six-digit code")
+        if (rawUrl.isBlank()) {
+            showState(ConnectionState.ERROR, "Scan or paste pairing URL")
             return
         }
 
@@ -145,7 +142,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 val session = PairingApi(payload.baseUrl).claim(
                     payload = payload,
-                    manualCode = code,
                     deviceName = deviceName,
                     devicePublicKey = deviceIdentity.publicKeyForPairing(),
                 )
@@ -173,6 +169,10 @@ class MainActivity : AppCompatActivity() {
         showState(state, detail)
         val hasSession = session != null || sessionStore.load() != null
         disconnectButton.visibility = if (hasSession) View.VISIBLE else View.GONE
+        // While a stored session exists, transient states (connecting/reconnecting/
+        // offline) must not look like a fresh pairing request: keep the pairing
+        // form hidden so the app reads as "reconnecting", not "scan a new QR".
+        setPairingFormVisible(hasSession == false)
 
         when (state) {
             ConnectionState.CONNECTED -> {
@@ -195,6 +195,14 @@ class MainActivity : AppCompatActivity() {
                 if (webView.visibility != View.VISIBLE) setupPanel.visibility = View.VISIBLE
             }
         }
+    }
+
+    private fun setPairingFormVisible(visible: Boolean) {
+        val visibility = if (visible) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.scanQrButton).visibility = visibility
+        findViewById<View>(R.id.pairingUrlField).visibility = visibility
+        findViewById<View>(R.id.deviceNameField).visibility = visibility
+        pairButton.visibility = visibility
     }
 
     @SuppressLint("SetCookie")

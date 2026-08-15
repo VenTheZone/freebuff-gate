@@ -44,8 +44,6 @@ class MobilePairingE2EInstrumentedTest {
             scenario.onActivity { activity ->
                 activity.findViewById<EditText>(R.id.pairingUrlInput)
                     .setText(pairingFixture.getString("pairingUrl"))
-                activity.findViewById<EditText>(R.id.confirmationCodeInput)
-                    .setText(pairingFixture.getString("manualCode"))
                 activity.findViewById<Button>(R.id.pairButton).performClick()
             }
 

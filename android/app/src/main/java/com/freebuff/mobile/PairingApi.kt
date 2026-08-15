@@ -12,7 +12,6 @@ class PairingApi(rawBaseUrl: String) {
 
     fun claim(
         payload: PairingPayload,
-        manualCode: String,
         deviceName: String,
         devicePublicKey: String,
     ): PairingSession {
@@ -20,7 +19,6 @@ class PairingApi(rawBaseUrl: String) {
         val request = JSONObject()
             .put("pairingId", payload.pairingId)
             .put("token", payload.token)
-            .put("manualCode", manualCode.trim())
             .put("deviceName", deviceName.trim())
             .put("devicePublicKey", devicePublicKey)
         return PairingSession.fromGatewayResponse(baseUrl, post("/v1/pairings/claim", request))
