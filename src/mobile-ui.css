@@ -11,17 +11,24 @@
  * tailnet-proxy injection), so plain overrides win. Everything is scoped to
  * narrow viewports — desktops are untouched.
  *
- *   900px  full mobile layout — drawer explorer + slim right icon rail when
- *          collapsed, full-bleed chat, docked composer, touch targets.
- *   700px  phones — bottom-sheet menus/modals, 15px chat text.
+ *   1000px  full mobile layout — explorer hidden behind a header button and
+ *          opened as a sliding panel, full-bleed chat, slim header, composer
+ *          reduced to the textarea (chips + actions in a top card), touch
+ *          targets.
+ *   700px  phones — bottom-sheet modals, model picker as a full-screen sheet.
  *   480px  small-phone tweaks.
  *
  * The companion src/mobile-ui.js auto-collapses the explorer on load for
- * narrow viewports, so the chat is never hidden behind the panel.
+ * narrow viewports, so the chat is never hidden behind a panel.
  */
 
-/* ─────────────── 900px: mobile layout (phones & small tablets) ──────────── */
-@media (max-width: 900px) {
+:root {
+  --fb-mobile-safe-top: env(safe-area-inset-top, 0px);
+  --fb-mobile-header-height: calc(48px + var(--fb-mobile-safe-top));
+}
+
+/* ─────────────── 1000px: mobile layout (phones & small tablets) ────────── */
+@media (max-width: 1000px) {
   /* Zero every desktop-side reserve so the chat uses the full width. */
   .app,
   .workspace {
@@ -41,6 +48,7 @@
 
   /* The app root stays 100% of the (already fixed) viewport height. */
   .app {
+    height: 100%;
     height: 100dvh;
   }
 
@@ -53,7 +61,7 @@
   .explorer,
   .explorer.fill {
     position: fixed;
-    top: 0;
+    top: var(--fb-mobile-safe-top);
     right: 0;
     bottom: 0;
     left: auto;
@@ -61,7 +69,7 @@
     width: min(88vw, 380px);
     max-width: min(88vw, 380px);
     min-width: 0;
-    height: 100dvh;
+    height: auto;
     max-height: none;
     margin: 0;
     border: 0;
@@ -89,7 +97,8 @@
     color: var(--text);
   }
 
-  /* Report/feedback pill moved into the thread menu on mobile. */
+  /* Keep the desktop feedback pill out of the mobile layout; active-thread
+     access lives in the title menu, while home/popout use .fb-mobile-report. */
   .app-corner .global-feedback {
     display: none;
   }
@@ -99,8 +108,9 @@
      header. Back = home tab (returns to the thread list); the home screen
      has its own new-thread controls, so tab-new/account are hidden. */
   .tabbar {
-    height: 48px;
-    padding: 0 4px;
+    height: var(--fb-mobile-header-height);
+    min-height: var(--fb-mobile-header-height);
+    padding: var(--fb-mobile-safe-top) 4px 0;
   }
   .tabbar .tabs .tab:not(.home):not(.active) {
     display: none;
@@ -133,7 +143,33 @@
     font-weight: 600;
     color: var(--text);
   }
-  .tabbar .tab.active .tab-meta,
+  .tabbar .tab.active .tab-meta {
+    display: flex;
+    position: static;
+    flex: none;
+    align-items: center;
+    min-height: 0;
+    margin-left: 2px;
+    padding: 0 4px;
+    pointer-events: none;
+  }
+  .tabbar .tab.active .tab-meta > * {
+    display: none;
+  }
+  .tabbar .tab.active .tab-meta .tab-meta-items,
+  .tabbar .tab.active .tab-meta .tab-meta-live,
+  .tabbar .tab.active .tab-meta .tab-time {
+    display: flex;
+    align-items: center;
+  }
+  .tabbar .tab.active .tab-meta .tab-meta-items:empty {
+    display: none;
+  }
+  .tabbar .tab.active .tab-time {
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+  }
   .tabbar .tab.active .tab-close,
   .tabbar .tab.active .tab-popout {
     display: none;
@@ -193,12 +229,13 @@
     display: none;
   }
   /* The composer's action row collapses into the floating context card: the
-     input area is just the textarea (Enter still sends). Attach / stop /
-     stash / send live in the card opened by .fb-ctx-fab. The .stash
-     container itself stays (the stash popup anchors to it); only its toggle
-     is hidden. */
+     input area is just the textarea (Enter still sends). Attach / stash /
+     send live in the card opened by .fb-ctx-fab. The .stash container
+     itself stays (the stash popup anchors to it); only its toggle is
+     hidden. The stop button is kept next to the textarea — the app only
+     renders it while a turn is running, and stopping should stay one tap
+     away (the card is in the header). */
   .composer-row .attach,
-  .composer-row .stop,
   .composer-row .send-key,
   .composer-row .composer-length,
   .composer-row .stash-key {
@@ -206,10 +243,11 @@
   }
   .fb-ctx-open .composer-context {
     display: flex;
-    position: absolute;
+    position: fixed;
+    top: var(--fb-mobile-header-height);
     left: 8px;
     right: 8px;
-    bottom: calc(100% + 58px);
+    bottom: auto;
     z-index: 56;
     max-height: 40vh;
     overflow-y: auto;
@@ -220,12 +258,28 @@
     box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 42%, transparent);
     animation: fb-ctx-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
   }
-  /* Closing: the card slides back down toward the button and fades out
+  /* The native effort menu opens upward from its trigger. That is correct
+     beside the bottom composer, but the mobile context card lives below the
+     header, so the same anchor would place the list above the viewport. Move
+     it into a fixed, scrollable sheet while the card owns the trigger. */
+  .fb-ctx-open .composer-context .effort-menu {
+    position: fixed;
+    top: calc(var(--fb-mobile-header-height) + 8px);
+    right: 8px;
+    bottom: auto;
+    left: 8px;
+    z-index: 59;
+    width: auto;
+    max-width: none;
+    max-height: min(52dvh, 360px);
+    overflow-y: auto;
+  }
+  /* Closing: the card slides back up toward the header and fades out
      (mobile-ui.js adds .fb-ctx-closing, then removes .fb-ctx-open). */
   .fb-ctx-open .composer-context.fb-ctx-closing {
     animation: none;
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(-14px);
     transition: opacity 0.18s ease, transform 0.18s ease;
   }
   .composer textarea {
@@ -263,7 +317,8 @@
      positioning and lands the whole popup off-screen. Widen, cap the
      height, and scroll instead. */
   .header-menu,
-  .agent-menu {
+  .agent-menu,
+  .effort-menu {
     left: 8px;
     right: 8px;
     width: auto;
@@ -316,7 +371,7 @@
     right: calc(12px + env(safe-area-inset-right, 0px));
   }
   .new-thread-theme {
-    top: 10px;
+    top: calc(10px + var(--fb-mobile-safe-top));
     right: 10px;
   }
   .edit-banner {
@@ -359,7 +414,7 @@
 
 .fb-tab-menu {
   position: fixed;
-  top: 52px;
+  top: var(--fb-mobile-header-height);
   right: 8px;
   z-index: 50;
   min-width: 200px;
@@ -437,40 +492,105 @@
   }
 }
 
-/* Floating button that summons the composer's context chips (agent/model/
-   effort/workspace) — mobile-ui.js. Anchored to the docked composer, floats
-   just above it; the chips card opens above the button, so neither overlaps.
-   The icon swaps to an X while the card is open. */
+/* Compact active-turn status in slim header (mobile-ui.js). It confirms
+   agent is responding while keeping model/session/tools controls visible. */
+.fb-streaming-indicator {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  max-width: 82px;
+  height: 30px;
+  margin: 0 2px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.fb-streaming-indicator[aria-hidden="true"] {
+  display: none !important;
+}
+.fb-streaming-indicator-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  animation: fb-streaming-pulse 1.25s ease-in-out infinite;
+}
+.fb-streaming-indicator-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-streaming-indicator-dot {
+    animation: none;
+  }
+}
+@keyframes fb-streaming-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (max-width: 480px) {
+  .fb-streaming-indicator {
+    width: 28px;
+    height: 30px;
+    justify-content: center;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+  .fb-streaming-indicator-label {
+    display: none;
+  }
+}
+
+/* Header button that summons the composer's context chips (agent/model/
+   effort/workspace) — mobile-ui.js. Sits in the slim header (not floating
+   over the composer) so the bottom of the chat stays clear for reading and
+   writing. The card drops down from under the header when opened. */
 .fb-ctx-fab {
-  position: absolute;
-  right: 12px;
-  bottom: calc(100% + 10px);
-  z-index: 40;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-2);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--muted);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow) 30%, transparent);
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+.fb-ctx-fab:hover,
 .fb-ctx-fab:active {
   background: var(--raised);
   color: var(--text);
 }
 .fb-ctx-fab:focus-visible {
   outline: 1px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
-/* The button's chevron: points up when the card is closed (it will slide up
-   from behind the button) and rotates smoothly to point down while open. */
+/* The button's chevron: points down when the card is closed (it will drop
+   from under the header) and rotates smoothly to point up while open. */
 .fb-ctx-fab .fb-ctx-chev {
   display: inline-flex;
   align-items: center;
@@ -483,7 +603,7 @@
 @keyframes fb-ctx-in {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(-14px);
   }
 }
 
@@ -531,6 +651,141 @@
 .fb-ctx-action.send.ready {
   background: var(--raised);
   color: var(--text);
+}
+/* Floating composer settings (mobile-ui.js): model, reasoning effort, and
+   current session time/quota stay visible above the message box even though
+   native .composer-context is collapsed. Each pill keeps native picker
+   behavior; the time pill opens context card for its full tooltip. */
+.fb-composer-pills {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  z-index: 55;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.fb-composer-pills::-webkit-scrollbar {
+  display: none;
+}
+.fb-model-pill,
+.fb-effort-pill,
+.fb-time-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  min-height: 38px;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--shadow) 28%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-model-pill-label,
+.fb-effort-pill-label,
+.fb-time-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-model-pill-chev,
+.fb-effort-pill-chev,
+.fb-time-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--faint);
+}
+.fb-model-pill:active,
+.fb-effort-pill:active,
+.fb-time-pill:active {
+  transform: scale(0.97);
+}
+.fb-model-pill:focus-visible,
+.fb-effort-pill:focus-visible,
+.fb-time-pill:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.fb-effort-pill:disabled,
+.fb-time-pill:disabled {
+  cursor: default;
+  opacity: 0.7;
+}/* If layout widens past mobile scope (rotation to a big window), injected
+   controls must not leak into desktop composer. */
+@media (min-width: 1001px) {
+  .fb-ctx-actions,
+  .fb-streaming-indicator,
+  .fb-composer-pills,
+  .fb-model-pill,
+  .fb-effort-pill,
+  .fb-time-pill,
+  .fb-ctx-fab,
+  .fb-panel-toggle,
+  .fb-session-switch,
+  .fb-mobile-report,
+  .fb-tab-menu,
+  .fb-session-menu,
+  .fb-panel-scrim,
+  .fb-model-sheet-close {
+    display: none !important;
+  }
+}
+
+/* Report button for home/popout mobile modes. Active main threads use the
+   title menu's Report an issue entry; this stays out of the active header.
+   The app's original .global-feedback remains the click target. */
+.fb-mobile-report {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-mobile-report:hover,
+.fb-mobile-report:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-mobile-report:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+@media (max-width: 1000px) {
+  .tabbar:not(.threadbar):not(:has(.tab.active.home)) .fb-mobile-report {
+    display: none;
+  }
 }
 
 /* Header button that summons the sliding tools panel (mobile-ui.js). The
@@ -623,7 +878,7 @@
 
 .fb-session-menu {
   position: fixed;
-  top: 52px;
+  top: var(--fb-mobile-header-height);
   right: 8px;
   z-index: 50;
   min-width: 230px;
@@ -893,7 +1148,7 @@
 
 /* On-demand larger chat text — toggled from the thread menu (mobile-ui.js),
    persisted in localStorage. Scoped to narrow viewports like the menu. */
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   html.fb-text-large .messages {
     font-size: 15px;
   }

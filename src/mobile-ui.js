@@ -24,7 +24,7 @@
 (function () {
   'use strict';
 
-  var MOBILE = '(max-width: 900px)';
+  var MOBILE = '(max-width: 1000px)';
 
   // Accessibility: on-demand larger chat text, persisted per device. Applied
   // on every page (including popouts) before the app paints, so no flash.
@@ -35,6 +35,58 @@
       root.classList.add('fb-text-large');
     }
   } catch (e) {}
+
+  // Active session thread id, from the active tab's .tab-select id
+  // ("thread-tab-<id>"). Empty on the home screen.
+  function activeThreadId() {
+    var tab = document.querySelector('.tab.active:not(.home)');
+    if (!tab) return '';
+    var s = tab.querySelector('.tab-select');
+    if (!s || !s.id) return '';
+    return s.id.indexOf('thread-tab-') === 0 ? s.id.slice(11) : s.id;
+  }
+
+  // Per-thread state maps, shared by the panel/card and migrated from the
+  // old single-thread scalar values written by earlier mobile layers.
+  var PANEL_KEY = 'fb-ui:panel-open-thread';
+  function threadStateRead(key) {
+    var raw = '';
+    try {
+      raw = localStorage.getItem(key) || '';
+    } catch (e) {
+      return {};
+    }
+    if (!raw) return {};
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+      if (typeof parsed === 'string' && parsed) {
+        var quoted = {};
+        quoted[parsed] = true;
+        return quoted;
+      }
+    } catch (e) {
+      // The previous implementation stored the thread ID as plain text.
+      var legacy = {};
+      legacy[raw] = true;
+      return legacy;
+    }
+    return {};
+  }
+  function threadStateHas(key, id) {
+    return !!id && threadStateRead(key)[id] === true;
+  }
+  function threadStateSet(key, id, open) {
+    if (!id) return;
+    var states = threadStateRead(key);
+    if (open) states[id] = true;
+    else delete states[id];
+    try {
+      localStorage.setItem(key, JSON.stringify(states));
+    } catch (e) {}
+  }
 
   // Compact relative timestamp, same style as the app's own thread catalog
   // ("now", "5m", "2h", "12d", then a short date).
@@ -68,6 +120,349 @@
     }, 80);
   }
 
+  // React mounts large transcripts in many small commits. A separate
+  // document-wide observer per mobile feature can monopolize a phone's main
+  // thread while the initial thread is loading. Share one observer, start it
+  // just after the app shell mounts, and coalesce child-list changes. Class
+  // changes are watched only by the small feature-specific observers below;
+  // watching every class mutation in the transcript is an expensive no-op.
+  var bodySyncListeners = [];
+  var bodySyncObserver = null;
+  var bodySyncQueued = false;
+  var bodySyncTimer = null;
+  function scheduleBodySync() {
+    if (bodySyncQueued || !window.matchMedia(MOBILE).matches) return;
+    bodySyncQueued = true;
+    bodySyncTimer = window.setTimeout(function () {
+      bodySyncTimer = null;
+      bodySyncQueued = false;
+      var listeners = bodySyncListeners.slice();
+      listeners.forEach(function (listener) {
+        try {
+          listener();
+        } catch (e) {
+          // One optional mobile affordance must not break thread rendering.
+          if (window.console && console.error) {
+            console.error('Freebuff mobile enhancement failed', e);
+          }
+        }
+      });
+    }, 80);
+  }
+  function isTranscriptNode(node) {
+    var element =
+      node && node.nodeType === 1
+        ? node
+        : node && node.parentElement
+          ? node.parentElement
+          : null;
+    return !!(
+      element &&
+      element.closest &&
+      element.closest('.messages, .thread-transcript')
+    );
+  }
+  function watchMobileBody(fn) {
+    if (typeof fn !== 'function') return;
+    bodySyncListeners.push(fn);
+    if (bodySyncObserver) {
+      scheduleBodySync();
+      return;
+    }
+    // Give native workspace bootstrap a head start. Mobile layer is optional
+    // chrome; it must never compete with first thread requests or stream
+    // token updates.
+    waitForEl('.app', function () {
+      window.setTimeout(function () {
+        if (bodySyncObserver || !document.body) {
+          scheduleBodySync();
+          return;
+        }
+        bodySyncObserver = new MutationObserver(function (records) {
+          // Streaming replies append/mutate transcript nodes constantly. None
+          // of those changes can mount a mobile trigger or popup, so ignore
+          // them; otherwise every token competes with a user's tap.
+          if (
+            records.some(function (record) {
+              return !isTranscriptNode(record.target);
+            })
+          ) {
+            scheduleBodySync();
+          }
+        });
+        bodySyncObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+        scheduleBodySync();
+      }, 250);
+    });
+  }
+
+  // Unified mobile overlay stack. Custom overlays register their native
+  // close function; app-owned menus/modals are discovered below and closed
+  // with the app's own Escape/backdrop behavior. One history entry represents
+  // the whole stack, so browser Back dismisses overlays before navigation.
+  var mobileOverlay = (function () {
+    var stack = [];
+    var active = false;
+    var historyArmed = false;
+    var handlingPop = false;
+    var suppressHistory = 0;
+    var historyCloseTimer = null;
+    var nativeObserverStarted = false;
+
+    function find(id) {
+      for (var i = 0; i < stack.length; i++) {
+        if (stack[i].id === id) return stack[i];
+      }
+      return null;
+    }
+    function copyHistoryState() {
+      var state = {};
+      if (history.state && typeof history.state === 'object') {
+        for (var key in history.state) state[key] = history.state[key];
+      }
+      state.__fbMobileOverlay = true;
+      return state;
+    }
+    function armHistory() {
+      if (historyArmed) return;
+      try {
+        history.pushState(copyHistoryState(), '', window.location.href);
+        historyArmed = true;
+      } catch (e) {}
+    }
+    function consumeHistory() {
+      if (!historyArmed || handlingPop) return;
+      historyArmed = false;
+      try {
+        history.back();
+      } catch (e) {}
+    }
+    function cancelScheduledHistory() {
+      if (historyCloseTimer) {
+        clearTimeout(historyCloseTimer);
+        historyCloseTimer = null;
+      }
+    }
+    function scheduleHistoryConsumption() {
+      if (historyCloseTimer || handlingPop) return;
+      historyCloseTimer = setTimeout(function () {
+        historyCloseTimer = null;
+        if (!stack.length && historyArmed && !suppressHistory) {
+          consumeHistory();
+        }
+      }, 0);
+    }
+    function callClose(entry, info) {
+      try {
+        entry.close(info || { fromManager: true });
+      } catch (e) {}
+    }
+    function remove(id) {
+      var next = [];
+      var removed = false;
+      for (var i = 0; i < stack.length; i++) {
+        var entry = stack[i];
+        if (entry.id === id || entry.parent === id) removed = true;
+        else next.push(entry);
+      }
+      stack = next;
+      return removed;
+    }
+    function dismiss(id) {
+      var children = [];
+      for (var i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].parent === id) children.push(stack[i]);
+      }
+      if (children.length) {
+        suppressHistory++;
+        for (var j = 0; j < children.length; j++) {
+          callClose(children[j], { fromManager: true });
+        }
+        suppressHistory--;
+      }
+      if (!remove(id)) return;
+      if (!stack.length && !handlingPop && !suppressHistory) {
+        scheduleHistoryConsumption();
+      }
+    }
+    function closeAll(info, keepHistory) {
+      cancelScheduledHistory();
+      var entries = stack.slice().reverse();
+      stack = [];
+      suppressHistory++;
+      for (var i = 0; i < entries.length; i++) callClose(entries[i], info);
+      suppressHistory--;
+      if (!keepHistory && !handlingPop) consumeHistory();
+    }
+    function open(id, close, options) {
+      if (!id || typeof close !== 'function') return;
+      cancelScheduledHistory();
+      var existing = find(id);
+      if (existing) {
+        existing.close = close;
+        existing.parent = (options && options.parent) || existing.parent || '';
+        return;
+      }
+      var parent = (options && options.parent) || '';
+      if (parent) {
+        var parentIndex = -1;
+        for (var i = 0; i < stack.length; i++) {
+          if (stack[i].id === parent) {
+            parentIndex = i;
+            break;
+          }
+        }
+        if (parentIndex >= 0) {
+          while (stack.length > parentIndex + 1) {
+            var child = stack.pop();
+            suppressHistory++;
+            callClose(child, { fromManager: true });
+            suppressHistory--;
+          }
+        } else {
+          closeAll({ fromManager: true }, true);
+        }
+      } else if (stack.length) {
+        closeAll({ fromManager: true }, true);
+      }
+      stack.push({ id: id, close: close, parent: parent });
+      if (active) armHistory();
+    }
+    function onPopState() {
+      cancelScheduledHistory();
+      if (!stack.length) {
+        historyArmed = false;
+        return;
+      }
+      var entry = stack.pop();
+      handlingPop = true;
+      suppressHistory++;
+      callClose(entry, { fromManager: true, fromBack: true });
+      suppressHistory--;
+      handlingPop = false;
+      historyArmed = false;
+      if (stack.length && active) armHistory();
+    }
+    function dispatchEscape(element) {
+      var target = element || document;
+      try {
+        target.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      } catch (e) {}
+    }
+    function closeNative(element) {
+      if (!element) return;
+      if (element.classList.contains('modal-backdrop')) {
+        element.dispatchEvent(
+          new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+        );
+      } else {
+        dispatchEscape(element);
+      }
+    }
+    function isVisible(element) {
+      if (!element || element.hidden) return false;
+      if (element.getAttribute('aria-hidden') === 'true') return false;
+      if (window.getComputedStyle) {
+        var style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') {
+          return false;
+        }
+      }
+      return !element.getClientRects || element.getClientRects().length > 0;
+    }
+    function nativeMenu() {
+      var selector =
+        '.agent-menu, .header-menu, .account-menu, .effort-menu, .stash-menu, ' +
+        '.slash-menu, .home-context-menu, .context-usage-popover, ' +
+        '.open-in-menu, .new-thread-project-menu, .menu-scrim';
+      var candidates = document.querySelectorAll(selector);
+      var narrowPhone = window.matchMedia('(max-width: 700px)').matches;
+      for (var i = candidates.length - 1; i >= 0; i--) {
+        var candidate = candidates[i];
+        if (
+          narrowPhone &&
+          candidate.matches('.composer-context .agent-menu')
+        ) {
+          continue; // modelSheet() owns the full-screen version
+        }
+        if (!isVisible(candidate)) continue;
+        return candidate;
+      }
+      return null;
+    }
+    function startNativeObserver() {
+      if (nativeObserverStarted) return;
+      nativeObserverStarted = true;
+      waitForEl('body', function () {
+        function sync() {
+          if (!active || !window.matchMedia(MOBILE).matches) {
+            dismiss('native-modal');
+            dismiss('native-menu');
+            return;
+          }
+          var modal = null;
+          var modals = document.querySelectorAll('.modal-backdrop');
+          for (var i = modals.length - 1; i >= 0; i--) {
+            if (isVisible(modals[i])) {
+              modal = modals[i];
+              break;
+            }
+          }
+          if (modal) {
+            open(
+              'native-modal',
+              function () {
+                closeNative(modal);
+              },
+            );
+            return;
+          }
+          dismiss('native-modal');
+          var menu = nativeMenu();
+          if (menu) {
+            var parent =
+              menu.closest && menu.closest('.composer-context')
+                ? 'context-card'
+                : '';
+            open(
+              'native-menu',
+              function () {
+                closeNative(menu);
+              },
+              parent ? { parent: parent } : null,
+            );
+          } else {
+            dismiss('native-menu');
+          }
+        }
+        watchMobileBody(sync);
+        sync();
+      });
+    }
+    window.addEventListener('popstate', onPopState);
+    return {
+      activate: function () {
+        active = true;
+        startNativeObserver();
+      },
+      deactivate: function () {
+        active = false;
+        closeAll({ fromManager: true, preserveState: true }, false);
+      },
+      open: open,
+      dismiss: dismiss,
+    };
+  })();
+
   function patchViewport() {
     var meta = document.querySelector('meta[name="viewport"]');
     // Keep zoom unlocked: locking it (user-scalable=no / maximum-scale=1) can
@@ -83,7 +478,10 @@
     }
   }
 
+  var viewportHeightBound = false;
   function trackViewportHeight() {
+    if (viewportHeightBound) return;
+    viewportHeightBound = true;
     var root = document.documentElement;
     function set() {
       var h =
@@ -102,22 +500,33 @@
 
   function collapseExplorerForTouch() {
     if (!window.matchMedia(MOBILE).matches) return;
-    // Keep clicking every open explorer's toggle until React folds them into
-    // the collapsed rail. Handles late React mount + re-renders. ~6s cap.
-    var attempts = 0;
-    var timer = setInterval(function () {
-      if (!document.body) return; // wait for React to mount the explorer
-      var open = document.querySelectorAll('.explorer:not(.collapsed)');
-      if (open.length === 0) {
-        clearInterval(timer);
-        return;
-      }
-      open.forEach(function (el) {
-        var toggle = el.querySelector('.explorer-toggle');
-        if (toggle) toggle.click();
-      });
-      if (++attempts > 50) clearInterval(timer);
-    }, 120);
+    // Do not click through the app's explorer while its workspace is still
+    // booting. Once the shell exists, use a short bounded retry window to
+    // collapse the desktop-open drawer without creating a long-lived timer.
+    waitForEl('.app', function () {
+      var attempts = 0;
+      var timer = setInterval(function () {
+        if (!window.matchMedia(MOBILE).matches || !document.body) {
+          clearInterval(timer);
+          return;
+        }
+        var rememberOpen = false;
+        try {
+          var tid = activeThreadId();
+          rememberOpen = threadStateHas(PANEL_KEY, tid);
+        } catch (e) {}
+        var open = document.querySelectorAll('.explorer:not(.collapsed)');
+        if (open.length === 0 || rememberOpen) {
+          clearInterval(timer);
+          return;
+        }
+        open.forEach(function (el) {
+          var toggle = el.querySelector('.explorer-toggle');
+          if (toggle) toggle.click();
+        });
+        if (++attempts >= 8) clearInterval(timer);
+      }, 200);
+    });
   }
 
   // Shared swipe-down-to-close for injected popovers (thread menu, session
@@ -136,6 +545,12 @@
     el.addEventListener(
       'touchstart',
       function (ev) {
+        // A downward gesture inside a scrolled menu should scroll back up,
+        // not dismiss the menu. Swipe-to-close is available at the top edge.
+        if (el.scrollHeight > el.clientHeight && el.scrollTop > 0) {
+          reset();
+          return;
+        }
         var t = ev.touches[0];
         startY = t.clientY;
         startX = t.clientX;
@@ -195,16 +610,36 @@
     modelSheetBound = true;
     waitForEl('body', function () {
       var closeBtn = null;
-      var observer = new MutationObserver(function () {
+      function closeModelSheet() {
+        var menu = document.querySelector('.composer-context .agent-menu');
+        if (menu) {
+          // Close native React state directly. Do not click .agent-trigger:
+          // the sheet's outside mousedown may already have queued its close,
+          // and toggling the trigger in same gesture can reopen the picker.
+          menu.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'Escape',
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        }
+        mobileOverlay.dismiss('model-sheet');
+      }
+      watchMobileBody(function () {
         var narrow = window.matchMedia('(max-width: 700px)').matches;
         var menu = document.querySelector('.composer-context .agent-menu');
         if (!menu || !narrow) {
+          mobileOverlay.dismiss('model-sheet');
           if (closeBtn) {
             closeBtn.remove();
             closeBtn = null;
           }
           return;
         }
+        mobileOverlay.open('model-sheet', closeModelSheet, {
+          parent: 'context-card',
+        });
         if (closeBtn) return;
         closeBtn = document.createElement('button');
         closeBtn.type = 'button';
@@ -215,20 +650,9 @@
           '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
           'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
           'aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
-        closeBtn.addEventListener('click', function () {
-          if (menu && document.contains(menu)) {
-            menu.dispatchEvent(
-              new KeyboardEvent('keydown', {
-                key: 'Escape',
-                bubbles: true,
-                cancelable: true,
-              }),
-            );
-          }
-        });
+        closeBtn.addEventListener('click', closeModelSheet);
         document.body.appendChild(closeBtn);
       });
-      observer.observe(document.body, { childList: true, subtree: true });
     });
   }
 
@@ -257,6 +681,7 @@
           menu = null;
           openedTab = null;
         }
+        mobileOverlay.dismiss('thread-menu');
       }
       function open() {
         close();
@@ -351,19 +776,15 @@
           menu.appendChild(b);
         });
         document.body.appendChild(menu);
-        attachSwipeDownClose(menu, function () {
-          if (menu) {
-            menu.remove();
-            menu = null;
-            openedTab = null;
-          }
-        });
+        attachSwipeDownClose(menu, close);
+        mobileOverlay.open('thread-menu', close);
       }
 
       // Capture phase so the toggle runs before the app's own click handling.
       document.addEventListener(
         'click',
         function (ev) {
+          if (!window.matchMedia(MOBILE).matches) return;
           var tab = activeTab();
           if (tab && tab.contains(ev.target)) {
             if (menu) close();
@@ -378,7 +799,16 @@
         if (ev.key === 'Escape') close();
       });
       window.addEventListener('resize', close);
-      window.addEventListener('scroll', close, true);
+      window.addEventListener(
+        'scroll',
+        function (ev) {
+          // Do not close when the user scrolls the menu itself (especially
+          // the Recent session list); only external page scrolling dismisses.
+          if (menu && menu.contains(ev.target)) return;
+          close();
+        },
+        true,
+      );
 
       // React re-renders the header on tab/state changes — keep the menu in
       // sync (refresh the title, or close if the tab changed / explorer drawer
@@ -578,6 +1008,7 @@
           menu = null;
           openedActive = null;
         }
+        mobileOverlay.dismiss('session-menu');
       }
       function open() {
         close();
@@ -781,13 +1212,8 @@
         menu.appendChild(foot);
 
         document.body.appendChild(menu);
-        attachSwipeDownClose(menu, function () {
-          if (menu) {
-            menu.remove();
-            menu = null;
-            openedActive = null;
-          }
-        });
+        attachSwipeDownClose(menu, close);
+        mobileOverlay.open('session-menu', close);
       }
 
       // Trigger: a list icon in the slim header, before the status pill.
@@ -842,7 +1268,16 @@
         if (ev.key === 'Escape') close();
       });
       window.addEventListener('resize', close);
-      window.addEventListener('scroll', close, true);
+      window.addEventListener(
+        'scroll',
+        function (ev) {
+          // Do not close when the user scrolls the menu itself (especially
+          // the Recent session list); only external page scrolling dismisses.
+          if (menu && menu.contains(ev.target)) return;
+          close();
+        },
+        true,
+      );
 
       // React re-renders the tabbar on tab changes: hide the button when no
       // session is open (or the layout widens past mobile). While the menu is
@@ -863,7 +1298,22 @@
         }
         var now = tabIds().join('\u0000');
         if (openedIds && now !== openedIds.join('\u0000')) open();
-      }).observe(tabbar, { childList: true, subtree: true });
+      }).observe(tabbar, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+      var sessionMq = window.matchMedia(MOBILE);
+      watchMedia(sessionMq, function (ev) {
+        if (!ev.matches) {
+          btn.style.display = 'none';
+          close();
+        } else {
+          btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+          syncAttention();
+        }
+      });
     });
   }
 
@@ -907,12 +1357,31 @@
         var e = explorer();
         if (e && !e.classList.contains('collapsed')) toggleViaApp();
       }
+      var explorerObserver = null;
+      var observedExplorer = null;
+      function observeExplorer() {
+        var e = explorer();
+        if (e === observedExplorer) return;
+        if (explorerObserver) explorerObserver.disconnect();
+        explorerObserver = null;
+        observedExplorer = e;
+        if (e) {
+          explorerObserver = new MutationObserver(scheduleBodySync);
+          explorerObserver.observe(e, {
+            attributes: true,
+            attributeFilter: ['class'],
+          });
+        }
+      }
+      var lastPanelThread = null;
       function sync() {
         if (!window.matchMedia(MOBILE).matches) {
           btn.style.display = 'none';
           removeScrim();
+          observeExplorer();
           return;
         }
+        observeExplorer();
         var open = isOpen();
         btn.style.display = open ? 'none' : '';
         if (open && !scrim) {
@@ -923,6 +1392,34 @@
           document.body.appendChild(scrim);
         } else if (!open && scrim) {
           removeScrim();
+        }
+        // Per-thread persistence (same model as the context card): when the
+        // active thread changes, restore that thread's remembered panel
+        // state; opening records the current thread, closing on it clears
+        // it. The home screen (no thread) is left alone.
+        var tid = activeThreadId();
+        if (tid !== lastPanelThread) {
+          lastPanelThread = tid;
+          if (tid) {
+            var wantedOpen = threadStateHas(PANEL_KEY, tid);
+            if (wantedOpen !== open) toggleViaApp();
+          }
+          // Let the panel settle before recording anything — recording on
+          // this tick would attribute the old thread's state to the new one.
+          return;
+        }
+        if (tid) {
+          var rememberedOpen = threadStateHas(PANEL_KEY, tid);
+          if (open !== rememberedOpen) {
+            threadStateSet(PANEL_KEY, tid, open);
+          }
+        }
+        if (open) {
+          mobileOverlay.open('tools-panel', function () {
+            if (window.matchMedia(MOBILE).matches) closePanel();
+          });
+        } else {
+          mobileOverlay.dismiss('tools-panel');
         }
       }
 
@@ -948,39 +1445,114 @@
       tabbar.insertBefore(btn, anchor);
 
       document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape') closePanel();
+        if (window.matchMedia(MOBILE).matches && ev.key === 'Escape') {
+          closePanel();
+        }
       });
       // React re-renders constantly; class changes on the explorer (open /
       // collapsed) plus its mount/unmount are enough to keep scrim + button
       // in sync.
-      new MutationObserver(sync).observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class'],
+      watchMobileBody(sync);
+      var panelMq = window.matchMedia(MOBILE);
+      watchMedia(panelMq, function (ev) {
+        if (ev.matches) sync();
+        else {
+          removeScrim();
+          btn.style.display = 'none';
+        }
       });
       sync();
     });
   }
 
   // Composer context chips (agent/model/effort/workspace) collapse into a
-  // floating button on mobile so the composer stays clean (see
-  // mobile-ui.css). Tapping the button pops the chips up as a floating card
-  // above the composer; outside tap, Escape, scroll, or resize dismisses it.
+  // button in the slim header so the composer stays clean and the bottom of
+  // the chat stays readable (see mobile-ui.css). Tapping the button drops a
+  // card below the header; outside tap, Escape, scroll, or resize dismisses
+  // it. The composer unmounts on the home screen, so the composer element is
+  // re-acquired on every use.
   var ctxBound = false;
   function composerCtx() {
-    if (ctxBound) return;
+    if (ctxBound || !window.matchMedia(MOBILE).matches) return;
+    // Do not consume one-shot guard on desktop: a later rotation into
+    // mobile must still create composer controls.
     ctxBound = true;
-    if (!window.matchMedia(MOBILE).matches) return;
-    waitForEl('.composer', function () {
-      var composer = document.querySelector('.composer');
-      if (!composer) return;
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
 
       var fab = null;
+      var pill = null;
+      var pillLabel = null;
+      var effortPill = null;
+      var effortPillLabel = null;
+      var quotaPill = null;
+      var quotaPillLabel = null;
+      var pillRow = null;
+      var streamingIndicator = null;
+      var pickerOpenedAt = 0;
       var popupEl = null;
       var closingTimer = null;
+      var lastCtxThread = null;
+      var composerObserver = null;
+      var observedComposer = null;
+      // Per-thread persistence: the card's open state is remembered per
+      // thread (localStorage), so returning to a thread or reloading the
+      // page restores the chip layout the user left it in.
+      var STORE_KEY = 'fb-ui:ctx-open-thread';
+      function getComposer() {
+        return document.querySelector('.composer');
+      }
+      function syncStreamingIndicator(composer) {
+        if (!streamingIndicator) return;
+        var mobile = window.matchMedia(MOBILE).matches;
+        var stop = composer
+          ? composer.querySelector('.composer-row .stop')
+          : null;
+        var streaming = !!stop;
+        streamingIndicator.style.display =
+          mobile && streaming ? 'inline-flex' : 'none';
+        streamingIndicator.setAttribute('aria-hidden', String(!streaming));
+      }
+      function observeComposer(composer) {
+        if (composer === observedComposer) return;
+        if (composerObserver) composerObserver.disconnect();
+        composerObserver = null;
+        observedComposer = composer;
+        if (composer) {
+          // The global observer handles mount/unmount and child changes. This
+          // narrow observer adds only the class changes needed for ready/send,
+          // stop, and the native picker without watching the transcript.
+          composerObserver = new MutationObserver(scheduleBodySync);
+          composerObserver.observe(composer, {
+            attributes: true,
+            childList: true,
+            characterData: true,
+            subtree: true,
+            attributeFilter: ['class'],
+          });
+        }
+      }
       function isOpen() {
         return root.classList.contains('fb-ctx-open');
+      }
+      function makeStreamingIndicator() {
+        var status = document.createElement('span');
+        status.className = 'fb-streaming-indicator';
+        status.style.display = 'none';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        status.setAttribute('aria-label', 'Agent is responding');
+        status.setAttribute('aria-hidden', 'true');
+        var dot = document.createElement('span');
+        dot.className = 'fb-streaming-indicator-dot';
+        dot.setAttribute('aria-hidden', 'true');
+        status.appendChild(dot);
+        var label = document.createElement('span');
+        label.className = 'fb-streaming-indicator-label';
+        label.textContent = 'Streaming';
+        status.appendChild(label);
+        return status;
       }
       function makeFab() {
         var b = document.createElement('button');
@@ -994,7 +1566,7 @@
         chev.innerHTML =
           '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
           'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-          'stroke-linejoin="round"><path d="M4 9.5 8 5.5l4 4"/></svg>';
+          'stroke-linejoin="round"><path d="M4 6.5 8 10.5l4-4"/></svg>';
         b.appendChild(chev);
         if (isOpen()) b.classList.add('open');
         b.setAttribute('aria-expanded', String(isOpen()));
@@ -1007,6 +1579,10 @@
       function syncFab() {
         if (!fab) return;
         var open = isOpen();
+        var mobile = window.matchMedia(MOBILE).matches;
+        // Hide the header button when there's no composer or the layout is
+        // wide (the feature remains bound so rotation can re-enter cleanly).
+        fab.style.display = mobile && getComposer() ? '' : 'none';
         fab.classList.toggle('open', open);
         fab.setAttribute('aria-expanded', String(open));
       }
@@ -1014,8 +1590,13 @@
         clearTimeout(closingTimer);
         if (popupEl) popupEl.classList.remove('fb-ctx-closing');
         root.classList.add('fb-ctx-open');
-        popupEl = composer.querySelector('.composer-context');
+        var composer = getComposer();
+        popupEl = composer
+          ? composer.querySelector('.composer-context')
+          : null;
+        threadStateSet(STORE_KEY, activeThreadId(), true);
         syncFab();
+        mobileOverlay.open('context-card', close);
       }
       function finishClose() {
         clearTimeout(closingTimer);
@@ -1024,11 +1605,32 @@
         popupEl = null;
         syncFab();
       }
-      function close() {
-        if (!isOpen()) return;
-        popupEl = composer.querySelector('.composer-context');
-        syncFab(); // chevron flips down while the card slides away
-        if (!popupEl) {
+      function close(preserveState) {
+        var managed = !!(preserveState && preserveState.fromManager);
+        var preserve =
+          preserveState === true ||
+          !!(preserveState && preserveState.preserveState);
+        if (!isOpen()) {
+          mobileOverlay.dismiss('context-card');
+          return;
+        }
+        // Breakpoint teardown hides the card without changing the user's
+        // remembered preference; all user dismissals clear this thread's
+        // flag.
+        if (!preserve) {
+          threadStateSet(STORE_KEY, activeThreadId(), false);
+        }
+        mobileOverlay.dismiss('context-card');
+        var composer = getComposer();
+        popupEl = composer
+          ? composer.querySelector('.composer-context')
+          : null;
+        syncFab(); // chevron flips while the card slides away
+        if (
+          !popupEl ||
+          managed ||
+          (preserve && !window.matchMedia(MOBILE).matches)
+        ) {
           finishClose();
           return;
         }
@@ -1076,7 +1678,8 @@
             'Attach files, photos, or a folder',
             '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
             function () {
-              var a = composer.querySelector('.composer-row .attach');
+              var c = getComposer();
+              var a = c ? c.querySelector('.composer-row .attach') : null;
               if (a) a.click();
             },
           ),
@@ -1087,7 +1690,8 @@
           '<path d="M22 12h-6l-2 3h-4l-2-3H2"/>' +
             '<path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
           function () {
-            var k = composer.querySelector('.composer-row .stash-key');
+            var c = getComposer();
+            var k = c ? c.querySelector('.composer-row .stash-key') : null;
             if (k) k.click();
           },
         );
@@ -1097,7 +1701,8 @@
           'Stop the running turn',
           '<rect x="4" y="4" width="16" height="16" rx="3"/>',
           function () {
-            var s = composer.querySelector('.composer-row .stop');
+            var c = getComposer();
+            var s = c ? c.querySelector('.composer-row .stop') : null;
             if (s) s.click();
           },
         );
@@ -1107,7 +1712,8 @@
           'Send message',
           '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
           function () {
-            var s = composer.querySelector('.composer-row .send-key');
+            var c = getComposer();
+            var s = c ? c.querySelector('.composer-row .send-key') : null;
             if (s) s.click();
           },
         );
@@ -1115,7 +1721,97 @@
         return wrap;
       }
       function syncActions() {
-        if (!actions) return;
+        if (!fab) return;
+        var mobile = window.matchMedia(MOBILE).matches;
+        var composer = getComposer();
+        observeComposer(composer);
+        syncStreamingIndicator(composer);
+        fab.style.display = mobile && composer ? '' : 'none';
+        fab.classList.toggle('open', isOpen());
+        fab.setAttribute('aria-expanded', String(isOpen()));
+        // Floating model + reasoning pills: keep both settings visible on
+        // fresh sessions, where the context card starts closed. Each pill
+        // still clicks the app's native trigger, so its menu and selection
+        // state remain authoritative.
+        if (pill) {
+          pill.style.display = mobile && composer ? '' : 'none';
+          if (composer && pillLabel) {
+            var nameEl =
+              composer.querySelector('.agent-model') ||
+              composer.querySelector('.agent-name');
+            if (nameEl && nameEl.textContent.trim()) {
+              pillLabel.textContent = nameEl.textContent.trim();
+            }
+          }
+        }
+        if (effortPill) {
+          var effort = composer
+            ? composer.querySelector('.effort-trigger')
+            : null;
+          effortPill.style.display = mobile && composer && effort ? '' : 'none';
+          effortPill.disabled = !effort || !!effort.disabled;
+          if (effortPillLabel) {
+            var effortValue = effort
+              ? effort.querySelector('.effort-trigger-value')
+              : null;
+            effortPillLabel.textContent = effortValue
+              ? 'Reasoning: ' + effortValue.textContent.trim()
+              : 'Reasoning';
+          }
+        }
+        if (quotaPill) {
+          var quota = composer
+            ? composer.querySelector('.context-quota')
+            : null;
+          var quotaText = '';
+          if (quota) {
+            var fullQuota = quota.querySelector('.quota-full');
+            var compactQuota = quota.querySelector('.quota-compact');
+            var visibleQuota = [fullQuota, compactQuota].find(function (el) {
+              if (!el) return false;
+              var style = window.getComputedStyle(el);
+              return style.display !== 'none' && style.visibility !== 'hidden';
+            });
+            quotaText = (visibleQuota || quota).textContent.trim();
+          }
+          quotaPill.style.display = mobile && composer && quota ? '' : 'none';
+          quotaPill.disabled = !quota;
+          if (quotaPillLabel) {
+            quotaPillLabel.textContent = quotaText
+              ? 'Time: ' + quotaText
+              : 'Time limit';
+          }
+          if (quota) {
+            quotaPill.title =
+              quota.getAttribute('data-tooltip') || 'Session time limit';
+          } else {
+            quotaPill.title = 'Session time limit unavailable';
+          }
+        }
+        if (
+          mobile &&
+          pickerOpenedAt &&
+          (!composer ||
+            (!composer.querySelector('.agent-menu') &&
+              !composer.querySelector('.effort-menu'))) &&
+          Date.now() - pickerOpenedAt > 500
+        ) {
+          pickerOpenedAt = 0;
+          if (isOpen()) close();
+        }
+        if (!mobile) {
+          return;
+        }
+        // Auto-restore: when the active thread changes (switch, return, or
+        // reload), match the card to that thread's own remembered state.
+        var tid = activeThreadId();
+        if (tid !== lastCtxThread) {
+          lastCtxThread = tid;
+          var wantedOpen = tid && threadStateHas(STORE_KEY, tid);
+          if (wantedOpen && !isOpen()) open();
+          else if (tid && !wantedOpen && isOpen()) close();
+        }
+        if (!actions || !composer) return;
         var row = composer.querySelector('.composer-row');
         if (!row) return;
         stopBtn.style.display = row.querySelector('.stop') ? '' : 'none';
@@ -1126,28 +1822,147 @@
         );
       }
 
-      fab = makeFab();
-      composer.appendChild(fab);
-      actions = makeActions();
+      // Floating model selector just above the message box: a compact pill
+      // showing the current model that opens the app's model picker directly
+      // (via its own .agent-trigger). The card is opened underneath so the
+      // picker's menu has a visible parent, then tidied away when the menu
+      // closes.
+      function makePill() {
+        var p = document.createElement('button');
+        p.type = 'button';
+        p.className = 'fb-model-pill';
+        p.setAttribute('aria-label', 'Select model');
+        p.title = 'Select model';
+        var label = document.createElement('span');
+        label.className = 'fb-model-pill-label';
+        label.textContent = 'Model';
+        p.appendChild(label);
+        var chev = document.createElement('span');
+        chev.className = 'fb-model-pill-chev';
+        chev.setAttribute('aria-hidden', 'true');
+        chev.innerHTML =
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+          'stroke-linejoin="round"><path d="M4 6.5 8 10.5l4-4"/></svg>';
+        p.appendChild(chev);
+        p.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (!isOpen()) {
+            open(); // card becomes the picker menu's parent
+            pickerOpenedAt = Date.now();
+          }
+          var c = getComposer();
+          var t = c ? c.querySelector('.agent-trigger') : null;
+          if (t) t.click(); // the app's own model-picker toggle
+        });
+        return p;
+      }
+      function makeEffortPill() {
+        var p = document.createElement('button');
+        p.type = 'button';
+        p.className = 'fb-effort-pill';
+        p.setAttribute('aria-label', 'Select reasoning effort');
+        p.title = 'Select reasoning effort';
+        var label = document.createElement('span');
+        label.className = 'fb-effort-pill-label';
+        label.textContent = 'Reasoning';
+        p.appendChild(label);
+        var chev = document.createElement('span');
+        chev.className = 'fb-effort-pill-chev';
+        chev.setAttribute('aria-hidden', 'true');
+        chev.innerHTML =
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+          'stroke-linejoin="round"><path d="M4 6.5 8 10.5l4-4"/></svg>';
+        p.appendChild(chev);
+        p.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var c = getComposer();
+          var t = c ? c.querySelector('.effort-trigger') : null;
+          if (!t || t.disabled) return;
+          if (!isOpen()) {
+            open(); // card becomes the effort menu's parent
+            pickerOpenedAt = Date.now();
+          }
+          t.click(); // the app's own reasoning-effort listbox
+        });
+        return p;
+      }
+      function makeQuotaPill() {
+        var p = document.createElement('button');
+        p.type = 'button';
+        p.className = 'fb-time-pill';
+        p.setAttribute('aria-label', 'Session time limit');
+        p.title = 'Session time limit';
+        var icon = document.createElement('span');
+        icon.className = 'fb-time-pill-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML =
+          '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+          'stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/>' +
+          '<path d="M8 4.8v3.5l2.2 1.3"/></svg>';
+        p.appendChild(icon);
+        var label = document.createElement('span');
+        label.className = 'fb-time-pill-label';
+        label.textContent = 'Time limit';
+        p.appendChild(label);
+        p.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (p.disabled) return;
+          if (!isOpen()) open();
+        });
+        return p;
+      }
 
-      // React re-renders the composer and can wipe injected elements —
-      // re-insert the fab and the action bar (with current state), and keep
-      // the stop/stash/send state in sync with the app's own buttons.
-      new MutationObserver(function () {
-        if (!composer.contains(fab)) {
-          fab = makeFab();
-          composer.appendChild(fab);
+      streamingIndicator = makeStreamingIndicator();
+      fab = makeFab();
+      var anchor =
+        tabbar.querySelector('.fb-panel-toggle') ||
+        tabbar.querySelector('.fb-session-switch') ||
+        tabbar.querySelector('.conn-status') ||
+        null;
+      tabbar.insertBefore(streamingIndicator, anchor);
+      tabbar.insertBefore(fab, anchor);
+      actions = makeActions();
+      pillRow = document.createElement('div');
+      pillRow.className = 'fb-composer-pills';
+      pill = makePill();
+      pillLabel = pill.querySelector('.fb-model-pill-label');
+      effortPill = makeEffortPill();
+      effortPillLabel = effortPill.querySelector('.fb-effort-pill-label');
+      quotaPill = makeQuotaPill();
+      quotaPillLabel = quotaPill.querySelector('.fb-time-pill-label');
+      pillRow.appendChild(pill);
+      pillRow.appendChild(effortPill);
+      pillRow.appendChild(quotaPill);
+      var composer0 = getComposer();
+      if (composer0) composer0.appendChild(pillRow);
+
+      // React re-renders constantly (the composer unmounts on the home
+      // screen); a body observer keeps the header button, the action bar
+      // inside the card, and their state in sync.
+      watchMobileBody(function () {
+        var headerAnchor =
+          tabbar.querySelector('.fb-panel-toggle') ||
+          tabbar.querySelector('.fb-session-switch') ||
+          tabbar.querySelector('.conn-status') ||
+          null;
+        if (!tabbar.contains(streamingIndicator)) {
+          tabbar.insertBefore(streamingIndicator, headerAnchor);
         }
-        var card = composer.querySelector('.composer-context');
-        if (card && !card.contains(actions)) {
-          card.appendChild(actions);
+        if (!tabbar.contains(fab)) {
+          tabbar.insertBefore(fab, headerAnchor);
+        }
+        var composer = getComposer();
+        if (composer) {
+          if (!composer.contains(pillRow)) composer.appendChild(pillRow);
+          var card = composer.querySelector('.composer-context');
+          if (card && !card.contains(actions)) {
+            card.appendChild(actions);
+          }
         }
         syncActions();
-      }).observe(composer, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class'],
       });
       syncActions();
 
@@ -1155,9 +1970,19 @@
         'click',
         function (ev) {
           if (!isOpen()) return;
-          var popup = composer.querySelector('.composer-context');
+          var composer = getComposer();
+          var popup = composer
+            ? composer.querySelector('.composer-context')
+            : null;
           if (popup && popup.contains(ev.target)) return;
           if (fab && fab.contains(ev.target)) return;
+          if (
+            (pill && pill.contains(ev.target)) ||
+            (effortPill && effortPill.contains(ev.target)) ||
+            (quotaPill && quotaPill.contains(ev.target))
+          ) {
+            return;
+          }
           // The model-sheet close button lives in <body> (outside the popup)
           // — dismissing the sheet shouldn't also dismiss the popup.
           if (
@@ -1171,10 +1996,80 @@
         true,
       );
       document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape') close();
+        if (ev.key !== 'Escape') return;
+        // Let an app-owned nested menu consume Escape first; the unified
+        // manager will dismiss that top layer while this card remains open.
+        var nested = document.querySelector(
+          '.agent-menu, .header-menu, .account-menu, .effort-menu, .stash-menu, ' +
+            '.slash-menu, .home-context-menu, .context-usage-popover, ' +
+            '.open-in-menu, .new-thread-project-menu',
+        );
+        if (!nested) close();
       });
-      window.addEventListener('resize', close);
-      window.addEventListener('scroll', close, true);
+      // The card is fixed at the top, so scrolling the chat no longer
+      // dismisses it (that would fight the persistence). Only leave the
+      // mobile layout closes it; within mobile widths it stays put across
+      // rotation so the remembered state survives.
+      var ctxMq = window.matchMedia(MOBILE);
+      watchMedia(ctxMq, function (ev) {
+        if (!ev.matches) {
+          close(true);
+          if (fab) fab.style.display = 'none';
+          if (pillRow) pillRow.style.display = 'none';
+          return;
+        }
+        var tid = activeThreadId();
+        if (tid && threadStateHas(STORE_KEY, tid) && !isOpen()) open();
+        syncActions();
+      });
+    });
+  }
+
+  // Mobile report access: the original feedback pill is hidden below the
+  // mobile breakpoint. The active main thread keeps Report an issue in its
+  // title menu; home and popout modes get a compact header affordance so the
+  // action is never unavailable.
+  var reportBound = false;
+  function mobileReportAccess() {
+    if (reportBound) return;
+    reportBound = true;
+    if (!window.matchMedia(MOBILE).matches) return;
+    waitForEl('body', function () {
+      function clickReport() {
+        var fb = document.querySelector('.global-feedback');
+        if (fb) fb.click();
+      }
+      function ensure(header) {
+        if (!header || header.querySelector('.fb-mobile-report')) return;
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'fb-mobile-report';
+        button.setAttribute('aria-label', 'Report an issue');
+        button.title = 'Report an issue';
+        button.innerHTML =
+          '<svg width="17" height="17" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M8 2.25 14 13H2L8 2.25Z"/>' +
+          '<path d="M8 6v3.2M8 11.2v.1"/></svg>';
+        button.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          clickReport();
+        });
+        var anchor =
+          header.querySelector('.conn-status') ||
+          header.querySelector('.tabbar-account') ||
+          null;
+        if (anchor) header.insertBefore(button, anchor);
+        else header.appendChild(button);
+      }
+      function sync() {
+        if (!window.matchMedia(MOBILE).matches) return;
+        ensure(document.querySelector('.tabbar:not(.threadbar)'));
+        ensure(document.querySelector('.tabbar.threadbar'));
+      }
+      watchMobileBody(sync);
+      sync();
     });
   }
 
@@ -1229,28 +2124,193 @@
     );
   }
 
-  // Bind everything. DOM-dependent features wait internally (waitForEl) for
-  // React to mount; the pure-<head> pieces run immediately.
-  threadWindowBack();
-  var mq = window.matchMedia(MOBILE);
-  if (mq.matches) {
-    patchViewport();
-    trackViewportHeight();
-    collapseExplorerForTouch();
+  // Browser-port reload cleanup. The app persists tabs but not the home tab
+  // flag: on reload the previous home tab is restored as an untitled
+  // "New thread" tab while the app creates a fresh home tab, so every refresh
+  // leaks one duplicate session. Remember the home tab's id in sessionStorage
+  // (per-tab, survives reload but not new tabs) and close the restored phantom
+  // once the replacement home tab has mounted. Runs at every viewport because
+  // the leak is native to the browser port, not to the mobile layout.
+  var HOME_TAB_KEY = 'fb-ui:home-tab-id';
+  var reloadCleanupBound = false;
+  function browserReloadCleanup() {
+    if (reloadCleanupBound) return;
+    reloadCleanupBound = true;
+    function homeId() {
+      var tab = document.querySelector('.tabbar:not(.threadbar) .tab.home');
+      var sel = tab && tab.querySelector('.tab-select');
+      return sel && sel.id ? sel.id : '';
+    }
+    function remember() {
+      var id = homeId();
+      if (!id) return;
+      try {
+        sessionStorage.setItem(HOME_TAB_KEY, id);
+      } catch (e) {}
+    }
+    function phantomTab(storedId) {
+      if (!storedId) return null;
+      var tabs = document.querySelectorAll('.tabbar:not(.threadbar) .tab');
+      for (var i = 0; i < tabs.length; i++) {
+        if (tabs[i].classList.contains('home')) continue;
+        var sel = tabs[i].querySelector('.tab-select');
+        if (sel && sel.id === storedId) return tabs[i];
+      }
+      return null;
+    }
+    function cleanup() {
+      // Wait for hJ() to mount the replacement home tab before deciding the
+      // restored copy is a phantom rather than the real (slow) home tab.
+      if (!document.querySelector('.tabbar:not(.threadbar) .tab.home')) {
+        return;
+      }
+      var stored = '';
+      try {
+        stored = sessionStorage.getItem(HOME_TAB_KEY) || '';
+      } catch (e) {}
+      var phantom = phantomTab(stored);
+      if (!phantom || phantom.classList.contains('active')) return;
+      var close = phantom.querySelector('.tab-close');
+      if (close) close.click(); // app's own closeTab; empty tab has no draft
+      try {
+        sessionStorage.removeItem(HOME_TAB_KEY);
+      } catch (e) {}
+      remember(); // record replacement home tab for the next reload
+    }
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
+      remember();
+      var timer = null;
+      function schedule() {
+        if (timer) return;
+        timer = setTimeout(function () {
+          timer = null;
+          cleanup();
+        }, 400);
+      }
+      new MutationObserver(schedule).observe(tabbar, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+      schedule();
+    });
+    window.addEventListener('pagehide', remember);
   }
-  tabTitleMenu();
-  modelSheet();
-  sessionSwitcher();
-  sidePanel();
-  composerCtx();
-  // If the device crosses into the narrow layout later (rotation, resize),
-  // collapse the explorer then too — but only once per crossing.
-  var handled = mq.matches;
-  mq.addEventListener('change', function (ev) {
-    if (!ev.matches || handled) return;
-    handled = true;
+
+  // Mobile features are bound lazily, but remain ready for viewport changes.
+  // This matters when a browser starts with a desktop layout and rotates into
+  // portrait: the original one-shot guards otherwise skip every mobile hook.
+  var mobileFeaturesBound = false;
+  var mobileTabbar = null;
+  function bindMobileFeatures() {
+    var current = document.querySelector('.tabbar:not(.threadbar)');
+    var changedRoot = !!current && current !== mobileTabbar;
+    if (mobileFeaturesBound && !changedRoot) {
+      if (!current) {
+        waitForEl('.tabbar:not(.threadbar)', function () {
+          mobileTabbar = document.querySelector('.tabbar:not(.threadbar)');
+        });
+      }
+      return;
+    }
+    if (changedRoot) {
+      // Old document-level listeners are harmless after their detached
+      // tabbar is gone; reset the one-shot guards so the live root gets fresh
+      // handlers instead of leaving rotation with stale references.
+      tabMenuBound = false;
+      sessionBound = false;
+      panelBound = false;
+      ctxBound = false;
+    }
+    tabTitleMenu();
+    modelSheet();
+    sessionSwitcher();
+    sidePanel();
+    composerCtx();
+    mobileReportAccess();
+    mobileFeaturesBound = true;
+    if (current) mobileTabbar = current;
+    else {
+      waitForEl('.tabbar:not(.threadbar)', function () {
+        mobileTabbar = document.querySelector('.tabbar:not(.threadbar)');
+      });
+    }
+  }
+  function hideMobileChrome() {
+    var modelMenu = document.querySelector('.composer-context .agent-menu');
+    var trigger = document.querySelector('.composer .agent-trigger');
+    if (modelMenu && trigger) trigger.click();
+    document
+      .querySelectorAll(
+        '.fb-tab-menu, .fb-session-menu, .fb-panel-scrim, .fb-model-sheet-close',
+      )
+      .forEach(function (el) {
+        el.remove();
+      });
+    root.classList.remove('fb-ctx-open');
+    document
+      .querySelectorAll('.composer-context.fb-ctx-closing')
+      .forEach(function (el) {
+        el.classList.remove('fb-ctx-closing');
+      });
+    document
+      .querySelectorAll(
+        '.fb-streaming-indicator, .fb-ctx-fab, .fb-panel-toggle, .fb-session-switch, .fb-model-pill, .fb-effort-pill, .fb-time-pill, .fb-composer-pills, .fb-mobile-report',
+      )
+      .forEach(function (el) {
+        el.style.display = 'none';
+      });
+  }
+  function restoreMobileChrome() {
+    if (!window.matchMedia(MOBILE).matches) return;
+    var composer = !!document.querySelector('.composer');
+    var explorer = document.querySelector('.explorer');
+    var sessions = document.querySelectorAll(
+      '.tabbar:not(.threadbar) .tab:not(.home)',
+    ).length;
+    document.querySelectorAll('.fb-ctx-fab, .fb-composer-pills').forEach(function (el) {
+      el.style.display = composer ? '' : 'none';
+    });
+    document.querySelectorAll('.fb-streaming-indicator').forEach(function (el) {
+      el.style.removeProperty('display');
+    });
+    document.querySelectorAll('.fb-session-switch').forEach(function (el) {
+      el.style.display = sessions ? '' : 'none';
+    });
+    document.querySelectorAll('.fb-panel-toggle').forEach(function (el) {
+      el.style.display = explorer && explorer.classList.contains('collapsed') ? '' : 'none';
+    });
+    document.querySelectorAll('.fb-mobile-report').forEach(function (el) {
+      el.style.removeProperty('display');
+    });
+  }
+  function watchMedia(query, fn) {
+    if (query.addEventListener) query.addEventListener('change', fn);
+    else if (query.addListener) query.addListener(fn);
+  }
+  function enterMobile() {
+    mobileOverlay.activate();
+    scheduleBodySync();
     patchViewport();
     trackViewportHeight();
     collapseExplorerForTouch();
+    bindMobileFeatures();
+    restoreMobileChrome();
+  }
+  function leaveMobile() {
+    mobileOverlay.deactivate();
+    hideMobileChrome();
+  }
+
+  threadWindowBack();
+  browserReloadCleanup();
+  var mq = window.matchMedia(MOBILE);
+  if (mq.matches) enterMobile();
+  watchMedia(mq, function (ev) {
+    if (ev.matches) enterMobile();
+    else leaveMobile();
   });
 })();
