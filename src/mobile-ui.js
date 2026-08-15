@@ -647,12 +647,72 @@
         });
 
         // Recent (closed) sessions — filled from /api/projects once it
-        // resolves; the whole section is dropped when there are none.
+        // resolves; the whole section is dropped when there are none. The
+        // section header has a refresh button so the list can be re-fetched
+        // without closing and reopening the menu.
         var recentWrap = document.createElement('div');
         recentWrap.className = 'fb-session-menu-recent';
         var recentList = document.createElement('div');
         recentWrap.appendChild(recentList);
         menu.appendChild(recentWrap);
+        function fillRecent(items) {
+          recentList.textContent = '';
+          items.forEach(function (th) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'fb-session-menu-item recent';
+            b.setAttribute('role', 'menuitem');
+            var label = document.createElement('span');
+            label.className = 'fb-session-menu-label';
+            label.textContent = th.title;
+            b.appendChild(label);
+            var time = document.createElement('span');
+            time.className = 'fb-session-menu-time';
+            time.textContent = relTime(th.lastPromptAt || th.updatedAt);
+            b.appendChild(time);
+            b.addEventListener('click', function () {
+              openRecent(th);
+            });
+            recentList.appendChild(b);
+          });
+        }
+        function recentHead() {
+          var sec = document.createElement('div');
+          sec.className = 'fb-session-menu-section';
+          var label = document.createElement('span');
+          label.textContent = 'Recent';
+          sec.appendChild(label);
+          var refresh = document.createElement('button');
+          refresh.type = 'button';
+          refresh.className = 'fb-session-menu-refresh';
+          refresh.setAttribute('aria-label', 'Refresh recent sessions');
+          refresh.title = 'Refresh';
+          refresh.innerHTML =
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" ' +
+            'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+            'stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>' +
+            '</svg>';
+          refresh.addEventListener('click', function () {
+            if (refresh.classList.contains('loading')) return;
+            refresh.classList.add('loading');
+            fetchRecent()
+              .then(function (items) {
+                refresh.classList.remove('loading');
+                if (!menu || !document.contains(menu)) return;
+                if (!items.length) {
+                  recentWrap.remove(); // nothing recent anymore
+                  return;
+                }
+                fillRecent(items);
+              })
+              .catch(function () {
+                refresh.classList.remove('loading'); // keep the old list
+              });
+          });
+          sec.appendChild(refresh);
+          return sec;
+        }
         fetchRecent()
           .then(function (items) {
             if (!menu || !document.contains(menu)) return; // closed meanwhile
@@ -660,28 +720,8 @@
               recentWrap.remove();
               return;
             }
-            var sec = document.createElement('div');
-            sec.className = 'fb-session-menu-section';
-            sec.textContent = 'Recent';
-            recentWrap.insertBefore(sec, recentList);
-            items.forEach(function (th) {
-              var b = document.createElement('button');
-              b.type = 'button';
-              b.className = 'fb-session-menu-item recent';
-              b.setAttribute('role', 'menuitem');
-              var label = document.createElement('span');
-              label.className = 'fb-session-menu-label';
-              label.textContent = th.title;
-              b.appendChild(label);
-              var time = document.createElement('span');
-              time.className = 'fb-session-menu-time';
-              time.textContent = relTime(th.lastPromptAt || th.updatedAt);
-              b.appendChild(time);
-              b.addEventListener('click', function () {
-                openRecent(th);
-              });
-              recentList.appendChild(b);
-            });
+            recentWrap.insertBefore(recentHead(), recentList);
+            fillRecent(items);
           })
           .catch(function () {
             if (menu && document.contains(menu)) recentWrap.remove();

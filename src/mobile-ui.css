@@ -556,11 +556,49 @@
   margin-top: 4px;
 }
 .fb-session-menu-section {
-  padding: 6px 8px 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 5px 8px;
   color: var(--faint);
   font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+/* Refresh button in the Recent section header (mobile-ui.js) — re-fetches
+   the catalog without closing the menu. Spins while loading. */
+.fb-session-menu-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-session-menu-refresh:hover,
+.fb-session-menu-refresh:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-session-menu-refresh:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.fb-session-menu-refresh.loading svg {
+  animation: fb-spin 0.7s linear infinite;
+}
+@keyframes fb-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .fb-session-menu-item.recent {
   display: flex;

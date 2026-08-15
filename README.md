@@ -116,8 +116,10 @@ for narrow viewports:
   list refreshes live as sessions open/close, and closing the active one
   dismisses the menu. Below the open sessions, a **Recent** section lists
   recently-active **closed** sessions from the app's own catalog API
-  (`/api/projects`, same-origin — titled, non-archived, newest first, with a
-  relative time). Picking one reopens it as a tab through the app's native
+  (  `/api/projects`, same-origin — titled, non-archived, newest first, with a
+  relative time), and its header has a **refresh** button that re-fetches the
+  catalog in place (with a spinner) so the list updates without reopening the
+  menu. Picking one reopens it as a tab through the app's native
   path: go home, select its project, and click the matching catalog row (a
   time-based tiebreak disambiguates duplicate titles). The button appears
   only while a session is open, the menu animates like the thread menu and
