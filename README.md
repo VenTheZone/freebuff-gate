@@ -94,11 +94,15 @@ The desktop UI targets a mouse and a wide window; on a phone it falls apart
 and inputs zoom on focus). `src/mobile-ui.css` + `src/mobile-ui.js` fix that
 for narrow viewports:
 
-- **900px** — compact explorer, tighter gutters, no hover-only handles.
-- **700px (phones)** — the explorer becomes a full-screen drawer that
-  collapses to a bottom icon rail, the chat uses the full width, dropdown
-  menus and modals become bottom sheets, the composer gets 16px input text
-  (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
+- **900px** — full mobile layout: the chat goes full-bleed (all desktop
+  side-reserves zeroed), the explorer becomes a full-screen drawer and a slim
+  44px icon rail when collapsed, the composer stays docked with 16px input
+  text (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
+  `src/mobile-ui.js` **auto-collapses the explorer on load** (the app starts
+  with it open, which would hide the whole chat on a phone) and lets the app
+  persist that choice, so the chat is always visible.
+- **700px (phones)** — dropdown menus and modals become bottom sheets, and
+  chat text bumps to 15px for readability.
 - **480px** — further tightening for small phones.
 
 The tailnet proxy injects these after the app's own stylesheet, so the

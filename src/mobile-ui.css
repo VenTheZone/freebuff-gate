@@ -3,49 +3,25 @@
  *
  * The desktop UI is a three-zone layout: a top tab bar (.tabbar), a chat
  * workspace (.workspace) with a floating explorer panel (.explorer) docked on
- * the right, and a centered composer (.composer). On phones that reads as a
- * mess: the explorer eats the viewport, the chat is squeezed by reserves, and
- * menus/modals/touch targets are built for a mouse.
+ * the right, and a centered composer (.composer). Below ~1000px that layout
+ * stops working: the floating explorer hides the message stream (the explorer
+ * even starts open), and everything is sized for a mouse.
  *
  * This stylesheet is injected AFTER the app's own stylesheet (see the
  * tailnet-proxy injection), so plain overrides win. Everything is scoped to
  * narrow viewports — desktops are untouched.
  *
- *   900px  tablet breakpoint — compact explorer, tighter gutters
- *   700px  phone breakpoint  — full mobile layout (drawer explorer, bottom
- *          sheets, full-width chat, safe-area padding)
- *   480px  small-phone tweaks
+ *   900px  full mobile layout — drawer explorer + slim right icon rail when
+ *          collapsed, full-bleed chat, docked composer, touch targets.
+ *   700px  phones — bottom-sheet menus/modals, 15px chat text.
+ *   480px  small-phone tweaks.
+ *
+ * The companion src/mobile-ui.js auto-collapses the explorer on load for
+ * narrow viewports, so the chat is never hidden behind the panel.
  */
 
-/* ─────────────────────────── 900px: tablets & small windows ────────────── */
+/* ─────────────── 900px: mobile layout (phones & small tablets) ──────────── */
 @media (max-width: 900px) {
-  /* Reserve space for a narrower explorer and stop hover-only affordances. */
-  .app,
-  .workspace {
-    --explorer-reserve: 0px;
-  }
-  .explorer {
-    width: 280px;
-    max-width: min(320px, calc(100vw - 32px));
-  }
-  .explorer-resize-handle {
-    display: none;
-  }
-  .messages {
-    --chat-gutter: 18px;
-  }
-  .tabbar {
-    height: 48px;
-    padding: 0 6px;
-  }
-  .tab {
-    flex-basis: 150px;
-    min-width: 130px;
-  }
-}
-
-/* ─────────────────────────── 700px: phones ─────────────────────────────── */
-@media (max-width: 700px) {
   /* Zero every desktop-side reserve so the chat uses the full width. */
   .app,
   .workspace {
@@ -59,10 +35,8 @@
     padding-right: 0;
   }
   .messages {
-    --chat-gutter: 12px;
-    padding-left: 12px;
-    padding-right: 12px;
-    --working-clearance: 60px;
+    --chat-gutter: 14px;
+    --working-clearance: 64px;
   }
 
   /* The app root stays 100% of the (already fixed) viewport height. */
@@ -70,7 +44,7 @@
     height: 100dvh;
   }
 
-  /* Explorer: open = full-screen drawer, collapsed = bottom icon rail. */
+  /* Explorer open = full-screen drawer. */
   .explorer,
   .explorer.fill {
     position: fixed;
@@ -86,20 +60,34 @@
   .explorer-resize-handle {
     display: none;
   }
+
+  /* Explorer collapsed = slim icon rail pinned to the right edge (44px touch
+     targets), the mobile equivalent of the desktop's collapsed rail. It never
+     covers the composer or the message stream. */
   .explorer.collapsed {
-    top: auto;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
     display: flex;
-    flex-direction: row;
-    height: 52px;
-    max-height: 52px;
-    border-top: 1px solid var(--border);
+    flex-direction: column;
+    width: 44px;
+    max-width: 44px;
+    min-width: 44px;
+    height: auto;
+    max-height: none;
+    border: 0;
+    border-left: 1px solid var(--border);
     border-radius: 0;
     background: var(--chrome);
+    box-shadow: none;
+    pointer-events: auto;
   }
   .explorer.collapsed .explorer-header {
     position: static;
-    flex-direction: row;
-    width: 100%;
+    flex-direction: column;
+    width: 44px;
     min-height: 0;
     padding: 0;
     border: 0;
@@ -108,37 +96,45 @@
     box-shadow: none;
     pointer-events: auto;
   }
-  .explorer.collapsed .explorer-tabs {
-    flex-direction: row;
-    width: auto;
-    flex: 1 1 auto;
-    min-height: 0;
-    padding: 0 4px;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
   .explorer.collapsed .explorer-toggle {
     order: 0;
     flex-basis: 44px;
     width: 44px;
-    height: 52px;
+    height: 44px;
     margin: 0;
     border: 0;
-    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     border-radius: 0;
   }
-  .explorer.collapsed .explorer-toggle svg {
-    transform: none;
+  .explorer.collapsed .explorer-tabs {
+    flex-direction: column;
+    width: 44px;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 4px 0;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   .explorer.collapsed .explorer-tab {
-    flex: 1 1 0;
-    width: auto;
-    height: 52px;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border-radius: 0;
   }
   .explorer.collapsed .explorer-content {
     display: none;
+  }
+
+  /* Keep the chat and composer clear of the rail while it is collapsed. */
+  .workspace:has(.explorer.collapsed) .messages {
+    padding-right: 56px;
+  }
+  .workspace:has(.explorer.collapsed) .thread-bottom {
+    padding-right: 44px;
+  }
+  .app:has(.explorer.collapsed) .tabbar {
+    padding-right: 50px;
   }
 
   /* Tab bar: compact but still swipe-scrollable. */
@@ -168,7 +164,7 @@
     opacity: 1;
   }
 
-  /* Chat transcript. */
+  /* Transcript. */
   .turn {
     gap: 12px;
   }
@@ -183,7 +179,7 @@
     display: none;
   }
 
-  /* Composer: full-width, thumb-friendly, no iOS zoom-on-focus. */
+  /* Composer: docked, full-width, thumb-friendly, no iOS zoom-on-focus. */
   .thread-bottom {
     padding-right: 0;
   }
@@ -205,6 +201,21 @@
   .composer button,
   .head-btn {
     min-height: 38px;
+  }
+}
+
+/* ─────────────────────────── 700px: phones ─────────────────────────────── */
+@media (max-width: 700px) {
+  /* Readability: the message stream is the product — bump chat text. */
+  .messages {
+    --chat-gutter: 12px;
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 15px;
+  }
+  .msg.assistant .prose {
+    font-size: 15px;
+    line-height: 1.65;
   }
 
   /* Dropdown menus become bottom sheets. */
