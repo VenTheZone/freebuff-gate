@@ -1,0 +1,293 @@
+/**
+ * mobile-ui.css — responsive adaptation for the Freebuff Desktop browser UI.
+ *
+ * The desktop UI is a three-zone layout: a top tab bar (.tabbar), a chat
+ * workspace (.workspace) with a floating explorer panel (.explorer) docked on
+ * the right, and a centered composer (.composer). On phones that reads as a
+ * mess: the explorer eats the viewport, the chat is squeezed by reserves, and
+ * menus/modals/touch targets are built for a mouse.
+ *
+ * This stylesheet is injected AFTER the app's own stylesheet (see the
+ * tailnet-proxy injection), so plain overrides win. Everything is scoped to
+ * narrow viewports — desktops are untouched.
+ *
+ *   900px  tablet breakpoint — compact explorer, tighter gutters
+ *   700px  phone breakpoint  — full mobile layout (drawer explorer, bottom
+ *          sheets, full-width chat, safe-area padding)
+ *   480px  small-phone tweaks
+ */
+
+/* ─────────────────────────── 900px: tablets & small windows ────────────── */
+@media (max-width: 900px) {
+  /* Reserve space for a narrower explorer and stop hover-only affordances. */
+  .app,
+  .workspace {
+    --explorer-reserve: 0px;
+  }
+  .explorer {
+    width: 280px;
+    max-width: min(320px, calc(100vw - 32px));
+  }
+  .explorer-resize-handle {
+    display: none;
+  }
+  .messages {
+    --chat-gutter: 18px;
+  }
+  .tabbar {
+    height: 48px;
+    padding: 0 6px;
+  }
+  .tab {
+    flex-basis: 150px;
+    min-width: 130px;
+  }
+}
+
+/* ─────────────────────────── 700px: phones ─────────────────────────────── */
+@media (max-width: 700px) {
+  /* Zero every desktop-side reserve so the chat uses the full width. */
+  .app,
+  .workspace {
+    --explorer-reserve: 0px;
+  }
+  .thread-body,
+  .thread-body:has(.prompt-rail) {
+    --rail-reserve: 0px;
+  }
+  .thread-body {
+    padding-right: 0;
+  }
+  .messages {
+    --chat-gutter: 12px;
+    padding-left: 12px;
+    padding-right: 12px;
+    --working-clearance: 60px;
+  }
+
+  /* The app root stays 100% of the (already fixed) viewport height. */
+  .app {
+    height: 100dvh;
+  }
+
+  /* Explorer: open = full-screen drawer, collapsed = bottom icon rail. */
+  .explorer,
+  .explorer.fill {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .explorer-resize-handle {
+    display: none;
+  }
+  .explorer.collapsed {
+    top: auto;
+    display: flex;
+    flex-direction: row;
+    height: 52px;
+    max-height: 52px;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: var(--chrome);
+  }
+  .explorer.collapsed .explorer-header {
+    position: static;
+    flex-direction: row;
+    width: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    pointer-events: auto;
+  }
+  .explorer.collapsed .explorer-tabs {
+    flex-direction: row;
+    width: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .explorer.collapsed .explorer-toggle {
+    order: 0;
+    flex-basis: 44px;
+    width: 44px;
+    height: 52px;
+    margin: 0;
+    border: 0;
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+  }
+  .explorer.collapsed .explorer-toggle svg {
+    transform: none;
+  }
+  .explorer.collapsed .explorer-tab {
+    flex: 1 1 0;
+    width: auto;
+    height: 52px;
+    padding: 0;
+    border-radius: 0;
+  }
+  .explorer.collapsed .explorer-content {
+    display: none;
+  }
+
+  /* Tab bar: compact but still swipe-scrollable. */
+  .tabbar {
+    height: 48px;
+    padding: 0 6px;
+  }
+  .tab {
+    flex-basis: 132px;
+    min-width: 116px;
+    max-width: 200px;
+    height: 40px;
+    font-size: 12px;
+  }
+  .tab.home {
+    flex-basis: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    height: 40px;
+  }
+  .tab-new {
+    width: 34px;
+    height: 34px;
+  }
+  .tab-close,
+  .tab-popout {
+    opacity: 1;
+  }
+
+  /* Chat transcript. */
+  .turn {
+    gap: 12px;
+  }
+  .msg.user .bubble {
+    max-width: 88%;
+    max-height: 32vh;
+  }
+  .msg-actions {
+    opacity: 1;
+  }
+  .prompt-rail {
+    display: none;
+  }
+
+  /* Composer: full-width, thumb-friendly, no iOS zoom-on-focus. */
+  .thread-bottom {
+    padding-right: 0;
+  }
+  .composer {
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+  }
+  .composer textarea {
+    font-size: 16px;
+    min-height: 46px;
+    max-height: 120px;
+    border-radius: 10px;
+  }
+  .composer-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .composer-row button,
+  .composer button,
+  .head-btn {
+    min-height: 38px;
+  }
+
+  /* Dropdown menus become bottom sheets. */
+  .header-menu,
+  .agent-menu {
+    position: fixed;
+    top: auto;
+    right: 8px;
+    left: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    min-width: 0;
+    max-height: 55vh;
+    max-width: none;
+    border-radius: 12px;
+    overflow-y: auto;
+  }
+  .composer-menu .header-menu {
+    top: auto;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Modals slide up as bottom sheets. */
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 8px;
+  }
+  .modal-panel {
+    width: 100%;
+    max-width: 100%;
+    max-height: 88dvh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  /* Misc chrome. */
+  .app-corner {
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+  .new-thread-theme {
+    top: 10px;
+    right: 10px;
+  }
+  .edit-banner {
+    width: calc(100% - 24px);
+  }
+  .attachment-lightbox-close {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* ─────────────────────────── 480px: small phones ───────────────────────── */
+@media (max-width: 480px) {
+  .messages {
+    --chat-gutter: 8px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .composer {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .tab {
+    flex-basis: 116px;
+    min-width: 104px;
+  }
+  .msg.user .bubble {
+    max-width: 92%;
+  }
+}
+
+/* Global mobile hygiene (not viewport-scoped — harmless everywhere). */
+.tabbar button,
+.explorer button,
+.composer button,
+.head-btn,
+.workspace-trigger,
+.attachment-image-remove,
+.attachment-lightbox-close {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  -webkit-text-size-adjust: 100%;
+}

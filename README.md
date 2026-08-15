@@ -14,6 +14,9 @@ small reference implementation (`src/folder-select.js`) of that tweak.
 | --- | --- |
 | `.fb-browser-ui.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs, and the `folderSelection` tweak block). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
+| `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
+| `src/mobile-ui.css` | Responsive adaptation for the browser UI on phones/tablets (injected by the tailnet proxy). |
+| `src/mobile-ui.js` | Tiny mobile helpers: viewport meta patch + dynamic viewport height. |
 | `.env.example` | Non-secret env template. Real values go in a git-ignored `.env`. |
 | `.gitignore` | Excludes every secret and piece of runtime state from the repo. |
 
@@ -68,6 +71,48 @@ document.querySelector("#pick-folder").addEventListener("click", async () => {
 const handle = await restoreLastFolder(cfg);
 ```
 
+## Serving ads to the browser UI
+
+The browser port shows the same sponsored ads as the native desktop window —
+there is no forwarding toggle. The UI fetches a banner ad from the desktop
+orchestrator (`POST /api/ad/slot`) and renders inline ad cards inside long
+assistant responses; the orchestrator auctions both placements server-side
+against `https://www.codebuff.com/api/v1/ads` using the auth token in
+`~/.config/freebuff-desktop/state.json`. If the network returns an empty
+`ads` array (no fill), nothing renders — which is expected and not a config
+issue. `src/check-ads.js` polls that auction so you can watch for real fill:
+
+```bash
+node src/check-ads.js            # poll every 60s until an ad fills
+node src/check-ads.js --once     # single auction check
+```
+
+## Mobile adaptation
+
+The desktop UI targets a mouse and a wide window; on a phone it falls apart
+(the explorer panel and side reserves eat the viewport, menus are hover-first,
+and inputs zoom on focus). `src/mobile-ui.css` + `src/mobile-ui.js` fix that
+for narrow viewports:
+
+- **900px** — compact explorer, tighter gutters, no hover-only handles.
+- **700px (phones)** — the explorer becomes a full-screen drawer that
+  collapses to a bottom icon rail, the chat uses the full width, dropdown
+  menus and modals become bottom sheets, the composer gets 16px input text
+  (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
+- **480px** — further tightening for small phones.
+
+The tailnet proxy injects these after the app's own stylesheet, so the
+overrides win and desktop viewports are untouched:
+
+```js
+// in the proxy's HTML injection branch (where SHIM is injected):
+body = body.replace(marker, MOBILE_TAG('css') + MOBILE_TAG('js') + SHIM + marker);
+```
+
+where `MOBILE_TAG` inlines `src/mobile-ui.css` / `src/mobile-ui.js` into
+`<style>` / `<script>` tags read fresh per request (edit the files, reload
+the page — no proxy restart needed).
+
 ## Secrets
 
 This repo must stay free of secrets. The `.gitignore` excludes `.env*`,
@@ -89,5 +134,8 @@ FB-Browser-UI/
 ├── .gitignore               # secrets and runtime state stay out
 ├── README.md
 └── src/
-    └── folder-select.js     # the folder-selection tweak implementation
+    ├── folder-select.js     # the folder-selection tweak implementation
+    ├── check-ads.js         # ad-auction poller (watch for real fill)
+    ├── mobile-ui.css        # mobile/tablet responsive layer (proxy-injected)
+    └── mobile-ui.js         # viewport/touch helpers for phones
 ```
