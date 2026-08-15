@@ -44,97 +44,54 @@
     height: 100dvh;
   }
 
-  /* Explorer open = full-screen drawer. */
-  .explorer,
-  .explorer.fill {
-    position: fixed;
-    inset: 0;
-    z-index: 55;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-  .explorer-resize-handle {
+  /* Explorer: hidden by default; it opens as a sliding panel from the right
+     when summoned (header .fb-panel-toggle, see mobile-ui.js). The collapsed
+     icon rail is removed entirely so nothing sticks out into the chat. */
+  .explorer.collapsed {
     display: none;
   }
-
-  /* Explorer collapsed = slim icon rail pinned to the right edge (44px touch
-     targets), the mobile equivalent of the desktop's collapsed rail. It never
-     covers the composer or the message stream. */
-  .explorer.collapsed {
+  .explorer,
+  .explorer.fill {
     position: fixed;
     top: 0;
     right: 0;
     bottom: 0;
     left: auto;
-    display: flex;
-    flex-direction: column;
-    width: 44px;
-    max-width: 44px;
-    min-width: 44px;
-    height: auto;
+    z-index: 55;
+    width: min(88vw, 380px);
+    max-width: min(88vw, 380px);
+    min-width: 0;
+    height: 100dvh;
     max-height: none;
+    margin: 0;
     border: 0;
     border-left: 1px solid var(--border);
     border-radius: 0;
-    background: var(--chrome);
-    box-shadow: none;
-    pointer-events: auto;
+    box-shadow: -10px 0 36px color-mix(in srgb, var(--shadow) 38%, transparent);
+    animation: fb-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
   }
-  .explorer.collapsed .explorer-header {
-    position: static;
-    flex-direction: column;
-    width: 44px;
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-    pointer-events: auto;
-  }
-  .explorer.collapsed .explorer-toggle {
-    order: 0;
-    flex-basis: 44px;
-    width: 44px;
-    height: 44px;
-    margin: 0;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    border-radius: 0;
-  }
-  .explorer.collapsed .explorer-tabs {
-    flex-direction: column;
-    width: 44px;
-    flex: 1 1 auto;
-    min-height: 0;
-    padding: 4px 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-  .explorer.collapsed .explorer-tab {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: 0;
-  }
-  .explorer.collapsed .explorer-content {
+  .explorer-resize-handle {
     display: none;
   }
+  /* The panel header keeps the app's tab strip; the toggle (the app's own
+     collapse control) becomes a clear close button on the right. */
+  .explorer .explorer-toggle {
+    order: 1;
+    flex: none;
+    width: 38px;
+    height: 38px;
+    margin: 0 2px 0 auto;
+    border-radius: 9px;
+    color: var(--muted);
+  }
+  .explorer .explorer-toggle:active {
+    background: var(--raised);
+    color: var(--text);
+  }
 
-  /* Keep the chat and composer clear of the rail while it is collapsed. */
-  .workspace:has(.explorer.collapsed) .messages {
-    padding-right: 56px;
-  }
-  .workspace:has(.explorer.collapsed) .thread-bottom {
-    padding-right: 44px;
-  }
-  .app:has(.explorer.collapsed) .tabbar {
-    padding-right: 50px;
+  /* Report/feedback pill moved into the thread menu on mobile. */
+  .app-corner .global-feedback {
+    display: none;
   }
 
   /* Slim header: hide the tab strip, keep the home tab as a back button and
@@ -227,6 +184,49 @@
   .composer {
     padding: 10px 10px calc(12px + env(safe-area-inset-bottom, 0px));
     gap: 8px;
+  }
+  /* The context chips row (agent/model/effort/workspace) over-extends the
+     composer on a phone, so it collapses into a floating button (see
+     .fb-ctx-fab) and only appears as a floating card above the composer
+     while open (.fb-ctx-open on <html>, toggled by mobile-ui.js). */
+  .composer-context {
+    display: none;
+  }
+  /* The composer's action row collapses into the floating context card: the
+     input area is just the textarea (Enter still sends). Attach / stop /
+     stash / send live in the card opened by .fb-ctx-fab. The .stash
+     container itself stays (the stash popup anchors to it); only its toggle
+     is hidden. */
+  .composer-row .attach,
+  .composer-row .stop,
+  .composer-row .send-key,
+  .composer-row .composer-length,
+  .composer-row .stash-key {
+    display: none;
+  }
+  .fb-ctx-open .composer-context {
+    display: flex;
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: calc(100% + 58px);
+    z-index: 56;
+    max-height: 40vh;
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+    box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 42%, transparent);
+    animation: fb-ctx-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  /* Closing: the card slides back down toward the button and fades out
+     (mobile-ui.js adds .fb-ctx-closing, then removes .fb-ctx-open). */
+  .fb-ctx-open .composer-context.fb-ctx-closing {
+    animation: none;
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
   }
   .composer textarea {
     font-size: 16px;
@@ -414,6 +414,154 @@
 }
 .fb-tab-menu-item[aria-checked="true"] .fb-tab-menu-check {
   opacity: 1;
+}
+
+/* Scrim behind the sliding tools panel (mobile-ui.js): a dimmed overlay
+   that closes the panel when tapped. */
+.fb-panel-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: color-mix(in srgb, var(--shadow) 45%, transparent);
+  animation: fb-fade-in 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+@keyframes fb-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fb-panel-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+/* Floating button that summons the composer's context chips (agent/model/
+   effort/workspace) — mobile-ui.js. Anchored to the docked composer, floats
+   just above it; the chips card opens above the button, so neither overlaps.
+   The icon swaps to an X while the card is open. */
+.fb-ctx-fab {
+  position: absolute;
+  right: 12px;
+  bottom: calc(100% + 10px);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow) 30%, transparent);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-ctx-fab:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-ctx-fab:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* The button's chevron: points up when the card is closed (it will slide up
+   from behind the button) and rotates smoothly to point down while open. */
+.fb-ctx-fab .fb-ctx-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.fb-ctx-fab.open .fb-ctx-chev {
+  transform: rotate(180deg);
+}
+@keyframes fb-ctx-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+/* Action bar inside the floating context card (mobile-ui.js) — attach /
+   stop / stash / send, separated from the chips by a divider. Each button
+   clicks the app's own (hidden) original, so behaviors stay native. */
+.fb-ctx-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.fb-ctx-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-ctx-action:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-ctx-action.stop {
+  background: color-mix(in srgb, var(--danger) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+}
+.fb-ctx-action.send {
+  margin-left: auto;
+  color: var(--faint);
+}
+.fb-ctx-action.send.ready {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* Header button that summons the sliding tools panel (mobile-ui.js). The
+   explorer itself is hidden on mobile; this is the only way in, and it hides
+   while the panel is open (the panel covers the header). */
+.fb-panel-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-panel-toggle:hover,
+.fb-panel-toggle:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-panel-toggle:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Session switcher (mobile-ui.js): a slim header button + dropdown listing

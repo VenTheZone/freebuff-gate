@@ -308,6 +308,15 @@
             },
           },
           {
+            // The report/feedback pill is hidden on mobile (moved here);
+            // clicking reopens the app's own feedback modal via its button.
+            label: 'Report an issue',
+            action: function () {
+              var fb = document.querySelector('.global-feedback');
+              if (fb) fb.click();
+            },
+          },
+          {
             label: 'Close',
             danger: true,
             action: function () {
@@ -858,6 +867,317 @@
     });
   }
 
+  // Sliding tools panel (mobile): the explorer is hidden on mobile — no
+  // open drawer, no collapsed rail. A header button (.fb-panel-toggle)
+  // summons it as a panel that slides in from the right over the chat,
+  // with a dimmed scrim behind; tapping the scrim, the panel header's own
+  // close (the app's .explorer-toggle), or Escape dismisses it. It toggles
+  // via the app's own collapse control, so uiPrefs.explorerCollapsed stays
+  // consistent and persists.
+  var panelBound = false;
+  function sidePanel() {
+    if (panelBound) return;
+    panelBound = true;
+    if (!window.matchMedia(MOBILE).matches) return;
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
+
+      var scrim = null;
+      function explorer() {
+        return document.querySelector('.explorer');
+      }
+      function isOpen() {
+        var e = explorer();
+        return !!e && !e.classList.contains('collapsed');
+      }
+      function removeScrim() {
+        if (scrim) {
+          scrim.remove();
+          scrim = null;
+        }
+      }
+      function toggleViaApp() {
+        var e = explorer();
+        if (!e) return;
+        var t = e.querySelector('.explorer-toggle');
+        if (t) t.click(); // the app's own expand/collapse control
+      }
+      function closePanel() {
+        var e = explorer();
+        if (e && !e.classList.contains('collapsed')) toggleViaApp();
+      }
+      function sync() {
+        if (!window.matchMedia(MOBILE).matches) {
+          btn.style.display = 'none';
+          removeScrim();
+          return;
+        }
+        var open = isOpen();
+        btn.style.display = open ? 'none' : '';
+        if (open && !scrim) {
+          scrim = document.createElement('div');
+          scrim.className = 'fb-panel-scrim';
+          scrim.setAttribute('aria-hidden', 'true');
+          scrim.addEventListener('click', closePanel);
+          document.body.appendChild(scrim);
+        } else if (!open && scrim) {
+          removeScrim();
+        }
+      }
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fb-panel-toggle';
+      btn.setAttribute('aria-label', 'Open tools panel');
+      btn.title = 'Tools';
+      btn.innerHTML =
+        '<svg width="17" height="17" viewBox="0 0 16 16" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+        'stroke-linejoin="round" aria-hidden="true">' +
+        '<rect x="1.5" y="2.5" width="13" height="11" rx="2"/>' +
+        '<path d="M6 2.5v11"/></svg>';
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        toggleViaApp();
+      });
+      var anchor =
+        tabbar.querySelector('.fb-session-switch') ||
+        tabbar.querySelector('.conn-status') ||
+        null;
+      tabbar.insertBefore(btn, anchor);
+
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') closePanel();
+      });
+      // React re-renders constantly; class changes on the explorer (open /
+      // collapsed) plus its mount/unmount are enough to keep scrim + button
+      // in sync.
+      new MutationObserver(sync).observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+      sync();
+    });
+  }
+
+  // Composer context chips (agent/model/effort/workspace) collapse into a
+  // floating button on mobile so the composer stays clean (see
+  // mobile-ui.css). Tapping the button pops the chips up as a floating card
+  // above the composer; outside tap, Escape, scroll, or resize dismisses it.
+  var ctxBound = false;
+  function composerCtx() {
+    if (ctxBound) return;
+    ctxBound = true;
+    if (!window.matchMedia(MOBILE).matches) return;
+    waitForEl('.composer', function () {
+      var composer = document.querySelector('.composer');
+      if (!composer) return;
+
+      var fab = null;
+      var popupEl = null;
+      var closingTimer = null;
+      function isOpen() {
+        return root.classList.contains('fb-ctx-open');
+      }
+      function makeFab() {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'fb-ctx-fab';
+        b.setAttribute('aria-label', 'Agent and model settings');
+        b.title = 'Agent & model';
+        var chev = document.createElement('span');
+        chev.className = 'fb-ctx-chev';
+        chev.setAttribute('aria-hidden', 'true');
+        chev.innerHTML =
+          '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+          'stroke-linejoin="round"><path d="M4 9.5 8 5.5l4 4"/></svg>';
+        b.appendChild(chev);
+        if (isOpen()) b.classList.add('open');
+        b.setAttribute('aria-expanded', String(isOpen()));
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          toggle();
+        });
+        return b;
+      }
+      function syncFab() {
+        if (!fab) return;
+        var open = isOpen();
+        fab.classList.toggle('open', open);
+        fab.setAttribute('aria-expanded', String(open));
+      }
+      function open() {
+        clearTimeout(closingTimer);
+        if (popupEl) popupEl.classList.remove('fb-ctx-closing');
+        root.classList.add('fb-ctx-open');
+        popupEl = composer.querySelector('.composer-context');
+        syncFab();
+      }
+      function finishClose() {
+        clearTimeout(closingTimer);
+        root.classList.remove('fb-ctx-open');
+        if (popupEl) popupEl.classList.remove('fb-ctx-closing');
+        popupEl = null;
+        syncFab();
+      }
+      function close() {
+        if (!isOpen()) return;
+        popupEl = composer.querySelector('.composer-context');
+        syncFab(); // chevron flips down while the card slides away
+        if (!popupEl) {
+          finishClose();
+          return;
+        }
+        popupEl.classList.add('fb-ctx-closing');
+        var done = function () {
+          finishClose();
+        };
+        popupEl.addEventListener('transitionend', done, { once: true });
+        closingTimer = setTimeout(done, 260); // safety net
+      }
+      function toggle() {
+        if (isOpen()) close();
+        else open();
+      }
+
+      // Action bar inside the card: attach / stop / stash / send. The app's
+      // own buttons in .composer-row are hidden on mobile (CSS); each card
+      // button clicks the hidden original so every behavior stays native.
+      var actions = null;
+      var stopBtn = null;
+      var stashBtn = null;
+      var sendBtn = null;
+      function actionBtn(cls, label, iconPath, onClick) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'fb-ctx-action ' + cls;
+        b.setAttribute('aria-label', label);
+        b.title = label;
+        b.innerHTML =
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' + iconPath + '</svg>';
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          onClick();
+        });
+        return b;
+      }
+      function makeActions() {
+        var wrap = document.createElement('div');
+        wrap.className = 'fb-ctx-actions';
+        wrap.appendChild(
+          actionBtn(
+            'attach',
+            'Attach files, photos, or a folder',
+            '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+            function () {
+              var a = composer.querySelector('.composer-row .attach');
+              if (a) a.click();
+            },
+          ),
+        );
+        stashBtn = actionBtn(
+          'stash',
+          'Open the stash',
+          '<path d="M22 12h-6l-2 3h-4l-2-3H2"/>' +
+            '<path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+          function () {
+            var k = composer.querySelector('.composer-row .stash-key');
+            if (k) k.click();
+          },
+        );
+        wrap.appendChild(stashBtn);
+        stopBtn = actionBtn(
+          'stop',
+          'Stop the running turn',
+          '<rect x="4" y="4" width="16" height="16" rx="3"/>',
+          function () {
+            var s = composer.querySelector('.composer-row .stop');
+            if (s) s.click();
+          },
+        );
+        wrap.appendChild(stopBtn);
+        sendBtn = actionBtn(
+          'send',
+          'Send message',
+          '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
+          function () {
+            var s = composer.querySelector('.composer-row .send-key');
+            if (s) s.click();
+          },
+        );
+        wrap.appendChild(sendBtn);
+        return wrap;
+      }
+      function syncActions() {
+        if (!actions) return;
+        var row = composer.querySelector('.composer-row');
+        if (!row) return;
+        stopBtn.style.display = row.querySelector('.stop') ? '' : 'none';
+        stashBtn.style.display = row.querySelector('.stash-key') ? '' : 'none';
+        sendBtn.classList.toggle(
+          'ready',
+          !!row.querySelector('.send-key.ready'),
+        );
+      }
+
+      fab = makeFab();
+      composer.appendChild(fab);
+      actions = makeActions();
+
+      // React re-renders the composer and can wipe injected elements —
+      // re-insert the fab and the action bar (with current state), and keep
+      // the stop/stash/send state in sync with the app's own buttons.
+      new MutationObserver(function () {
+        if (!composer.contains(fab)) {
+          fab = makeFab();
+          composer.appendChild(fab);
+        }
+        var card = composer.querySelector('.composer-context');
+        if (card && !card.contains(actions)) {
+          card.appendChild(actions);
+        }
+        syncActions();
+      }).observe(composer, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+      syncActions();
+
+      document.addEventListener(
+        'click',
+        function (ev) {
+          if (!isOpen()) return;
+          var popup = composer.querySelector('.composer-context');
+          if (popup && popup.contains(ev.target)) return;
+          if (fab && fab.contains(ev.target)) return;
+          // The model-sheet close button lives in <body> (outside the popup)
+          // — dismissing the sheet shouldn't also dismiss the popup.
+          if (
+            ev.target.closest &&
+            ev.target.closest('.fb-model-sheet-close')
+          ) {
+            return;
+          }
+          close();
+        },
+        true,
+      );
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') close();
+      });
+      window.addEventListener('resize', close);
+      window.addEventListener('scroll', close, true);
+    });
+  }
+
   // Thread-window (popout) mode: the header is a bare .tabbar.threadbar
   // (title + status) with no tabs, and the browser port has no window
   // controls either. Add a back button that closes the popout and returns
@@ -921,6 +1241,8 @@
   tabTitleMenu();
   modelSheet();
   sessionSwitcher();
+  sidePanel();
+  composerCtx();
   // If the device crosses into the narrow layout later (rotation, resize),
   // collapse the explorer then too — but only once per crossing.
   var handled = mq.matches;

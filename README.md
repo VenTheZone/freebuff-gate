@@ -95,15 +95,22 @@ and inputs zoom on focus). `src/mobile-ui.css` + `src/mobile-ui.js` fix that
 for narrow viewports:
 
 - **900px** — full mobile layout: the chat goes full-bleed (all desktop
-  side-reserves zeroed), the explorer becomes a full-screen drawer and a slim
-  44px icon rail when collapsed, the composer stays docked with 16px input
+  side-reserves zeroed), the composer stays docked with 16px input
   text (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
+  The explorer is **hidden entirely** (no drawer, no rail): a header button
+  (`.fb-panel-toggle`, next to the session switcher) summons it as a
+  **sliding panel** that slides in from the right over the chat with a
+  dimmed scrim behind — dismiss it via the scrim, the panel's own close
+  (the app's collapse toggle), or Escape. It toggles through the app's own
+  control, so the collapsed preference stays persisted.
   The tab strip collapses into a **slim header**: the home tab becomes a back
   button and the active thread tab becomes a full-width title. Tapping that
   title opens a small **thread menu** (rename / move to new window / close)
   that reuses the app's own tab actions (dblclick for rename, the tab's
   pop-out and close buttons), plus an on-demand **Larger chat text**
-  accessibility toggle (persisted in localStorage). The menu opens with the
+  accessibility toggle (persisted in localStorage) and a **Report an issue**
+  entry (the bottom-right report pill is hidden on mobile — this menu is its
+  new home, reopening the app's own feedback modal). The menu opens with the
   app's popover fade/scale animation and supports **swipe-down-to-close** on
   touch.
   Since the tab strip is hidden, a **session switcher** button sits in the
@@ -144,10 +151,26 @@ for narrow viewports:
   (`src/mobile-ui.js` observes the menu, adds a fixed X, and closes it via
   Escape keydown — the app natively closes the menu on outside mousedown, so
   the button lives in `<body>` and works without touching the menu's own
-  logic). Other dropdown menus (workspace/settings, effort selector) stay
-  anchored to their triggers but widen and scroll (they must NOT become fixed
-  bottom sheets: those anchor upward with `bottom: calc(100% + …)`, which
-  goes off-screen under fixed positioning). Modals become bottom sheets.
+  logic). The composer's **context chips row** (agent / model / effort /
+  workspace selectors) is hidden and replaced by a **floating button** just
+  above the composer; tapping it pops the chips up as a floating card so the
+  composer never over-extends on narrow screens. The button is a **chevron**
+  that rotates smoothly (up when closed, down when open) while the card
+  **slides up** into place and **slides down** out of it — dismiss it with
+  the same button, an outside tap, or Escape.
+  The composer's **action row** (attach / stop / stash / send) collapses
+  into that same card too, so the input area on phones is just the
+  textarea (Enter still sends). The card's action bar shows attach always,
+  stop only while a turn is running, stash when there's something to
+  restore, and a send button that lights up when the message is ready —
+  each one clicks the app's own (hidden) button, so behaviors stay native.
+  **Model sheet note:** the full-screen sheet replaces the anchored popup
+  only on phones; the effort selector beside it keeps its native anchored
+  menu. Other dropdown menus (workspace/settings, effort selector) stay
+  anchored to their triggers but widen and scroll (they must NOT become
+  fixed bottom sheets: those anchor upward with `bottom: calc(100% + …)`,
+  which goes off-screen under fixed positioning). Modals become bottom
+  sheets.
   Text keeps the app's native sizes (no font bump, so the chat doesn't look
   zoomed in), and the viewport stays user-zoomable (no user-scalable=no
   lock).
