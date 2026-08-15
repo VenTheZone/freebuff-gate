@@ -200,4 +200,5 @@
 - Android app label is now `Freebuff Gate`; package identity remains `com.freebuff.mobile` and version is `0.1.2`/versionCode `2`.
 - No deployable staging host, DNS name, TLS certificate, cloud account, or relay enrollment secret exists in this checkout. Do not publish a public relay until operator supplies those values.
 - Freebuff Gate release `mobile-v0.1.2-freebuff-gate-test` is public and its downloaded APK hash matches the local v2-signed debug build.
-- CI rerun after token-preservation fix still fails only at the WebView-ready assertion; instrumentation now records connection-state text, WebView visibility, URL, title, progress, and content height in failure output.
+- CI run `31889798169` diagnostics showed `Pairing failed (404): Pairing request is missing or expired`; the fixture's 60-second pairing TTL expired while hosted emulator setup completed.
+- CI-only fixture TTL is now 600 seconds, with production/default pairing expiry unchanged. The next Android workflow run will validate claim, refresh, cookie exchange, and WebView load again.

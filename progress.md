@@ -516,4 +516,5 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Local validation passed: Gradle `lintDebug`, debug APK, instrumentation APK, 21/21 Node relay tests, and APK compilation.
 - Public staging relay deployment remains blocked because checkout contains no host, domain, or deployment credentials.
 - Published `mobile-v0.1.2-freebuff-gate-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.2-freebuff-gate-test; public APK hash `13f5b6516ebc3dffeda3993606d7c0c2b8551655084fdadbdc809c8907262f37` matches checksum sidecar.
-- Android CI run `31889798169` rebuilt seven instrumentation tests but the WebView test still failed after the refresh-token fix; added final state/URL/title/progress diagnostics to the test for the next CI run.
+- Android CI run `31889798169` diagnostics showed `Pairing failed (404): Pairing request is missing or expired`; the fixture's 60-second token expired during hosted emulator startup.
+- Increased CI-only fixture pairing TTL to 600 seconds; production/default pairing TTL remains unchanged. Node syntax and 21/21 relay tests pass. A final CI rerun is pending.

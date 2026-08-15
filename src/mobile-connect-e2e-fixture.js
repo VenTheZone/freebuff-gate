@@ -115,7 +115,8 @@ async function startFixture(options = {}) {
       appUrl: `${publicHttpUrl}/pair`,
       relayUrl: publicWsUrl,
       uiUrl: publicHttpUrl,
-      ttlSeconds: 60,
+      // Emulator boot and APK installation can exceed one minute on hosted runners.
+      ttlSeconds: 600,
     });
     fs.mkdirSync(path.dirname(pairingFile), { recursive: true, mode: 0o700 });
     fs.writeFileSync(pairingFile, `${JSON.stringify({

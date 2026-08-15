@@ -235,7 +235,7 @@ Selected project:
 - Preserve device refresh token when gateway refresh response omits raw token; add instrumentation regression coverage. **Done locally.**
 - Build/lint debug APK and instrumentation APK. **Done locally.**
 - Commit/push source and publish clearly named Freebuff Gate test APK. **Done: `13aad49`, `mobile-v0.1.2-freebuff-gate-test`.**
-- Rerun Android CI after refresh fix and inspect emulator result. **In progress: run `31889798169` still fails WebView assertion; diagnostic state capture added for next run.**
+- Rerun Android CI after refresh fix and inspect emulator result. **In progress: run `31889798169` exposed 60-second fixture-token expiry; CI fixture now uses 600 seconds, rerun pending.**
 - Deploy public staging HTTPS/WSS relay and run real phone claim/reconnect/revoke test. **Blocked: no staging host, domain, or deployment credentials are present in checkout.**
 
 ## Acceptance criteria
