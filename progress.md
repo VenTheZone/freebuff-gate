@@ -480,4 +480,13 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Changed generic Android builds to leave pairing/WebView origins empty; app now binds pairing to exact HTTPS QR origin and dynamic WebView origin to claimed gateway, while Gradle-pinned CI/production origins remain enforced.
 - Local Gradle 8.9/API 35 validation passed: lint, debug APK, instrumentation APK, and APK v2 signature verification.
 - Generic debug APK checksum: `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
-- Changes remain uncommitted; next step is push, rerun Android workflow, download APK, and publish labeled pre-release.
+- Changes were committed as `b461b24` and pushed to `origin/main`.
+
+## 2026-08-15 — Android test release published
+
+- Dispatched Android workflow run `31885659309` against `b461b24`.
+- Relay integration passed. Android lint/assembly and debug APK signature verification passed. The emulator ran all six tests; five passed, while `MobilePairingE2EInstrumentedTest` failed its `Freebuff E2E Ready` WebView assertion after 45 seconds.
+- Downloaded and verified CI APK artifact separately: Android debug v2 signature valid. CI artifact is pinned to emulator relay origin and was not published for phone use.
+- Published generic local debug APK as pre-release `mobile-v0.1.0-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.0-test
+- Verified public asset download checksum: `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
+- Release is installable for controlled testing, but no public managed relay is configured; real phone pairing still needs a reachable HTTPS relay and follow-up E2E fix.

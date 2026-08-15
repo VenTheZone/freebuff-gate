@@ -216,12 +216,12 @@ Selected project:
 - Keep filter selection stable while catalog/model/status data refreshes and show a clear no-match state. **Done: option DOM is preserved when labels do not change.**
 - Cover model selection, row visibility, Recent filtering, accessibility, reset to All models, and desktop scoping in Chromium regression. **Done.**
 
-### Phase 24 — Android test publication (in progress)
+### Phase 24 — Android test publication (published; E2E follow-up pending)
 
 - Make generic debug APKs usable with a QR-provided HTTPS relay while retaining pinned-origin CI/production builds. **Done.**
-- Fix Android emulator workflow command folding and always upload verified debug APK after test failure. **Done locally; pending remote run.**
-- Push release changes, rerun Android CI, and inspect APK/instrumentation artifacts. **Pending.**
-- Publish clearly labeled pre-release APK; production relay and release signing remain separate. **Pending.**
+- Fix Android emulator workflow command folding and always upload verified debug APK after test failure. **Done.**
+- Push release changes, rerun Android CI, and inspect APK/instrumentation artifacts. **Done: run `31885659309` built and signature-verified APK; relay integration passed.**
+- Publish clearly labeled pre-release APK; production relay and release signing remain separate. **Done: `mobile-v0.1.0-test`; real relay WebView-load test remains follow-up.**
 
 ## Acceptance criteria
 
@@ -269,4 +269,6 @@ Selected project:
 | `Chrome DevTools page target unavailable` in GitHub run `31881849921` | `browser-actions/setup-chrome` binary path was not passed explicitly and original launch wait was 5 seconds | Pass `steps.setup-chrome.outputs.chrome-path` as `FB_CHROME_BIN` and wait up to 15 seconds; rerun after current changes are published. |
 | `Chrome DevTools page target unavailable` in GitHub run `31883126075` | Manual dispatch ran remote `main` at stale `7c3d251`; remote workflow lacked local Chrome-path hardening and failed before capture | Publish current workflow/source changes, then dispatch again; no remote artifact exists. |
 | `HTTP 422: No ref found for: 5dd5e80` | GitHub Actions dispatch received short commit SHA as ref | Dispatch against `main`, which currently points to pushed commit `5dd5e80`. |
+| `Release.target_commitish is invalid` | First GitHub release attempt used short commit target `b461b24` | Recreated release against full commit SHA; asset upload succeeded. |
+| `java.lang.AssertionError: Android app did not load relay UI` | GitHub run `31885659309` reached all six instrumentation tests but relay WebView E2E did not become ready | Keep verified debug APK published; inspect app/relay E2E logs before calling mobile pairing validated. |
 | `Task '\\' not found in root project 'FreebuffMobile' and its subprojects.` | Android emulator action received multiline Gradle continuation characters as a literal task | Fold emulator script into one shell command; make APK verification/upload run with `if: always()`. |
