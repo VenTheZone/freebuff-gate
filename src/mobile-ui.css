@@ -273,11 +273,29 @@
     overflow-y: auto;
     border-radius: 12px;
   }
-  /* The model picker stays anchored above its trigger in the composer
-     context row; make sure it spans the viewport width. */
+  /* Model picker: full-screen sheet on phones for a native feel. The app
+     sets an inline max-height from the trigger position, so beat it with
+     !important; the close button (injected by mobile-ui.js) lives in <body>,
+     so the app's own outside-mousedown handler closes the sheet. */
   .composer-context .agent-menu {
-    right: 8px;
-    max-width: calc(100vw - 16px);
+    position: fixed;
+    inset: 0;
+    z-index: 58;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+    overflow-y: auto;
+    padding: calc(env(safe-area-inset-top, 0px) + 6px) 6px
+      calc(env(safe-area-inset-bottom, 0px) + 6px);
+  }
+  .composer-context .agent-menu .agent-menu-header {
+    padding-right: 48px;
   }
 
   /* Modals slide up as bottom sheets. */
@@ -396,6 +414,226 @@
 }
 .fb-tab-menu-item[aria-checked="true"] .fb-tab-menu-check {
   opacity: 1;
+}
+
+/* Session switcher (mobile-ui.js): a slim header button + dropdown listing
+   the open sessions. The tab strip is hidden on phones, so this is the
+   mobile way to switch; picking one clicks the app's own .tab-select.
+   The button sits before the status pill in the 48px header. */
+.fb-session-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-session-switch:hover,
+.fb-session-switch:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-session-switch:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.fb-session-menu {
+  position: fixed;
+  top: 52px;
+  right: 8px;
+  z-index: 50;
+  min-width: 230px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(70dvh, 480px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 42%, transparent);
+  font-size: 13.5px;
+  /* Matches the app's own popover family (fb-menu-in, same as tab menu). */
+  animation: fb-menu-in 0.12s ease;
+}
+.fb-session-menu-title {
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.fb-session-menu-empty {
+  padding: 10px 8px;
+  color: var(--faint);
+  font-size: 13px;
+}
+.fb-session-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  touch-action: manipulation;
+}
+.fb-session-menu-item:hover,
+.fb-session-menu-item:focus-within {
+  background: var(--raised);
+}
+.fb-session-menu-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 8px 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-session-menu-item.active {
+  color: var(--accent);
+}
+.fb-session-menu-item.active .fb-session-menu-select {
+  font-weight: 600;
+}
+.fb-session-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-session-menu-check {
+  flex: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+/* Per-session close button: closes the session via the app's .tab-close. */
+.fb-session-menu-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-session-menu-close:hover,
+.fb-session-menu-close:active {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+/* Recent (closed) sessions — filled from /api/projects by mobile-ui.js. */
+.fb-session-menu-recent {
+  margin-top: 4px;
+}
+.fb-session-menu-section {
+  padding: 6px 8px 5px;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fb-session-menu-item.recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-session-menu-item.recent:hover {
+  background: var(--raised);
+}
+.fb-session-menu-time {
+  flex: none;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.fb-session-menu-foot {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.fb-session-menu-item.foot {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-session-menu-item.foot:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* Close button for the full-screen model-picker sheet (mobile-ui.js). */
+.fb-model-sheet-close {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: 10px;
+  z-index: 59;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-model-sheet-close:hover,
+.fb-model-sheet-close:active {
+  background: var(--raised);
+  color: var(--text);
 }
 
 /* Thread-window (popout) back button — the browser port has no tabs or

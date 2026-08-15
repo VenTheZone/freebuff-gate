@@ -106,6 +106,23 @@ for narrow viewports:
   accessibility toggle (persisted in localStorage). The menu opens with the
   app's popover fade/scale animation and supports **swipe-down-to-close** on
   touch.
+  Since the tab strip is hidden, a **session switcher** button sits in the
+  header next to the title: it opens a dropdown of the open sessions
+  (active one checked), switches by clicking the app's own `.tab-select`
+  (native tab activation → thread load), and offers **New session** (the
+  app's `.tab-new`) and **All sessions** (the home tab) shortcuts.  Each
+  session row has a **close button** that closes it via the app's own
+  `.tab-close` (which stopPropagates, so it won't also switch to it); the
+  list refreshes live as sessions open/close, and closing the active one
+  dismisses the menu. Below the open sessions, a **Recent** section lists
+  recently-active **closed** sessions from the app's own catalog API
+  (`/api/projects`, same-origin — titled, non-archived, newest first, with a
+  relative time). Picking one reopens it as a tab through the app's native
+  path: go home, select its project, and click the matching catalog row (a
+  time-based tiebreak disambiguates duplicate titles). The button appears
+  only while a session is open, the menu animates like the thread menu and
+  supports swipe-down-to-close, and it hides on the home screen (which has
+  its own catalog).
   The thread-window (popout) header gets a
   JS-injected back button too (the browser port has no tabs or window controls
   there), which closes the popout and returns focus to the opener.
@@ -113,12 +130,18 @@ for narrow viewports:
   **auto-collapses the explorer on load** (the app starts with it open, which
   would hide the whole chat on a phone) and lets the app persist that choice,
   so the chat is always visible.
-- **700px (phones)** — dropdown menus stay anchored to their triggers but
-  widen and scroll (they must NOT become fixed bottom sheets: the composer's
-  model picker and workspace menus anchor upward with `bottom: calc(100% + …)`,
-  which goes off-screen under fixed positioning). Modals become bottom
-  sheets. Text keeps the app's native sizes (no font bump, so the chat doesn't
-  look zoomed in), and the viewport stays user-zoomable (no user-scalable=no
+- **700px (phones)** — the **model picker becomes a full-screen scrollable
+  sheet** (`inset: 0`, `max-height: 100dvh !important` to beat the app's
+  inline trigger-position max-height), with a JS-injected close button
+  (`src/mobile-ui.js` observes the menu, adds a fixed X, and closes it via
+  Escape keydown — the app natively closes the menu on outside mousedown, so
+  the button lives in `<body>` and works without touching the menu's own
+  logic). Other dropdown menus (workspace/settings, effort selector) stay
+  anchored to their triggers but widen and scroll (they must NOT become fixed
+  bottom sheets: those anchor upward with `bottom: calc(100% + …)`, which
+  goes off-screen under fixed positioning). Modals become bottom sheets.
+  Text keeps the app's native sizes (no font bump, so the chat doesn't look
+  zoomed in), and the viewport stays user-zoomable (no user-scalable=no
   lock).
 - **480px** — further tightening for small phones.
 
