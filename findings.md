@@ -173,3 +173,11 @@
 - Build filter options from visible open and Recent row model labels after catalog metadata resolves. Preserve current normalized model key across live model/status polling; reset to `All models` only when selected model disappears.
 - Filtering applies to both open and Recent rows, keeps row DOM/actions intact, sets `hidden`/`aria-hidden` on non-matches, and exposes `No sessions use <model>` when selection has no matches.
 - Include `Model unavailable` as explicit option so unknown metadata remains discoverable rather than silently excluded. Desktop tab strip and desktop session behavior remain unchanged.
+
+## Android test publication design
+
+- Generic debug APKs now leave `DEFAULT_PAIRING_ORIGIN` and `DEFAULT_WEB_ORIGIN` empty. After the user scans an HTTPS QR, claim uses that exact normalized origin; no HTTP, credential-bearing, or malformed QR URL is accepted.
+- Generic WebView navigation is pinned to the claimed session's gateway origin. CI/production builds can still pass `-PfreebuffPairingOrigin` and `-PfreebuffWebOrigin` to require fixed managed-relay origins.
+- Android CI run `31885173796` built APKs and relay tests successfully but emulator action failed before tests because folded backslash continuations became literal Gradle task `\\`. APK verification/upload steps were skipped by default.
+- Workflow fix folds the emulator command into one shell line and marks APK verification/upload `if: always()`, so a later emulator regression cannot hide installable debug artifact.
+- Local generic debug build passed lint, Android test APK compilation, APK v2 signature verification, and produced `android/app/build/outputs/apk/debug/app-debug.apk`. It remains a debug-signed test build and needs a reachable HTTPS relay; no production relay or release signing credential exists in this checkout.

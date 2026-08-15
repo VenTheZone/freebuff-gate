@@ -216,6 +216,13 @@ Selected project:
 - Keep filter selection stable while catalog/model/status data refreshes and show a clear no-match state. **Done: option DOM is preserved when labels do not change.**
 - Cover model selection, row visibility, Recent filtering, accessibility, reset to All models, and desktop scoping in Chromium regression. **Done.**
 
+### Phase 24 — Android test publication (in progress)
+
+- Make generic debug APKs usable with a QR-provided HTTPS relay while retaining pinned-origin CI/production builds. **Done.**
+- Fix Android emulator workflow command folding and always upload verified debug APK after test failure. **Done locally; pending remote run.**
+- Push release changes, rerun Android CI, and inspect APK/instrumentation artifacts. **Pending.**
+- Publish clearly labeled pre-release APK; production relay and release signing remain separate. **Pending.**
+
 ## Acceptance criteria
 
 - New user needs only `freebuff phone connect` and QR scan.
@@ -261,3 +268,5 @@ Selected project:
 | Real screen-reader runtime unavailable | Linux host has no ADB device/AVD/KVM and no macOS VoiceOver tooling | Ran Chrome CDP accessibility-tree fallback; documented spoken TalkBack/VoiceOver as device-host validation. |
 | `Chrome DevTools page target unavailable` in GitHub run `31881849921` | `browser-actions/setup-chrome` binary path was not passed explicitly and original launch wait was 5 seconds | Pass `steps.setup-chrome.outputs.chrome-path` as `FB_CHROME_BIN` and wait up to 15 seconds; rerun after current changes are published. |
 | `Chrome DevTools page target unavailable` in GitHub run `31883126075` | Manual dispatch ran remote `main` at stale `7c3d251`; remote workflow lacked local Chrome-path hardening and failed before capture | Publish current workflow/source changes, then dispatch again; no remote artifact exists. |
+| `HTTP 422: No ref found for: 5dd5e80` | GitHub Actions dispatch received short commit SHA as ref | Dispatch against `main`, which currently points to pushed commit `5dd5e80`. |
+| `Task '\\' not found in root project 'FreebuffMobile' and its subprojects.` | Android emulator action received multiline Gradle continuation characters as a literal task | Fold emulator script into one shell command; make APK verification/upload run with `if: always()`. |

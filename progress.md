@@ -472,3 +472,12 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - `node --check src/mobile-ui-screenshot.test.js` passed.
 - Mobile screenshot/filter regression passed: **1/1**.
 - `git diff --check` passed.
+
+## 2026-08-15 — Android test publication started
+
+- Inspected failed Android run `31885173796`: relay integration passed, APK assembly passed, emulator boot passed, but the emulator action invoked literal Gradle task `\\` from multiline shell continuations; APK verification/upload steps were skipped because they lacked `if: always()`.
+- Hardened `.github/workflows/android.yml` by folding the emulator command to one shell line and making debug APK signature verification/upload run after instrumentation failure.
+- Changed generic Android builds to leave pairing/WebView origins empty; app now binds pairing to exact HTTPS QR origin and dynamic WebView origin to claimed gateway, while Gradle-pinned CI/production origins remain enforced.
+- Local Gradle 8.9/API 35 validation passed: lint, debug APK, instrumentation APK, and APK v2 signature verification.
+- Generic debug APK checksum: `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
+- Changes remain uncommitted; next step is push, rerun Android workflow, download APK, and publish labeled pre-release.

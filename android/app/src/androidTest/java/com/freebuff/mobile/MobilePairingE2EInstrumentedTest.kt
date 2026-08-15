@@ -37,8 +37,8 @@ class MobilePairingE2EInstrumentedTest {
         try {
             val relayOrigin = PairingApi.normalizeBaseUrl(pairingFixture.getString("relayOrigin"))
             val webOrigin = PairingApi.normalizeBaseUrl(pairingFixture.getString("webOrigin"))
-            assertEquals(relayOrigin, PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_PAIRING_ORIGIN))
-            assertEquals(webOrigin, PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_WEB_ORIGIN))
+            assertConfiguredOrDynamic(relayOrigin, BuildConfig.DEFAULT_PAIRING_ORIGIN)
+            assertConfiguredOrDynamic(webOrigin, BuildConfig.DEFAULT_WEB_ORIGIN)
 
             scenario.onActivity { activity ->
                 activity.findViewById<EditText>(R.id.pairingUrlInput)
@@ -55,6 +55,12 @@ class MobilePairingE2EInstrumentedTest {
         } finally {
             scenario.close()
             SecureSessionStore(appContext).clear()
+        }
+    }
+
+    private fun assertConfiguredOrDynamic(expectedOrigin: String, configuredOrigin: String) {
+        if (configuredOrigin.isNotBlank()) {
+            assertEquals(expectedOrigin, PairingApi.normalizeBaseUrl(configuredOrigin))
         }
     }
 

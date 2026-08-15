@@ -289,15 +289,18 @@ node --test src/package-mobile-connect-release.test.js src/install-mobile-connec
   cookie, then allows JavaScript for Freebuff UI while blocking cleartext, file
   access, SSL bypasses, downloads, arbitrary origins, and native JavaScript
   bridges.
-- Every build requires configured `DEFAULT_PAIRING_ORIGIN` and
-  `DEFAULT_WEB_ORIGIN`; Gradle properties `freebuffPairingOrigin` and
-  `freebuffWebOrigin` override the safe placeholder defaults. CI sets both to
-  its ephemeral HTTPS relay origin, and production release builds must set real
-  managed-relay origins.
+- CI/production builds can pin `DEFAULT_PAIRING_ORIGIN` and
+  `DEFAULT_WEB_ORIGIN` with Gradle properties `freebuffPairingOrigin` and
+  `freebuffWebOrigin`. Generic test builds leave them empty: pairing then trusts
+  only the exact HTTPS origin in the scanned QR, binds WebView navigation to the
+  same relay origin returned by the claim, and still rejects HTTP, credentials,
+  and cross-origin navigation. Use pinned origins for managed production builds.
 
 A clean checkout needs Android SDK and Gradle; use Android Studio, CI, or the
 project-local tools described in `android/README.md`. This workspace built the
-debug APK with local Gradle 8.9 and API 35 tools. `.github/workflows/android.yml`
+debug APK with local Gradle 8.9 and API 35 tools. Generic debug builds can be
+used with any HTTPS relay URL carried by a terminal QR; they still require a
+reachable relay and six-digit code. `.github/workflows/android.yml`
 installs
 Java 17, Android API 35/build tools, Gradle 8.9, runs lint plus debug assembly,
 boots API 35 Google APIs x86_64 emulator for instrumentation tests, verifies the

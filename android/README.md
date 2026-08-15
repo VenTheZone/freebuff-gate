@@ -94,8 +94,12 @@ then loads same-origin UI without an Authorization URL header.
 
 ## WebView boundary
 
-The app loads `uiUrl` when it is HTTPS and non-local. Before navigation it
-calls `GET /v1/mobile/session` over native HTTPS, installs the returned
+The app loads `uiUrl` when it is HTTPS and non-local. CI and production builds
+can pin pairing/UI origins with `-PfreebuffPairingOrigin` and
+`-PfreebuffWebOrigin`. Generic debug builds leave those properties empty and
+bind to the exact HTTPS origin carried by the QR; the claim response must use
+that same relay origin before WebView navigation is allowed. Before navigation
+it calls `GET /v1/mobile/session` over native HTTPS, installs the returned
 `Secure; HttpOnly; SameSite=Strict` cookie into WebView CookieManager, and
 never exposes the access token to page JavaScript or URL headers. The WebView
 has no JavaScript bridge. Redirects and navigations outside the exact initial

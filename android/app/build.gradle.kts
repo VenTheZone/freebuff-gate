@@ -4,11 +4,11 @@ plugins {
 }
 
 val defaultPairingOrigin = providers.gradleProperty("freebuffPairingOrigin")
-    .orElse("https://mobile.example.invalid")
+    .orElse("")
     .get()
     .replace("\"", "")
 val defaultWebOrigin = providers.gradleProperty("freebuffWebOrigin")
-    .orElse("https://mobile.example.invalid")
+    .orElse("")
     .get()
     .replace("\"", "")
 
@@ -25,7 +25,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
-        // CI and release builds provide real HTTPS relay origins through Gradle properties.
+        // A configured HTTPS origin pins production/CI builds; an empty value lets
+        // generic test builds bind to the exact HTTPS origin carried by the QR.
         buildConfigField("String", "DEFAULT_WEB_ORIGIN", "\"$defaultWebOrigin\"")
         buildConfigField("String", "DEFAULT_PAIRING_ORIGIN", "\"$defaultPairingOrigin\"")
     }

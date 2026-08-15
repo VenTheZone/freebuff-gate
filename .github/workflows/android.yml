@@ -152,10 +152,10 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           working-directory: android
-          script: |
-            gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest \
-              -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
-              -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
+          script: >-
+            gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
+            -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
+            -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
       - name: Stop ephemeral relay fixture and remove generated test inputs
         if: always()
@@ -184,6 +184,7 @@ jobs:
           retention-days: 14
 
       - name: Verify debug APK signature
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -194,6 +195,7 @@ jobs:
           "${apksigner}" verify --verbose --print-certs "${apk}"
 
       - name: Upload signed debug APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: freebuff-mobile-debug-${{ github.sha }}

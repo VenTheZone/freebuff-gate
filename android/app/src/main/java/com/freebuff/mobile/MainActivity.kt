@@ -139,7 +139,8 @@ class MainActivity : AppCompatActivity() {
         pairingExecutor.execute {
             try {
                 val payload = PairingPayload.parse(rawUrl)
-                require(payload.baseUrl == PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_PAIRING_ORIGIN)) {
+                val configuredPairingOrigin = configuredOrigin(BuildConfig.DEFAULT_PAIRING_ORIGIN)
+                require(configuredPairingOrigin == null || payload.baseUrl == configuredPairingOrigin) {
                     "Pairing URL is not from configured Freebuff relay"
                 }
                 val session = PairingApi(payload.baseUrl).claim(
@@ -212,7 +213,10 @@ class MainActivity : AppCompatActivity() {
             showState(ConnectionState.ERROR, "Remote UI origin is invalid")
             return
         }
-        if (origin != PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_WEB_ORIGIN)) {
+        val configuredWebOrigin = configuredOrigin(BuildConfig.DEFAULT_WEB_ORIGIN)
+        val sessionOrigin = configuredWebOrigin
+            ?: PairingApi.normalizeBaseUrl(session.gatewayBaseUrl)
+        if (origin != sessionOrigin) {
             showState(ConnectionState.ERROR, "Remote UI origin is not configured for this app")
             return
         }
@@ -267,6 +271,12 @@ class MainActivity : AppCompatActivity() {
         webView.setDownloadListener { _, _, _, _, _ ->
             showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Mobile")
         }
+    }
+
+    private fun configuredOrigin(raw: String): String? {
+        val value = raw.trim()
+        if (value.isBlank()) return null
+        return PairingApi.normalizeBaseUrl(value)
     }
 
     private fun isHttpsUrl(raw: String): Boolean {
