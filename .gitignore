@@ -1,0 +1,41 @@
+# ── Secrets — never commit these ──────────────────────────────
+.env
+.env.*
+!.env.example
+state.json
+*.state.json
+*.local.json
+secrets/
+keys/
+*keypair*.json
+*.keypair.json
+*.pem
+*.key
+*.p12
+*.jks
+*.pfx
+token*
+auth-token*
+*.token
+
+# ── Runtime state / databases ─────────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+logs/
+*.log
+.freebuff/
+
+# ── Build / dependencies ──────────────────────────────────────
+node_modules/
+dist/
+target/
+
+# ── IDE / OS ──────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,42 @@
+{
+  "$comment": "FB-Browser-UI — dotfile configuration for the Freebuff Desktop browser port. Secrets are NEVER inline here; load them from .env (see .env.example).",
+  "app": {
+    "name": "FB-Browser-UI",
+    "version": "0.1.0",
+    "host": "127.0.0.1",
+    "port": 8793
+  },
+  "auth": {
+    "provider": "env",
+    "tokenEnv": "FB_UI_AUTH_TOKEN",
+    "sessionTtlHours": 12
+  },
+  "folderSelection": {
+    "mode": "showDirectoryPicker",
+    "fallbackMode": "webkitdirectory",
+    "pickerId": "fb-workspace",
+    "permissionMode": "readwrite",
+    "persistHandles": true,
+    "reRequestPermissionOnReload": true,
+    "restoreLastFolder": true,
+    "virtualPaths": true,
+    "allowDragDrop": false
+  },
+  "workspace": {
+    "restoreLastSession": true,
+    "maxOpenTabs": 8,
+    "tabs": []
+  },
+  "uiPrefs": {
+    "explorerWidth": 384,
+    "explorerCollapsed": false
+  },
+  "freebuffDesktop": {
+    "note": "Mirrors the ~/.config/freebuff-desktop/state.json shape so the browser port consumes the same prefs. The real state.json holds auth tokens and is NEVER committed (see .gitignore).",
+    "executionMode": "local"
+  },
+  "secrets": {
+    "neverInline": true,
+    "sources": [".env", "state.json"]
+  }
+}
