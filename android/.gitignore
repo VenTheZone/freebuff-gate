@@ -1,0 +1,11 @@
+.gradle/
+local.properties
+build/
+app/build/
+**/build/
+app/src/debug/res/raw/ci_relay_cert.pem
+app/src/debug/res/xml/network_security_config.xml
+app/src/androidTest/assets/e2e-pairing.json
+.externalNativeBuild/
+.cxx/
+*.iml

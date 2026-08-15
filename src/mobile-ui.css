@@ -213,6 +213,54 @@
     display: none;
   }
 
+  /* The native orchestrator renders agent tasks as .todo-dock inside
+     .thread-bottom, directly above the composer. On phones that bottom-flow
+     card competes with the floating model/reasoning/time pills and can be
+     covered. Lift it into a bounded floating card below the safe-area header;
+     desktop keeps native placement. */
+  .thread-bottom .todo-dock {
+    position: fixed;
+    top: var(
+      --fb-mobile-todo-top,
+      calc(var(--fb-mobile-header-height) + 8px)
+    );
+    right: max(8px, env(safe-area-inset-right, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
+    z-index: 48;
+    width: auto;
+    max-width: none;
+    max-height: min(
+      38dvh,
+      var(--fb-mobile-todo-max-height, 300px)
+    );
+    margin: 0;
+    box-sizing: border-box;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--raised) 94%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 38%, transparent);
+    animation: fb-todo-in 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+    transition: top 0.18s ease, max-height 0.18s ease;
+  }
+  .thread-bottom .todo-dock.fb-float-collision-hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .thread-bottom .todo-dock-header {
+    min-height: 40px;
+    padding: 8px 11px;
+  }
+  .thread-bottom .todo-dock-list {
+    max-height: min(
+      30dvh,
+      var(--fb-mobile-todo-list-max-height, 250px)
+    );
+    padding-bottom: 10px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* Composer: docked, full-width, thumb-friendly, no iOS zoom-on-focus. */
   .thread-bottom {
     padding-right: 0;
@@ -471,6 +519,129 @@
   opacity: 1;
 }
 
+/* Session close confirmation (mobile-ui.js). Yes is destructive red; No is
+   safe green. It stays above session/thread menus and participates in the
+   mobile overlay manager, so Back, Escape, backdrop, and No all cancel. */
+.fb-session-close-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(20px + var(--fb-mobile-safe-top))
+    calc(16px + env(safe-area-inset-right, 0px))
+    calc(20px + env(safe-area-inset-bottom, 0px))
+    calc(16px + env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--shadow) 58%, transparent);
+  animation: fb-fade-in 0.16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-session-close-dialog {
+  width: min(100%, 340px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-2);
+  box-shadow: 0 18px 44px color-mix(in srgb, var(--shadow) 55%, transparent);
+  animation: fb-confirm-in 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes fb-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+.fb-session-close-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.25;
+}
+.fb-session-close-copy {
+  margin: 10px 0 10px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.fb-session-close-announcement {
+  margin: 0 0 16px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.fb-session-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+.fb-session-close-actions button {
+  min-width: 82px;
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #fff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-session-close-no {
+  background: #2eaa62;
+  border-color: #43c879 !important;
+}
+.fb-session-close-yes {
+  background: #d83c52;
+  border-color: #ef6477 !important;
+}
+.fb-session-close-no:hover,
+.fb-session-close-no:active {
+  background: #23884d;
+}
+.fb-session-close-yes:hover,
+.fb-session-close-yes:active {
+  background: #b92d43;
+}
+.fb-session-close-actions button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-session-close-confirm,
+  .fb-session-close-dialog {
+    animation: none;
+  }
+}
+@media (min-width: 1001px) {
+  .fb-session-close-confirm {
+    display: none !important;
+  }
+}
+
+/* Persistent screen-reader status for session selection and close outcomes
+   (mobile-ui.js). Confirmation dialog carries its own visible status block. */
+.fb-mobile-live-region {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Scrim behind the sliding tools panel (mobile-ui.js): a dimmed overlay
    that closes the panel when tapped. */
 .fb-panel-scrim {
@@ -489,6 +660,18 @@
 @keyframes fb-panel-in {
   from {
     transform: translateX(100%);
+  }
+}
+@keyframes fb-todo-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-bottom .todo-dock {
+    animation: none;
+    transition: none;
   }
 }
 

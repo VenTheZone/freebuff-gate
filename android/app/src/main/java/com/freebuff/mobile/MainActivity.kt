@@ -1,0 +1,302 @@
+package com.freebuff.mobile
+
+import android.annotation.SuppressLint
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Build
+import android.view.View
+import android.webkit.CookieManager
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import java.net.URI
+import java.util.concurrent.Executors
+
+class MainActivity : AppCompatActivity() {
+    private lateinit var setupPanel: View
+    private lateinit var scannerPanel: FrameLayout
+    private lateinit var webView: WebView
+    private lateinit var stateLabel: TextView
+    private lateinit var pairingUrlInput: EditText
+    private lateinit var confirmationCodeInput: EditText
+    private lateinit var deviceNameInput: EditText
+    private lateinit var pairButton: Button
+    private lateinit var disconnectButton: Button
+
+    private lateinit var sessionStore: SecureSessionStore
+    private lateinit var deviceIdentity: DeviceIdentity
+    private lateinit var reconnectController: ReconnectController
+    private lateinit var qrScanner: QrScanner
+    private var webSessionLoading = false
+    private var loadedWebSessionKey: String? = null
+    private val pairingExecutor = Executors.newSingleThreadExecutor()
+
+    private val cameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) openScanner() else showState(ConnectionState.ERROR, "Camera permission is required for QR pairing")
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        setupPanel = findViewById(R.id.setupPanel)
+        scannerPanel = findViewById(R.id.scannerPanel)
+        webView = findViewById(R.id.webView)
+        stateLabel = findViewById(R.id.connectionState)
+        pairingUrlInput = findViewById(R.id.pairingUrlInput)
+        confirmationCodeInput = findViewById(R.id.confirmationCodeInput)
+        deviceNameInput = findViewById(R.id.deviceNameInput)
+        pairButton = findViewById(R.id.pairButton)
+        disconnectButton = findViewById(R.id.disconnectButton)
+
+        deviceNameInput.setText(Build.MODEL)
+        configureWebView()
+
+        sessionStore = SecureSessionStore(this)
+        deviceIdentity = DeviceIdentity()
+        reconnectController = ReconnectController(this, sessionStore) { state, detail, session ->
+            runOnUiThread { renderConnection(state, detail, session) }
+        }
+
+        qrScanner = QrScanner(
+            context = this,
+            lifecycleOwner = this,
+            previewView = findViewById<PreviewView>(R.id.qrPreview),
+            onResult = { value ->
+                runOnUiThread {
+                    pairingUrlInput.setText(value)
+                    closeScanner()
+                    confirmationCodeInput.requestFocus()
+                    showState(ConnectionState.PAIRING, "QR captured; enter terminal confirmation code")
+                }
+            },
+            onError = { message -> runOnUiThread { showState(ConnectionState.ERROR, message) } },
+        )
+
+        findViewById<Button>(R.id.scanQrButton).setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                openScanner()
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
+        findViewById<Button>(R.id.closeScannerButton).setOnClickListener { closeScanner() }
+        pairButton.setOnClickListener { claimPairing() }
+        disconnectButton.setOnClickListener {
+            reconnectController.disconnect(clearSession = true)
+            webView.stopLoading()
+            webView.visibility = View.GONE
+            setupPanel.visibility = View.VISIBLE
+        }
+
+        reconnectController.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::reconnectController.isInitialized) reconnectController.onResume()
+    }
+
+    override fun onBackPressed() {
+        if (scannerPanel.visibility == View.VISIBLE) {
+            closeScanner()
+        } else if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    override fun onDestroy() {
+        if (::qrScanner.isInitialized) qrScanner.close()
+        if (::reconnectController.isInitialized) reconnectController.close()
+        pairingExecutor.shutdownNow()
+        webView.destroy()
+        super.onDestroy()
+    }
+
+    private fun claimPairing() {
+        val rawUrl = pairingUrlInput.text?.toString()?.trim().orEmpty()
+        val code = confirmationCodeInput.text?.toString()?.trim().orEmpty()
+        val deviceName = deviceNameInput.text?.toString()?.trim().orEmpty().ifBlank { Build.MODEL }
+        if (rawUrl.isBlank() || !code.matches(Regex("\\d{6}"))) {
+            showState(ConnectionState.ERROR, "Scan or paste pairing URL and enter six-digit code")
+            return
+        }
+
+        pairButton.isEnabled = false
+        showState(ConnectionState.PAIRING, "Pairing device securely")
+        pairingExecutor.execute {
+            try {
+                val payload = PairingPayload.parse(rawUrl)
+                require(payload.baseUrl == PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_PAIRING_ORIGIN)) {
+                    "Pairing URL is not from configured Freebuff relay"
+                }
+                val session = PairingApi(payload.baseUrl).claim(
+                    payload = payload,
+                    manualCode = code,
+                    deviceName = deviceName,
+                    devicePublicKey = deviceIdentity.publicKeyForPairing(),
+                )
+                sessionStore.save(session)
+                runOnUiThread {
+                    pairButton.isEnabled = true
+                    reconnectController.reconnect()
+                    showState(ConnectionState.CONNECTING, "Pairing accepted; connecting")
+                }
+            } catch (error: GatewayApiException) {
+                runOnUiThread {
+                    pairButton.isEnabled = true
+                    showState(ConnectionState.ERROR, "Pairing failed (${error.status}): ${error.message}")
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    pairButton.isEnabled = true
+                    showState(ConnectionState.ERROR, error.message ?: "Pairing failed")
+                }
+            }
+        }
+    }
+
+    private fun renderConnection(state: ConnectionState, detail: String, session: PairingSession?) {
+        showState(state, detail)
+        val hasSession = session != null || sessionStore.load() != null
+        disconnectButton.visibility = if (hasSession) View.VISIBLE else View.GONE
+
+        when (state) {
+            ConnectionState.CONNECTED -> {
+                if (session != null) loadRemoteUi(session)
+            }
+            ConnectionState.UNPAIRED,
+            ConnectionState.PAIRING_REQUIRED,
+            ConnectionState.REVOKED,
+            ConnectionState.DISCONNECTED,
+            -> {
+                setupPanel.visibility = View.VISIBLE
+                webView.visibility = View.GONE
+            }
+            ConnectionState.RECONNECTING,
+            ConnectionState.OFFLINE,
+            ConnectionState.CONNECTING,
+            ConnectionState.PAIRING,
+            ConnectionState.ERROR,
+            -> {
+                if (webView.visibility != View.VISIBLE) setupPanel.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    @SuppressLint("SetCookie")
+    private fun loadRemoteUi(session: PairingSession) {
+        val configuredUi = session.uiUrl?.takeIf { isHttpsUrl(it) }
+        val candidate = configuredUi ?: session.relayUrl?.let { relayToHttp(it) }
+        val uri = candidate?.let { runCatching { URI(it) }.getOrNull() }
+        if (uri == null || !uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank()) {
+            showState(ConnectionState.CONNECTED, "Paired; managed relay UI URL is not configured yet")
+            return
+        }
+
+        val target = uri.toString()
+        val origin = RestrictedWebViewClient.originOf(target)
+        if (origin == null) {
+            showState(ConnectionState.ERROR, "Remote UI origin is invalid")
+            return
+        }
+        if (origin != PairingApi.normalizeBaseUrl(BuildConfig.DEFAULT_WEB_ORIGIN)) {
+            showState(ConnectionState.ERROR, "Remote UI origin is not configured for this app")
+            return
+        }
+        webView.webViewClient = RestrictedWebViewClient(origin) { _ ->
+            showState(ConnectionState.ERROR, "Blocked navigation outside Freebuff origin")
+        }
+        val sessionKey = "${session.deviceId}:${session.accessToken}"
+        if (webSessionLoading || (loadedWebSessionKey == sessionKey && webView.visibility == View.VISIBLE)) return
+        webSessionLoading = true
+        showState(ConnectionState.CONNECTED, "Establishing secure WebView session")
+        pairingExecutor.execute {
+            try {
+                val cookie = PairingApi(origin).establishWebSession(origin, session.accessToken)
+                runOnUiThread {
+                    CookieManager.getInstance().setCookie(origin, cookie)
+                    CookieManager.getInstance().flush()
+                    loadedWebSessionKey = sessionKey
+                    webSessionLoading = false
+                    setupPanel.visibility = View.GONE
+                    webView.visibility = View.VISIBLE
+                    // Relay exchanged access token for Secure/HttpOnly cookie;
+                    // token is not passed into page JavaScript or URL headers.
+                    webView.loadUrl(target)
+                }
+            } catch (error: GatewayApiException) {
+                runOnUiThread {
+                    webSessionLoading = false
+                    showState(ConnectionState.ERROR, "WebView session failed (${error.status}): ${error.message}")
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    webSessionLoading = false
+                    showState(ConnectionState.ERROR, error.message ?: "WebView session failed")
+                }
+            }
+        }
+    }
+
+    private fun configureWebView() {
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            setSupportMultipleWindows(false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
+            userAgentString = "$userAgentString FreebuffMobile/0.1"
+        }
+        webView.isVerticalScrollBarEnabled = false
+        CookieManager.getInstance().setAcceptCookie(true)
+        webView.setDownloadListener { _, _, _, _, _ ->
+            showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Mobile")
+        }
+    }
+
+    private fun isHttpsUrl(raw: String): Boolean {
+        val uri = runCatching { URI(raw) }.getOrNull() ?: return false
+        return uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()
+    }
+
+    private fun relayToHttp(raw: String): String? {
+        val normalized = raw.trim()
+        return when {
+            normalized.startsWith("wss://", ignoreCase = true) -> "https://${normalized.substring(6)}".trimEnd('/')
+            normalized.startsWith("ws://", ignoreCase = true) -> null
+            normalized.startsWith("https://", ignoreCase = true) -> normalized.trimEnd('/')
+            else -> null
+        }
+    }
+
+    private fun openScanner() {
+        scannerPanel.visibility = View.VISIBLE
+        setupPanel.visibility = View.GONE
+        qrScanner.start()
+    }
+
+    private fun closeScanner() {
+        qrScanner.stop()
+        scannerPanel.visibility = View.GONE
+        setupPanel.visibility = View.VISIBLE
+    }
+
+    private fun showState(state: ConnectionState, detail: String) {
+        stateLabel.text = "${state.name.replace('_', ' ')}\n$detail"
+    }
+}

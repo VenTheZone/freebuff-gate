@@ -17,10 +17,33 @@ small reference implementation (`src/folder-select.js`) of that tweak.
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
 | `src/mobile-ui.css` | Responsive adaptation for the browser UI on phones/tablets (injected by the tailnet proxy). |
 | `src/mobile-ui.js` | Tiny mobile helpers: viewport meta patch + dynamic viewport height. |
+| `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for mobile screenshot regression. |
+| `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for mobile chrome. |
 | `.env.example` | Non-secret env template. Real values go in a git-ignored `.env`. |
 | `.gitignore` | Excludes every secret and piece of runtime state from the repo. |
 | `AGENTS.md` | Project-scoped Caveman profile shared by Freebuff Desktop and CLI. |
 | `src/install-caveman.js` | Safe installer for the project or global `~/.AGENTS.md` profile. |
+| `src/mobile-connect-protocol.js` | Dependency-free pairing, token, URL, and validation helpers. |
+| `src/mobile-connect-gateway.js` | First secure mobile pairing control plane for managed relay integration. |
+| `src/mobile-connect-gateway.test.js` | Node test coverage for pairing, refresh, expiry, and revoke. |
+| `src/mobile-connect-qr.js` | Dependency-free ANSI QR renderer for pairing payloads. |
+| `src/mobile-connect-qr.test.js` | QR matrix, capacity, and terminal-render tests. |
+| `src/mobile-connect-websocket.js` | Dependency-free relay WebSocket server framing. |
+| `src/mobile-connect-relay.js` | Managed relay HTTP/SSE/WebSocket forwarding and cookie exchange. |
+| `src/mobile-connect-agent.js` | Desktop outbound WSS connector and local UI bridge. |
+| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion. |
+| `src/install-mobile-connect.test.js` | Installer safety, config, launcher, and uninstall tests. |
+| `src/package-mobile-connect-release.js` | Packages versioned agent assets, manifest, checksums, and release archive. |
+| `src/package-mobile-connect-release.test.js` | Release asset, checksum, bootstrap, and archive tests. |
+| `install-mobile-connect.sh` | Node 22-validated one-command release bootstrap. |
+| `src/mobile-connect-relay.test.js` | Relay cookie, stream, and WebSocket integration tests. |
+| `src/mobile-connect-agent.test.js` | End-to-end desktop-agent forwarding test. |
+| `src/mobile-connect-e2e-fixture.js` | Ephemeral HTTPS relay/desktop/upstream fixture used by Android CI pairing E2E. |
+| `android/` | Native Android pairing/WebView scaffold. |
+| `android/app/src/androidTest/java/com/freebuff/mobile/MobilePairingE2EInstrumentedTest.kt` | Emulator test for real claim, refresh, cookie exchange, and relay WebView load. |
+| `.github/workflows/android.yml` | Builds/tests Android emulator, runs managed relay integration, and uploads artifacts. |
+| `.github/workflows/mobile-connect-release.yml` | Packages tagged, versioned Desktop installer artifacts on Node 22. |
+| `.github/workflows/mobile-ui-screenshot.yml` | Runs mobile screenshot/layout regression and uploads the phone capture. |
 
 ## Caveman on Freebuff Desktop and CLI
 
@@ -53,6 +76,239 @@ Freebuff, and Freebuff's published launcher delegates to a compiled native
 binary. Routing Freebuff provider traffic through Caveman would require an
 upstream provider-hook change; silently patching the installed binary would be
 fragile and would be lost on update.
+
+## Mobile pairing gateway
+
+First gateway slice adds secure pairing control plane for managed Freebuff
+relay. It keeps Tailscale, IPv6, port forwarding, and firewall details
+out of normal user flow.
+
+Start local gateway on loopback:
+
+```bash
+node src/mobile-connect-gateway.js serve
+```
+
+Create one-use pairing payload:
+
+```bash
+node src/mobile-connect-gateway.js pair --ttl 600
+```
+
+The command renders an ANSI QR code plus an HTTPS pairing URL whose token lives
+in the URL fragment, and prints a six-digit terminal confirmation code. The
+Android scanner reads the QR directly; `--no-qr` keeps URL-only output for CI or
+piped logs. The Android scanner scaffold lives under `android/`.
+
+Manage paired devices:
+
+```bash
+node src/mobile-connect-gateway.js devices
+node src/mobile-connect-gateway.js revoke --device d_...
+```
+
+Gateway properties:
+
+- Default bind is `127.0.0.1:8794`; non-loopback binding refuses to start unless
+  `FB_MOBILE_ADMIN_TOKEN` is set.
+- Pairing expires after 10 minutes, caps failed claims at five attempts, and is
+  consumed after one successful claim.
+- Persisted state stores only hashes of pairing/device/access secrets. State is
+  written atomically with restrictive permissions outside the repository by
+  default (`~/.config/freebuff/mobile-connect.json`).
+- Successful claim returns a device refresh credential and short-lived access
+  credential. Normal reconnect refreshes access without another QR scan.
+- `devices` and `revoke` are admin-only. Revocation immediately blocks refresh.
+- `FB_MOBILE_RELAY_URL` and UI URL are returned as connection metadata. The
+  managed relay implementation lives in `src/mobile-connect-relay.js` and
+  forwards HTTP/SSE/WebSocket traffic over the desktop agent's outbound WSS.
+- `POST /v1/relay/enroll` accepts a relay-side bootstrap token and returns a
+  15-minute connector token plus 90-day refresh token; only token hashes are
+  persisted by relay.
+- `POST /v1/relay/refresh` rotates connector token without reinstalling Desktop.
+- `GET /v1/mobile/session` exchanges the app access token for a Secure,
+  HttpOnly, SameSite session cookie before WebView navigation.
+
+Configure non-secret names in `.env.example`. Never put provider credentials,
+permanent tokens, connector enrollment tokens, or Tailscale auth keys in QR data
+or source control.
+
+Run managed relay locally:
+
+```bash
+FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
+node src/mobile-connect-relay.js serve --http-url http://127.0.0.1:8795 --ws-url ws://127.0.0.1:8795
+
+FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
+node src/mobile-connect-agent.js serve \
+  --relay-http-url http://127.0.0.1:8795 \
+  --relay-ws-url ws://127.0.0.1:8795 \
+  --upstream-url http://127.0.0.1:58061
+
+FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
+node src/mobile-connect-agent.js pair --relay-http-url http://127.0.0.1:8795
+```
+
+Production relay must terminate HTTPS/WSS at a trusted public origin. Relay
+operator can read proxied payloads; WSS protects network transit, not relay
+end-to-end confidentiality. Desktop agent currently uses Node 22's built-in
+WebSocket client; native Freebuff CLI integration remains separate. `GET
+/v1/mobile/session` exchanges app access token for Secure/HttpOnly cookie before
+WebView navigation.
+
+## Freebuff Desktop mobile-connect installer
+
+Install companion connector without modifying compiled Freebuff Desktop files:
+
+### One-command release install
+
+After publishing a tagged release, a non-technical Desktop user can install the
+verified companion with one command:
+
+```bash
+curl -fsSL https://github.com/VenTheZone/FB-Browser-UI/releases/download/v0.1.0/install-mobile-connect.sh \\
+  | bash -s -- \\
+      --relay-http-url https://relay.example.com \\
+      --enrollment-token '<relay-bootstrap-token>'
+```
+
+Pin the release tag instead of using a moving `main` URL. Bootstrap validates
+Node 22 or newer before downloading code, fetches versioned agent files from the
+same release, validates the release manifest, verifies SHA-256 checksums, and
+only then runs the existing Node installer. It requires `bash`, `curl`, and
+`sha256sum` or `shasum`; it does not install Node or elevate privileges.
+
+The bootstrap also accepts `--version v1.2.3` and
+`--release-base-url https://mirror.example.com/freebuff/v1.2.3` for private
+release mirrors. Keep enrollment tokens out of shell history when possible.
+
+Build release assets locally:
+
+```bash
+node src/package-mobile-connect-release.js --version v0.1.0 --archive
+```
+
+This writes `dist/freebuff-mobile-connect-v0.1.0/` with the bootstrap,
+versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a `.tar.gz`
+archive. Publish those assets with GitHub CLI after reviewing them:
+
+```bash
+gh release create v0.1.0 \\
+  dist/freebuff-mobile-connect-v0.1.0/* \\
+  --title "Freebuff mobile-connect v0.1.0" \\
+  --generate-notes
+```
+
+Tag pushes also run `.github/workflows/mobile-connect-release.yml`, which
+packages and uploads the same artifact to GitHub Actions for review. The
+workflow does not publish a release automatically.
+
+```bash
+node src/install-mobile-connect.js install \
+  --relay-http-url https://relay.example.com \
+  --relay-ws-url wss://relay.example.com
+```
+
+Installer copies only required Node agent files, creates a launcher named
+`freebuff-mobile-connect`, and writes relay/UI configuration under user
+config/data directories. Preferred one-time provisioning:
+
+```bash
+node src/install-mobile-connect.js install \
+  --relay-http-url https://relay.example.com \
+  --enrollment-token '<relay-bootstrap-token>'
+```
+
+Installer stores issued connector and refresh tokens only in a protected local
+credential file. It never stores provider credentials or bootstrap token. Keep
+bootstrap token server-side and rotate it after provisioning. After
+provisioning, no connector environment variable is needed:
+
+```bash
+freebuff-mobile-connect serve
+freebuff-mobile-connect pair
+```
+
+Legacy shared-token mode remains available with
+`FB_MOBILE_RELAY_CONNECTOR_TOKEN`.
+
+### Optional Desktop auto-start
+
+Auto-start is disabled by default. Enable it explicitly during install:
+
+```bash
+node src/install-mobile-connect.js install \\
+  --relay-http-url https://relay.example.com \\
+  --enrollment-token '<relay-bootstrap-token>' \\
+  --auto-start
+```
+
+The installer creates a per-user registration without administrator access:
+
+- Linux: `~/.config/systemd/user/freebuff-mobile-connect.service`, enabled and
+  restarted with `systemctl --user`.
+- macOS: `~/Library/LaunchAgents/com.freebuff.mobile-connect.plist`, loaded with
+  `launchctl` for current GUI user.
+- Windows: `Freebuff Mobile Connect` Task Scheduler task, `ONLOGON` trigger at
+  `LIMITED` run level.
+
+Disable it later with `--no-auto-start`. Reinstall without either flag keeps an
+existing auto-start choice; new installs stay off. `uninstall` disables and
+removes only the managed registration. `--dry-run` never calls systemd,
+launchctl, or Task Scheduler.
+
+`--relay-ws-url` is derived from HTTPS URL when omitted. Desktop UI defaults to
+`http://127.0.0.1:58061`; override with `--upstream-url`. Use
+`--dry-run` before writing, `uninstall` to remove installed agent files, and
+`uninstall --purge` only when config/state should also be removed. Installer
+refuses insecure non-loopback relay URLs, refuses unmanaged destination
+collisions, rotates short-lived connector tokens through the relay, and never
+stores provider credentials. Node 22 is required because agent uses built-in
+WebSocket. Keep bootstrap token out of shell history where possible; rotate it after
+provisioning.
+
+This is a companion process, not a patch to Freebuff's compiled native CLI.
+Run it beside Desktop until Freebuff exposes a supported connector/plugin
+boundary.
+
+Run gateway, installer, release-packaging, and relay tests with:
+
+```bash
+node --test src/package-mobile-connect-release.test.js src/install-mobile-connect.test.js src/mobile-connect-gateway.test.js src/mobile-connect-qr.test.js src/mobile-connect-relay.test.js src/mobile-connect-agent.test.js
+```
+
+## Android mobile app scaffold
+
+`android/` contains a Kotlin Android shell around the gateway contract:
+
+- CameraX + ML Kit QR scanner reads pairing URL fragments.
+- Six-digit terminal code completes pairing.
+- EC device identity and AES-GCM session storage use Android Keystore.
+- Network callbacks plus jittered exponential backoff drive reconnect states.
+- WebView calls relay `/v1/mobile/session` natively, installs the Secure/HttpOnly
+  cookie, then allows JavaScript for Freebuff UI while blocking cleartext, file
+  access, SSL bypasses, downloads, arbitrary origins, and native JavaScript
+  bridges.
+- Every build requires configured `DEFAULT_PAIRING_ORIGIN` and
+  `DEFAULT_WEB_ORIGIN`; Gradle properties `freebuffPairingOrigin` and
+  `freebuffWebOrigin` override the safe placeholder defaults. CI sets both to
+  its ephemeral HTTPS relay origin, and production release builds must set real
+  managed-relay origins.
+
+A clean checkout needs Android SDK and Gradle; use Android Studio, CI, or the
+project-local tools described in `android/README.md`. This workspace built the
+debug APK with local Gradle 8.9 and API 35 tools. `.github/workflows/android.yml`
+installs
+Java 17, Android API 35/build tools, Gradle 8.9, runs lint plus debug assembly,
+boots API 35 Google APIs x86_64 emulator for instrumentation tests, verifies the
+AGP-generated debug signature, and uploads APK/test reports for 14 days. Before
+building, CI creates a one-day self-signed certificate trusted only by the debug
+variant, starts an ephemeral HTTPS relay plus desktop connector and test page,
+then `MobilePairingE2EInstrumentedTest` performs claim, access refresh, cookie
+exchange, and authenticated WebView load through the emulator's `10.0.2.2`
+host mapping. Managed relay deployment still needs a real HTTPS/WSS public origin
+and connector enrollment token. The same workflow also runs Node 22 relay/agent
+integration tests and uploads TAP output.
 
 ## The folder-selection tweak
 
@@ -157,8 +413,16 @@ for narrow viewports:
   (native tab activation → thread load), and offers **New session** (the
   app's `.tab-new`) and **All sessions** (the home tab) shortcuts.  Each
   session row has a **close button** that closes it via the app's own
-  `.tab-close` (which stopPropagates, so it won't also switch to it); the
-  list refreshes live as sessions open/close, and closing the active one
+  `.tab-close` (which stopPropagates, so it won't also switch to it). Before
+  native close runs, a confirmation popup asks **Close session?** with red
+  **Yes** and green **No** actions. A visible live status message says
+  **Confirmation required** and gives same choices to screen readers through
+  `role="status"`, `aria-live="assertive"`, and `aria-atomic="true"`. A shared
+  live region also announces selected session title, kept-open cancellation,
+  successful close, or failed close outcome. No keeps menu open, while Yes
+  performs the native close. The same confirmation protects the title-menu
+  Close action.
+  The list refreshes live as sessions open/close, and closing the active one
   dismisses the menu. Below the open sessions, a **Recent** section lists
   recently-active **closed** sessions from the app's own catalog API
   (  `/api/projects`, same-origin — titled, non-archived, newest first, with a
@@ -219,6 +483,14 @@ for narrow viewports:
   the time pill opens the context card for full quota details. During an
   active turn, a compact pulsing **Streaming** indicator appears in the slim
   header while model, tools, session, and context controls remain visible.
+  The native agent **To-dos** card is moved out of the bottom composer flow and
+  floats below the safe-area header with its own bounded scroll area, so task
+  rows stay visible instead of competing with the model/reasoning/time pills.
+  Shared collision-aware layout measures visible menus, context cards, sheets,
+  composer, and pills; it stacks task card below top blockers, caps its height
+  above bottom controls, and hides it only while a full-screen sheet owns the
+  viewport.
+
   The active thread's native elapsed-time status is also retained in the slim
   header, so its time indicator is not lost when desktop tab metadata is
   collapsed. The pills are grouped into one compact row to avoid overlap on
@@ -249,6 +521,29 @@ for narrow viewports:
   zoomed in), and the viewport stays user-zoomable (no user-scalable=no
   lock).
 - **480px** — further tightening for small phones.
+
+Automated mobile regression coverage runs the injected CSS and JavaScript in a
+native-UI fixture at a 390×844 phone viewport. It captures
+`mobile-ui-header-composer-task.png` plus
+`mobile-ui-session-close-confirm.png` and asserts slim-header bounds, visible
+model/reasoning/time pills, task-card separation from both header and composer
+pills, close-confirmation button colors, visible live-region semantics,
+selected-session announcements, close outcomes, Escape, browser Back, backdrop
+cancel, focus restoration, and desktop cleanup
+after widening the viewport. The test uses Chrome's
+built-in DevTools Protocol client; no Playwright or npm dependency is needed.
+Run locally with Chrome installed:
+
+```bash
+node --test --test-timeout=20000 src/mobile-ui-screenshot.test.js
+```
+
+Set `FB_CHROME_BIN` to select a non-default Chrome executable. CI runs the same
+test through `.github/workflows/mobile-ui-screenshot.yml` and uploads the PNG
+for visual review. Test also queries Chrome's accessibility tree for selected
+session and close-outcome status text. This is not spoken TalkBack/VoiceOver
+validation: real TalkBack needs a connected Android device or hardware-
+accelerated emulator, and VoiceOver needs macOS/iOS tooling.
 
 The tailnet proxy injects these after the app's own stylesheet, so the
 overrides win and desktop viewports are untouched:
@@ -283,10 +578,21 @@ FB-Browser-UI/
 ├── .gitignore               # secrets and runtime state stay out
 ├── AGENTS.md                # shared Caveman profile for Freebuff
 ├── README.md
+├── android/                 # Kotlin Android pairing/WebView scaffold
 └── src/
     ├── folder-select.js     # the folder-selection tweak implementation
     ├── check-ads.js         # ad-auction poller (watch for real fill)
     ├── install-caveman.js   # project/global Caveman profile installer
+    ├── mobile-connect-protocol.js  # pairing/token protocol helpers
+    ├── mobile-connect-gateway.js   # pairing control plane
+    ├── mobile-connect-websocket.js # relay WebSocket framing
+    ├── mobile-connect-relay.js     # managed relay data plane
+    ├── mobile-connect-agent.js     # desktop outbound connector
+    ├── install-mobile-connect.js    # Desktop companion installer
+    ├── package-mobile-connect-release.js # versioned release artifact packager
+    ├── mobile-connect-e2e-fixture.js # ephemeral HTTPS Android CI fixture
     ├── mobile-ui.css        # mobile/tablet responsive layer (proxy-injected)
-    └── mobile-ui.js         # viewport/touch helpers for phones
+    ├── mobile-ui.js         # viewport/touch helpers for phones
+    ├── mobile-ui-screenshot-fixture.html # deterministic mobile test fixture
+    └── mobile-ui-screenshot.test.js # Chromium screenshot/layout regression
 ```

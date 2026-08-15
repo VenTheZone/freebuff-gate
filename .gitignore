@@ -23,14 +23,30 @@ auth-token*
 *.db-wal
 *.db-shm
 *.sqlite
+mobile-connect.json
+*.mobile-connect.json
+mobile-relay.json
+*.mobile-relay.json
+mobile-relay-connectors.json
+*.mobile-relay-connectors.json
+mobile-connect-agent.json
+mobile-connect-connector.json
+*.mobile-connect-connector.json
 logs/
 *.log
 .freebuff/
 
 # ── Build / dependencies ──────────────────────────────────────
+.tools/
 node_modules/
 dist/
 target/
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
+android/.externalNativeBuild/
+android/.cxx/
 
 # ── IDE / OS ──────────────────────────────────────────────────
 .idea/

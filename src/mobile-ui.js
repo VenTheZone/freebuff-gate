@@ -199,6 +199,208 @@
     });
   }
 
+  // Shared collision-aware layout for mobile floating cards. Header menus and
+  // context cards keep their native anchor; persistent task card moves below
+  // them and stops above composer controls. This stays outside transcript
+  // observers so streaming token mutations do not trigger layout work.
+  var floatLayoutBound = false;
+  var floatLayoutRaf = null;
+  var floatLayoutResizeObserver = null;
+  var floatLayoutMutationObserver = null;
+  var floatLayoutObserved = [];
+  var FLOAT_BLOCKER_SELECTOR =
+    '.fb-tab-menu, .fb-session-menu, .fb-ctx-open .composer-context, ' +
+    '.agent-menu, .header-menu, .account-menu, .effort-menu, .stash-menu, ' +
+    '.slash-menu, .home-context-menu, .context-usage-popover, ' +
+    '.open-in-menu, .new-thread-project-menu';
+
+  function isMobileFloatVisible(element) {
+    if (!element || !document.documentElement.contains(element)) return false;
+    if (element.hidden || element.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+    var style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    var rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function observeMobileFloatElements(elements) {
+    var unique = [];
+    elements.forEach(function (element) {
+      if (!element || unique.indexOf(element) >= 0) return;
+      unique.push(element);
+    });
+
+    if (typeof window.ResizeObserver === 'function') {
+      if (!floatLayoutResizeObserver) {
+        floatLayoutResizeObserver = new window.ResizeObserver(
+          scheduleFloatLayout,
+        );
+      }
+      floatLayoutObserved.forEach(function (element) {
+        if (unique.indexOf(element) < 0) {
+          floatLayoutResizeObserver.unobserve(element);
+        }
+      });
+      unique.forEach(function (element) {
+        if (floatLayoutObserved.indexOf(element) < 0) {
+          floatLayoutResizeObserver.observe(element);
+        }
+      });
+      floatLayoutObserved = unique;
+    }
+
+    if (typeof window.MutationObserver === 'function') {
+      if (!floatLayoutMutationObserver) {
+        floatLayoutMutationObserver = new window.MutationObserver(
+          scheduleFloatLayout,
+        );
+      }
+      floatLayoutMutationObserver.disconnect();
+      unique.forEach(function (element) {
+        floatLayoutMutationObserver.observe(element, {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+          childList: true,
+          subtree: true,
+        });
+      });
+    }
+  }
+
+  function resetFloatLayout() {
+    root.style.removeProperty('--fb-mobile-todo-top');
+    root.style.removeProperty('--fb-mobile-todo-max-height');
+    root.style.removeProperty('--fb-mobile-todo-list-max-height');
+    document
+      .querySelectorAll('.thread-bottom .todo-dock.fb-float-collision-hidden')
+      .forEach(function (element) {
+        element.classList.remove('fb-float-collision-hidden');
+      });
+    if (floatLayoutMutationObserver) floatLayoutMutationObserver.disconnect();
+    if (floatLayoutResizeObserver) {
+      floatLayoutObserved.forEach(function (element) {
+        floatLayoutResizeObserver.unobserve(element);
+      });
+    }
+    floatLayoutObserved = [];
+  }
+
+  function scheduleFloatLayout() {
+    if (!window.matchMedia(MOBILE).matches) {
+      resetFloatLayout();
+      return;
+    }
+    if (floatLayoutRaf !== null) return;
+    var run = function () {
+      floatLayoutRaf = null;
+      syncFloatLayout();
+    };
+    floatLayoutRaf = window.requestAnimationFrame
+      ? window.requestAnimationFrame(run)
+      : window.setTimeout(run, 0);
+  }
+
+  function syncFloatLayout() {
+    if (!window.matchMedia(MOBILE).matches) {
+      resetFloatLayout();
+      return;
+    }
+
+    var task = document.querySelector('.thread-bottom .todo-dock');
+    if (!task) {
+      resetFloatLayout();
+      return;
+    }
+
+    var header = document.querySelector(
+      '.tabbar:not(.threadbar), .tabbar.threadbar',
+    );
+    var headerBottom = 48;
+    if (isMobileFloatVisible(header)) {
+      headerBottom = header.getBoundingClientRect().bottom;
+    }
+    var gap = 8;
+    var taskTop = Math.max(0, Math.ceil(headerBottom + gap));
+    var composer = document.querySelector('.composer');
+    var pills = document.querySelector('.fb-composer-pills');
+    var blockers = [];
+    document.querySelectorAll(FLOAT_BLOCKER_SELECTOR).forEach(function (element) {
+      if (isMobileFloatVisible(element)) blockers.push(element);
+    });
+
+    // Full-screen sheets already cover every lower layer. Hide the task card
+    // while one is open instead of leaving a focusable control underneath it.
+    var modelSheet =
+      window.matchMedia('(max-width: 700px)').matches &&
+      document.querySelector('.composer-context .agent-menu');
+    var modal = document.querySelector('.modal-backdrop');
+    var observed = [task, composer, pills, modelSheet, modal].concat(blockers);
+    if (isMobileFloatVisible(modelSheet) || isMobileFloatVisible(modal)) {
+      task.classList.add('fb-float-collision-hidden');
+      root.style.setProperty('--fb-mobile-todo-top', taskTop + 'px');
+      root.style.setProperty('--fb-mobile-todo-max-height', '0px');
+      root.style.setProperty('--fb-mobile-todo-list-max-height', '0px');
+      observeMobileFloatElements(observed);
+      return;
+    }
+
+    var taskLeft = 8;
+    var taskRight = Math.max(taskLeft, window.innerWidth - 8);
+    blockers.forEach(function (element) {
+      var rect = element.getBoundingClientRect();
+      var overlapsHorizontally = rect.right > taskLeft && rect.left < taskRight;
+      if (overlapsHorizontally && rect.bottom > taskTop) {
+        taskTop = Math.max(taskTop, Math.ceil(rect.bottom + gap));
+      }
+    });
+
+    var viewportHeight =
+      window.visualViewport && window.visualViewport.height
+        ? window.visualViewport.height
+        : window.innerHeight;
+    var bottom = Math.max(0, viewportHeight - gap);
+    if (isMobileFloatVisible(composer)) {
+      bottom = Math.min(bottom, composer.getBoundingClientRect().top - gap);
+    }
+    if (isMobileFloatVisible(pills)) {
+      bottom = Math.min(bottom, pills.getBoundingClientRect().top - gap);
+    }
+
+    var available = Math.floor(bottom - taskTop);
+    var hidden = available < 56;
+    var maxHeight = Math.max(0, Math.min(300, available));
+    task.classList.toggle('fb-float-collision-hidden', hidden);
+    root.style.setProperty('--fb-mobile-todo-top', taskTop + 'px');
+    root.style.setProperty(
+      '--fb-mobile-todo-max-height',
+      (hidden ? 0 : maxHeight) + 'px',
+    );
+    root.style.setProperty(
+      '--fb-mobile-todo-list-max-height',
+      (hidden ? 0 : Math.max(0, maxHeight - 48)) + 'px',
+    );
+    observeMobileFloatElements(observed);
+  }
+
+  function bindFloatLayout() {
+    if (!floatLayoutBound) {
+      floatLayoutBound = true;
+      watchMobileBody(scheduleFloatLayout);
+      window.addEventListener('resize', scheduleFloatLayout, { passive: true });
+      window.addEventListener('orientationchange', scheduleFloatLayout, {
+        passive: true,
+      });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleFloatLayout, {
+          passive: true,
+        });
+      }
+    }
+    scheduleFloatLayout();
+  }
+
   // Unified mobile overlay stack. Custom overlays register their native
   // close function; app-owned menus/modals are discovered below and closed
   // with the app's own Escape/backdrop behavior. One history entry represents
@@ -284,6 +486,7 @@
         suppressHistory--;
       }
       if (!remove(id)) return;
+      scheduleFloatLayout();
       if (!stack.length && !handlingPop && !suppressHistory) {
         scheduleHistoryConsumption();
       }
@@ -329,6 +532,7 @@
         closeAll({ fromManager: true }, true);
       }
       stack.push({ id: id, close: close, parent: parent });
+      scheduleFloatLayout();
       if (active) armHistory();
     }
     function onPopState() {
@@ -462,6 +666,218 @@
       dismiss: dismiss,
     };
   })();
+
+  // Shared live status for session selection and close outcomes. Keep region
+  // mounted after first use so screen readers receive repeated state changes.
+  var mobileLiveRegion = (function () {
+    var region = null;
+    var announceTimer = null;
+
+    function getRegion() {
+      if (region && document.documentElement.contains(region)) return region;
+      if (!document.body) return null;
+      region = document.createElement('div');
+      region.className = 'fb-mobile-live-region';
+      region.setAttribute('role', 'status');
+      region.setAttribute('aria-live', 'polite');
+      region.setAttribute('aria-atomic', 'true');
+      document.body.appendChild(region);
+      return region;
+    }
+
+    function announce(message, politeness) {
+      if (!message) return;
+      var target = getRegion();
+      if (!target) return;
+      if (announceTimer) window.clearTimeout(announceTimer);
+      target.setAttribute('aria-live', politeness || 'polite');
+      target.textContent = '';
+      announceTimer = window.setTimeout(function () {
+        announceTimer = null;
+        if (target && document.documentElement.contains(target)) {
+          target.textContent = message;
+        }
+      }, 0);
+    }
+
+    return { announce: announce };
+  })();
+
+  // Session-close confirmation shared by mobile session surfaces. The native
+  // tab close remains source of truth; confirmation only delays its click.
+  // Parent overlay stays mounted while the dialog is open, so No returns to
+  // the session menu instead of losing the user's place.
+  var closeSessionConfirm = (function () {
+    var overlay = null;
+    var pending = null;
+    var restoreFocus = null;
+
+    function focusPrevious() {
+      var previous = restoreFocus;
+      restoreFocus = null;
+      if (
+        previous &&
+        previous !== document.body &&
+        document.documentElement.contains(previous) &&
+        typeof previous.focus === 'function'
+      ) {
+        previous.focus();
+      }
+    }
+
+    function close(reason) {
+      var task = pending;
+      var cancelled =
+        reason === 'cancelled' || !!(reason && reason.fromBack);
+      if (overlay) {
+        overlay.remove();
+        overlay = null;
+      }
+      pending = null;
+      mobileOverlay.dismiss('session-close-confirm');
+      focusPrevious();
+      if (cancelled && task) {
+        mobileLiveRegion.announce(
+          'Session “' + task.label + '” kept open.',
+          'polite',
+        );
+      }
+    }
+
+    function accept() {
+      var task = pending;
+      var action = task && task.action;
+      close('accepted');
+      var closed = action ? action() : false;
+      if (task) {
+        mobileLiveRegion.announce(
+          closed
+            ? 'Session “' + task.label + '” closed.'
+            : 'Session “' + task.label + '” could not be closed.',
+          'polite',
+        );
+      }
+    }
+
+    function request(tab, action, parent) {
+      if (!tab || typeof action !== 'function') return;
+      close();
+      restoreFocus = document.activeElement;
+      var titleNode = tab.querySelector('.tab-title');
+      var title = titleNode && titleNode.textContent.trim();
+      var label = title || 'this session';
+      pending = { action: action, label: label };
+
+      overlay = document.createElement('div');
+      overlay.className = 'fb-session-close-confirm';
+      overlay.setAttribute('role', 'presentation');
+
+      var dialog = document.createElement('section');
+      dialog.className = 'fb-session-close-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-labelledby', 'fb-session-close-title');
+      dialog.setAttribute('aria-describedby', 'fb-session-close-copy');
+
+      var heading = document.createElement('h2');
+      heading.id = 'fb-session-close-title';
+      heading.className = 'fb-session-close-title';
+      heading.textContent = 'Close session?';
+      dialog.appendChild(heading);
+
+      var copy = document.createElement('p');
+      copy.id = 'fb-session-close-copy';
+      copy.className = 'fb-session-close-copy';
+      copy.textContent =
+        'Close “' + label + '”? You can reopen it from Recent sessions.';
+      dialog.appendChild(copy);
+
+      var announcement = document.createElement('p');
+      announcement.className = 'fb-session-close-announcement';
+      announcement.setAttribute('role', 'status');
+      announcement.setAttribute('aria-live', 'assertive');
+      announcement.setAttribute('aria-atomic', 'true');
+      announcement.textContent =
+        'Confirmation required for “' +
+        label +
+        '”. Choose Yes to close session or No to keep it open.';
+      dialog.appendChild(announcement);
+
+      var actions = document.createElement('div');
+      actions.className = 'fb-session-close-actions';
+      var no = document.createElement('button');
+      no.type = 'button';
+      no.className = 'fb-session-close-no';
+      no.textContent = 'No';
+      no.addEventListener('click', function () {
+        close('cancelled');
+      });
+      var yes = document.createElement('button');
+      yes.type = 'button';
+      yes.className = 'fb-session-close-yes';
+      yes.textContent = 'Yes';
+      yes.addEventListener('click', accept);
+      actions.appendChild(no);
+      actions.appendChild(yes);
+      dialog.appendChild(actions);
+      overlay.appendChild(dialog);
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) close('cancelled');
+      });
+      overlay.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close('cancelled');
+        }
+      });
+      document.body.appendChild(overlay);
+      mobileOverlay.open(
+        'session-close-confirm',
+        close,
+        parent ? { parent: parent } : null,
+      );
+      no.focus();
+    }
+
+    return { request: request };
+  })();
+
+  // Programmatic native close clicks bubble through the injected title-menu
+  // capture handler. Suppress that one synthetic activation so closing a
+  // session cannot reopen the thread menu underneath the confirmation.
+  var suppressMobileTabActivation = false;
+  function clickNativeTabClose(tab) {
+    var button = tab && tab.querySelector('.tab-close');
+    if (!button) return false;
+    suppressMobileTabActivation = true;
+    try {
+      button.click();
+      return true;
+    } finally {
+      suppressMobileTabActivation = false;
+    }
+  }
+
+  function clickNativeTabSelect(tab) {
+    var button = tab && tab.querySelector('.tab-select');
+    if (!button) return false;
+    suppressMobileTabActivation = true;
+    try {
+      button.click();
+      return true;
+    } finally {
+      suppressMobileTabActivation = false;
+    }
+  }
+
+  function isCloseConfirmTarget(target) {
+    return !!(
+      target &&
+      target.closest &&
+      target.closest('.fb-session-close-confirm')
+    );
+  }
 
   function patchViewport() {
     var meta = document.querySelector('meta[name="viewport"]');
@@ -744,9 +1160,17 @@
           {
             label: 'Close',
             danger: true,
+            confirm: true,
             action: function () {
-              var b = tab.querySelector('.tab-close');
-              if (b) b.click();
+              closeSessionConfirm.request(
+                tab,
+                function () {
+                  var closed = clickNativeTabClose(tab);
+                  close();
+                  return closed;
+                },
+                'thread-menu',
+              );
             },
           },
         ];
@@ -771,7 +1195,7 @@
           b.addEventListener('click', function (ev) {
             ev.stopPropagation();
             it.action();
-            close();
+            if (!it.confirm) close();
           });
           menu.appendChild(b);
         });
@@ -785,6 +1209,8 @@
         'click',
         function (ev) {
           if (!window.matchMedia(MOBILE).matches) return;
+          if (isCloseConfirmTarget(ev.target)) return;
+          if (suppressMobileTabActivation) return;
           var tab = activeTab();
           if (tab && tab.contains(ev.target)) {
             if (menu) close();
@@ -1055,8 +1481,12 @@
             sel.appendChild(check);
           }
           sel.addEventListener('click', function () {
-            var tsel = tab.querySelector('.tab-select');
-            if (tsel) tsel.click(); // the app's native tab activation
+            var selectedTitle = titleOf(tab);
+            clickNativeTabSelect(tab); // the app's native tab activation
+            mobileLiveRegion.announce(
+              'Selected session: “' + selectedTitle + '”.',
+              'polite',
+            );
             close();
           });
           row.appendChild(sel);
@@ -1078,8 +1508,15 @@
             'aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>';
           closeBtn.addEventListener('click', function (ev) {
             ev.stopPropagation();
-            var x = tab.querySelector('.tab-close');
-            if (x) x.click(); // the app's native tab close
+            closeSessionConfirm.request(
+              tab,
+              function () {
+                var closed = clickNativeTabClose(tab);
+                close();
+                return closed;
+              },
+              'session-menu',
+            );
           });
           row.appendChild(closeBtn);
 
@@ -1123,6 +1560,10 @@
             time.textContent = relTime(th.lastPromptAt || th.updatedAt);
             b.appendChild(time);
             b.addEventListener('click', function () {
+              mobileLiveRegion.announce(
+                'Selected recent session: “' + th.title + '”.',
+                'polite',
+              );
               openRecent(th);
             });
             recentList.appendChild(b);
@@ -1258,6 +1699,7 @@
       document.addEventListener(
         'click',
         function (ev) {
+          if (isCloseConfirmTarget(ev.target)) return;
           if (menu && !menu.contains(ev.target) && !btn.contains(ev.target)) {
             close();
           }
@@ -2299,10 +2741,12 @@
     collapseExplorerForTouch();
     bindMobileFeatures();
     restoreMobileChrome();
+    bindFloatLayout();
   }
   function leaveMobile() {
     mobileOverlay.deactivate();
     hideMobileChrome();
+    resetFloatLayout();
   }
 
   threadWindowBack();

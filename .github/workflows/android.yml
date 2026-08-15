@@ -1,0 +1,246 @@
+name: Android debug build
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - "src/mobile-connect-*.js"
+      - "src/install-mobile-connect*.js"
+      - "src/package-mobile-connect-release*.js"
+      - "install-mobile-connect.sh"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "src/mobile-connect-*.js"
+      - "src/install-mobile-connect*.js"
+      - "src/package-mobile-connect-release*.js"
+      - "install-mobile-connect.sh"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "system-images;android-35;google_apis;x86_64"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Generate ephemeral HTTPS relay certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          mkdir -p "$e2e_dir" android/app/src/debug/res/raw android/app/src/debug/res/xml android/app/src/androidTest/assets
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+            -keyout "$e2e_dir/relay.key" \
+            -out "$e2e_dir/relay.crt" \
+            -subj "/CN=freebuff-ci-relay" \
+            -addext "subjectAltName=IP:10.0.2.2,IP:127.0.0.1,DNS:localhost"
+          chmod 600 "$e2e_dir/relay.key"
+          cp "$e2e_dir/relay.crt" android/app/src/debug/res/raw/ci_relay_cert.pem
+          python3 - <<'PY'
+          from pathlib import Path
+
+          Path("android/app/src/debug/res/xml/network_security_config.xml").write_text(
+              """<?xml version=\"1.0\" encoding=\"utf-8\"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted=\"false\">
+                  <trust-anchors>
+                      <certificates src=\"system\" />
+                      <certificates src=\"@raw/ci_relay_cert\" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          """,
+              encoding="utf-8",
+          )
+          PY
+          echo "FB_MOBILE_E2E_RELAY_ORIGIN=https://10.0.2.2:18495" >> "$GITHUB_ENV"
+
+      - name: Start ephemeral relay and desktop fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          export FB_MOBILE_E2E_CERTIFICATE="$e2e_dir/relay.crt"
+          export FB_MOBILE_E2E_KEY="$e2e_dir/relay.key"
+          export FB_MOBILE_E2E_PAIRING_FILE="$e2e_dir/pairing.json"
+          export NODE_EXTRA_CA_CERTS="$e2e_dir/relay.crt"
+          nohup node src/mobile-connect-e2e-fixture.js > "$e2e_dir/fixture.log" 2>&1 &
+          echo $! > "$e2e_dir/fixture.pid"
+          for attempt in $(seq 1 100); do
+            if test -s "$e2e_dir/pairing.json"; then
+              cp "$e2e_dir/pairing.json" android/app/src/androidTest/assets/e2e-pairing.json
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null; then
+              cat "$e2e_dir/fixture.log"
+              exit 1
+            fi
+            sleep 0.2
+          done
+          cat "$e2e_dir/fixture.log"
+          echo "Timed out waiting for E2E fixture"
+          exit 1
+
+      - name: Run lint and assemble configured debug APK and test APK
+        working-directory: android
+        run: |
+          gradle --no-daemon --stacktrace \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
+            -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
+            -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
+
+      - name: Enable KVM for emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android instrumentation and relay pairing E2E on API 35 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          force-avd-creation: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          working-directory: android
+          script: |
+            gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest \
+              -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
+              -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
+
+      - name: Stop ephemeral relay fixture and remove generated test inputs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          if test -s "$e2e_dir/fixture.pid"; then
+            kill "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null || true
+          fi
+          rm -f \
+            android/app/src/androidTest/assets/e2e-pairing.json \
+            android/app/src/debug/res/raw/ci_relay_cert.pem \
+            android/app/src/debug/res/xml/network_security_config.xml
+
+      - name: Upload Android instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-instrumentation-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/**
+            android/app/build/reports/androidTests/connected/**
+            ${{ runner.temp }}/freebuff-e2e/fixture.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify debug APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "${apksigner}"
+          test -s "${apk}"
+          "${apksigner}" verify --verbose --print-certs "${apk}"
+
+      - name: Upload signed debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  relay-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run managed relay integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          for file in \
+            src/install-mobile-connect.js \
+            src/mobile-connect-protocol.js \
+            src/mobile-connect-gateway.js \
+            src/mobile-connect-qr.js \
+            src/mobile-connect-websocket.js \
+            src/mobile-connect-relay.js \
+            src/mobile-connect-agent.js \
+            src/mobile-connect-e2e-fixture.js; do
+            node --check "$file"
+          done
+          node --test --test-timeout=10000 \
+            src/install-mobile-connect.test.js \
+            src/mobile-connect-gateway.test.js \
+            src/mobile-connect-qr.test.js \
+            src/mobile-connect-relay.test.js \
+            src/mobile-connect-agent.test.js | tee relay-tests.tap
+
+      - name: Upload relay test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-relay-tests-${{ github.sha }}
+          path: relay-tests.tap
+          if-no-files-found: warn
+          retention-days: 14

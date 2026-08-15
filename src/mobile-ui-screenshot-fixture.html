@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Freebuff mobile UI screenshot fixture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --surface: #111827;
+        --surface-2: #1a2233;
+        --surface-3: #202b40;
+        --raised: #293751;
+        --chrome: #0c1320;
+        --text: #e8eef8;
+        --muted: #9aa9bf;
+        --faint: #71819a;
+        --border: #34435d;
+        --shadow: #000000;
+        --accent: #8ab4f8;
+        --brand: #67d5ff;
+        --danger: #ff8297;
+        --focus-ring: #9bc2ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--surface);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      button,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      .app {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        background: var(--surface);
+      }
+
+      .tabbar {
+        display: flex;
+        align-items: center;
+        flex: none;
+        min-height: 48px;
+        height: 48px;
+        padding: 0 6px;
+        border-bottom: 1px solid var(--border);
+        background: var(--chrome);
+      }
+
+      .tabs {
+        display: flex;
+        align-items: center;
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 100%;
+      }
+
+      .tab {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        height: 40px;
+        border-radius: 8px;
+      }
+
+      .tab.home {
+        flex: 0 0 74px;
+      }
+
+      .tab.active {
+        flex: 1 1 220px;
+        max-width: 420px;
+        background: var(--surface-2);
+      }
+
+      .tab-select {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        height: 100%;
+        padding: 0 10px;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .tab-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tab-meta {
+        display: flex;
+        margin-left: 6px;
+        color: var(--faint);
+        font-size: 11px;
+      }
+
+      .tab-close,
+      .tab-popout,
+      .tab-new,
+      .tabbar-account,
+      .explorer-toggle,
+      .conn-status,
+      .global-feedback {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .tab-close,
+      .tab-popout {
+        width: 28px;
+        height: 28px;
+        color: var(--faint);
+      }
+
+      .conn-status {
+        flex: none;
+        min-height: 30px;
+        padding: 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .workspace {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      .thread-body {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .messages {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 18px 16px;
+        overflow: auto;
+      }
+
+      .turn {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-width: 680px;
+        margin: 0 auto;
+      }
+
+      .bubble {
+        width: fit-content;
+        max-width: 88%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-2);
+        line-height: 1.45;
+      }
+
+      .msg.user {
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .thread-bottom {
+        position: relative;
+        flex: none;
+        padding: 8px 10px 10px;
+        background: var(--chrome);
+      }
+
+      .todo-dock {
+        position: relative;
+        z-index: 1;
+        max-height: 150px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-2);
+      }
+
+      .todo-dock-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 36px;
+        padding: 7px 10px;
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .todo-dock-list {
+        max-height: 104px;
+        padding: 0 10px 8px;
+        overflow: auto;
+      }
+
+      .todo-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 24px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .todo-row::before {
+        width: 7px;
+        height: 7px;
+        border: 1px solid var(--accent);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .composer {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px 0 0;
+      }
+
+      .composer-context {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-height: 32px;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: var(--surface-2);
+        font-size: 11px;
+      }
+
+      .agent-trigger,
+      .effort-trigger,
+      .stash-key,
+      .attach,
+      .send-key,
+      .stop {
+        min-height: 32px;
+        padding: 5px 8px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--surface-2);
+      }
+
+      .composer-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 6px;
+      }
+
+      .composer textarea {
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 50px;
+        resize: none;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        outline: 0;
+        background: var(--surface-2);
+        color: var(--text);
+      }
+
+      .composer .stop {
+        flex: none;
+        color: var(--danger);
+      }
+
+      .context-quota {
+        color: var(--faint);
+      }
+
+      .quota-compact {
+        display: inline;
+      }
+
+      .quota-full {
+        display: none;
+      }
+
+      .explorer {
+        display: none;
+      }
+    </style>
+    <link rel="stylesheet" href="/mobile-ui.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="tabbar">
+        <div class="tabs">
+          <div class="tab home">
+            <button class="tab-select" type="button" aria-label="Home">
+              <span class="tab-title">Home</span>
+            </button>
+          </div>
+          <div class="tab active">
+            <button class="tab-select" id="thread-tab-screenshot" type="button">
+              <span class="tab-title">Mobile screenshot review</span>
+              <span class="tab-meta"><span>2m</span></span>
+            </button>
+            <button class="tab-popout" type="button" aria-label="Pop out">↗</button>
+            <button class="tab-close" type="button" aria-label="Close">×</button>
+          </div>
+          <button class="tab-new" type="button">New</button>
+        </div>
+        <button class="conn-status" type="button">Connected</button>
+        <button class="tabbar-account" type="button">Account</button>
+        <button class="global-feedback" type="button">Feedback</button>
+      </header>
+
+      <div class="workspace">
+        <section class="thread-body">
+          <div class="messages">
+            <div class="turn">
+              <div class="msg assistant">
+                <div class="bubble">
+                  Header, composer settings, and tasks stay visible on phone.
+                </div>
+              </div>
+              <div class="msg user">
+                <div class="bubble">Check spacing around floating cards.</div>
+              </div>
+            </div>
+          </div>
+          <div class="thread-bottom">
+            <section class="todo-dock" aria-label="Tasks">
+              <div class="todo-dock-header">
+                <span>Tasks</span>
+                <span>2 of 5</span>
+              </div>
+              <div class="todo-dock-list">
+                <div class="todo-row">Keep header controls visible</div>
+                <div class="todo-row">Keep model pills above composer</div>
+                <div class="todo-row">Avoid task-card collisions</div>
+                <div class="todo-row">Capture phone screenshot</div>
+              </div>
+            </section>
+            <form class="composer">
+              <div class="composer-context">
+                <button class="agent-trigger" type="button">
+                  <span class="agent-model">GLM-5.2</span>
+                </button>
+                <button class="effort-trigger" type="button">
+                  <span class="effort-trigger-value">High</span>
+                </button>
+                <span class="context-quota" data-tooltip="Session time limit">
+                  <span class="quota-full">10 minutes remaining</span>
+                  <span class="quota-compact">10m</span>
+                </span>
+              </div>
+              <div class="composer-row">
+                <button class="attach" type="button">Attach</button>
+                <button class="stash-key" type="button">Stash</button>
+                <textarea aria-label="Message" placeholder="Write a message"> </textarea>
+                <button class="stop" type="button">Stop</button>
+                <button class="send-key ready" type="button">Send</button>
+                <span class="composer-length">0 / 10000</span>
+              </div>
+            </form>
+          </div>
+        </section>
+        <aside class="explorer collapsed">
+          <button class="explorer-toggle" type="button" aria-label="Open tools">Tools</button>
+        </aside>
+      </div>
+    </main>
+    <script src="/mobile-ui.js"></script>
+  </body>
+</html>

@@ -1,0 +1,63 @@
+name: Mobile UI screenshot regression
+
+on:
+  push:
+    paths:
+      - "src/mobile-ui.js"
+      - "src/mobile-ui.css"
+      - "src/mobile-ui-screenshot-fixture.html"
+      - "src/mobile-ui-screenshot.test.js"
+      - ".github/workflows/mobile-ui-screenshot.yml"
+  pull_request:
+    paths:
+      - "src/mobile-ui.js"
+      - "src/mobile-ui.css"
+      - "src/mobile-ui-screenshot-fixture.html"
+      - "src/mobile-ui-screenshot.test.js"
+      - ".github/workflows/mobile-ui-screenshot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ui-screenshot-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Capture mobile regression screenshot
+        shell: bash
+        env:
+          FB_MOBILE_SCREENSHOT_DIR: ${{ runner.temp }}/freebuff-mobile-ui-screenshots
+        run: |
+          set -euo pipefail
+          node --check src/mobile-ui.js
+          node --check src/mobile-ui-screenshot.test.js
+          node --test --test-timeout=20000 src/mobile-ui-screenshot.test.js
+
+      - name: Upload mobile regression screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-ui-screenshot-${{ github.sha }}
+          path: ${{ runner.temp }}/freebuff-mobile-ui-screenshots
+          if-no-files-found: warn
+          retention-days: 14
