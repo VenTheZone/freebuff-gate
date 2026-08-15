@@ -189,3 +189,13 @@
 - The Android setup shell used `Theme.Material3.DayNight.NoActionBar`, a hardcoded white root background, black app title, and darker-gray connection text; on a light phone this made pairing UI bright even before WebView navigation.
 - Switched shell to `Theme.Material3.Dark.NoActionBar`, replaced layout hardcodes with `?android:colorBackground`, `?android:textColorPrimary`, and `?android:textColorSecondary`, and kept status/navigation surfaces dark.
 - Local Gradle 8.9 lint, debug APK, instrumentation APK, and APK v2 signature verification passed after removing an API-27-only navigation attribute from `values/`.
+- Published `mobile-v0.1.1-dark-theme-test` from commit `5e86d913b656dea9a622573b112480c60a078a28`; public APK download hash `abe168e66fbd36f552ae34c3b5ad419098a179950501ea454e84125495e78dfc` matches local build and checksum sidecar.
+- Release asset remains debug-signed and generic; it does not bundle a managed relay or production signing identity.
+
+## Freebuff Gate live-test preparation
+
+- Android refresh response intentionally returns a new access token but never returns the raw long-lived device token; the client must retain its existing Keystore-backed token for the next refresh request.
+- Previous `MobilePairingE2EInstrumentedTest` failure was caused by treating that omitted token as a malformed response. The resulting retry loop prevented `CONNECTED`, native WebView session-cookie exchange, and relay page load.
+- `PairingApi.refresh()` now passes the stored token as an explicit parser override; instrumentation coverage proves a refresh response without `deviceToken` remains valid.
+- Android app label is now `Freebuff Gate`; package identity remains `com.freebuff.mobile` and version is `0.1.2`/versionCode `2`.
+- No deployable staging host, DNS name, TLS certificate, cloud account, or relay enrollment secret exists in this checkout. Do not publish a public relay until operator supplies those values.

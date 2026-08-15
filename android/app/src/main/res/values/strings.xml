@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Freebuff Mobile</string>
+    <string name="app_name">Freebuff Gate</string>
     <string name="pairing_url_hint">Paste pairing URL or scan QR</string>
     <string name="confirmation_code_hint">Terminal confirmation code</string>
     <string name="device_name_hint">Device name</string>

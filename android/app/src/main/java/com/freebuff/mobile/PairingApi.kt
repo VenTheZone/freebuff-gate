@@ -31,7 +31,11 @@ class PairingApi(rawBaseUrl: String) {
         val request = JSONObject()
             .put("deviceId", session.deviceId)
             .put("deviceToken", session.deviceToken)
-        return PairingSession.fromGatewayResponse(baseUrl, post("/v1/sessions/refresh", request))
+        return PairingSession.fromGatewayResponse(
+            baseUrl,
+            post("/v1/sessions/refresh", request),
+            deviceTokenOverride = session.deviceToken,
+        )
     }
 
     /**

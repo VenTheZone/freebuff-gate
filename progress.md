@@ -497,3 +497,21 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Replaced hardcoded white/black/gray layout colors with theme-aware background and text attributes.
 - Local Gradle 8.9 validation passed: `lintDebug`, debug APK, instrumentation APK, and APK v2 signature verification.
 - Updated APK is local only; current public `mobile-v0.1.0-test` release still contains previous light-shell APK until user requests commit/push and republish.
+
+## 2026-08-15 — Android dark-theme test release published
+
+- Built commit `5e86d91` with local Gradle 8.9: `lintDebug` and `assembleDebug` passed.
+- Verified debug APK v2 signature; SHA-256: `abe168e66fbd36f552ae34c3b5ad419098a179950501ea454e84125495e78dfc`.
+- Published pre-release `mobile-v0.1.1-dark-theme-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.1-dark-theme-test
+- Public APK download: https://github.com/VenTheZone/FB-Browser-UI/releases/download/mobile-v0.1.1-dark-theme-test/app-debug.apk
+- Added public checksum sidecar `freebuff-mobile-v0.1.1-dark-theme-test-debug.apk.sha256`; direct download hash matches local APK.
+- Release is clearly labeled as debug/test; it still needs a reachable HTTPS relay and running Desktop connector for pairing.
+
+## 2026-08-15 — Android refresh/E2E fix prepared
+
+- Root cause found in failed CI run `31885659309`: `/v1/sessions/refresh` correctly omits raw `deviceToken`, but Android `PairingSession.fromGatewayResponse()` required it, so reconnect never reached `CONNECTED` and WebView never loaded.
+- Updated `PairingApi.refresh()` to preserve the Keystore-backed stored device token while accepting refreshed access/session metadata.
+- Added instrumentation coverage for refresh responses that omit raw device token.
+- Renamed Android display label to `Freebuff Gate`, bumped versionCode to `2` and versionName to `0.1.2`; package ID remains `com.freebuff.mobile`.
+- Local validation passed: Gradle `lintDebug`, debug APK, instrumentation APK, 21/21 Node relay tests, and APK compilation.
+- Public staging relay deployment remains blocked because checkout contains no host, domain, or deployment credentials.

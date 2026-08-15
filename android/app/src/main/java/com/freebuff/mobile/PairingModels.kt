@@ -67,11 +67,15 @@ data class PairingSession(
         .putNullable("uiUrl", uiUrl)
 
     companion object {
-        fun fromGatewayResponse(baseUrl: String, json: JSONObject): PairingSession {
+        fun fromGatewayResponse(
+            baseUrl: String,
+            json: JSONObject,
+            deviceTokenOverride: String? = null,
+        ): PairingSession {
             return PairingSession(
                 gatewayBaseUrl = baseUrl,
                 deviceId = json.requiredString("deviceId"),
-                deviceToken = json.requiredString("deviceToken"),
+                deviceToken = deviceTokenOverride ?: json.requiredString("deviceToken"),
                 accessToken = json.requiredString("accessToken"),
                 accessTokenExpiresAt = json.requiredString("accessTokenExpiresAt"),
                 deviceExpiresAt = json.requiredString("deviceExpiresAt"),

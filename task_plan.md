@@ -223,11 +223,19 @@ Selected project:
 - Push release changes, rerun Android CI, and inspect APK/instrumentation artifacts. **Done: run `31885659309` built and signature-verified APK; relay integration passed.**
 - Publish clearly labeled pre-release APK; production relay and release signing remain separate. **Done: `mobile-v0.1.0-test`; real relay WebView-load test remains follow-up.**
 
-### Phase 25 — Android dark theme polish (in progress)
+### Phase 25 — Android dark theme polish (published test release)
 
 - Replace hardcoded white/black setup-screen colors with theme-aware surfaces and text. **Done.**
 - Make Android shell dark by default so pairing UI is comfortable in low-light use. **Done.**
-- Build and lint debug APK; publish updated APK after user approval. **Local build done; publication pending.**
+- Build and lint debug APK; publish updated APK after user approval. **Done: published `mobile-v0.1.1-dark-theme-test`; production relay/signing remain separate.**
+
+### Phase 26 — Freebuff Gate live-test preparation (in progress)
+
+- Rename Android app display label to `Freebuff Gate` without changing package identity. **Done locally.**
+- Preserve device refresh token when gateway refresh response omits raw token; add instrumentation regression coverage. **Done locally.**
+- Build/lint debug APK and instrumentation APK. **Done locally.**
+- Commit/push source and publish clearly named Freebuff Gate test APK. **Pending.**
+- Deploy public staging HTTPS/WSS relay and run real phone claim/reconnect/revoke test. **Blocked: no staging host, domain, or deployment credentials are present in checkout.**
 
 ## Acceptance criteria
 
@@ -276,6 +284,6 @@ Selected project:
 | `Chrome DevTools page target unavailable` in GitHub run `31883126075` | Manual dispatch ran remote `main` at stale `7c3d251`; remote workflow lacked local Chrome-path hardening and failed before capture | Publish current workflow/source changes, then dispatch again; no remote artifact exists. |
 | `HTTP 422: No ref found for: 5dd5e80` | GitHub Actions dispatch received short commit SHA as ref | Dispatch against `main`, which currently points to pushed commit `5dd5e80`. |
 | `Release.target_commitish is invalid` | First GitHub release attempt used short commit target `b461b24` | Recreated release against full commit SHA; asset upload succeeded. |
-| `java.lang.AssertionError: Android app did not load relay UI` | GitHub run `31885659309` reached all six instrumentation tests but relay WebView E2E did not become ready | Keep verified debug APK published; inspect app/relay E2E logs before calling mobile pairing validated. |
+| `java.lang.AssertionError: Android app did not load relay UI` | GitHub run `31885659309` reached all six instrumentation tests but Android refresh failed because response omitted raw device token | Preserve stored device token in `PairingApi.refresh`; add instrumentation regression and rerun CI. |
 | `android:windowLightNavigationBar requires API level 27` | First dark-theme lint run added API 27 navigation attribute to `values/` with minSdk 26 | Remove optional navigation attribute; dark theme lint/build then passed. |
 | `Task '\\' not found in root project 'FreebuffMobile' and its subprojects.` | Android emulator action received multiline Gradle continuation characters as a literal task | Fold emulator script into one shell command; make APK verification/upload run with `if: always()`. |

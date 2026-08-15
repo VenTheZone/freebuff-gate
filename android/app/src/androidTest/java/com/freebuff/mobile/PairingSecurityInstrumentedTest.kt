@@ -11,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.json.JSONObject
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
@@ -61,6 +62,26 @@ class PairingSecurityInstrumentedTest {
         assertTrue(
             Base64.decode(first, Base64.NO_WRAP or Base64.URL_SAFE).isNotEmpty(),
         )
+    }
+
+    @Test
+    fun refreshResponseReusesStoredDeviceTokenWhenGatewayOmitsIt() {
+        val response = JSONObject()
+            .put("deviceId", "d_test")
+            .put("accessToken", "refreshed-access-token")
+            .put("accessTokenExpiresAt", "2026-08-15T12:00:00Z")
+            .put("deviceExpiresAt", "2026-11-13T12:00:00Z")
+            .put("relayUrl", "wss://mobile.example.test")
+            .put("uiUrl", "https://mobile.example.test")
+
+        val refreshed = PairingSession.fromGatewayResponse(
+            "https://mobile.example.test",
+            response,
+            deviceTokenOverride = "stored-device-token",
+        )
+
+        assertEquals("stored-device-token", refreshed.deviceToken)
+        assertEquals("refreshed-access-token", refreshed.accessToken)
     }
 
     @Test

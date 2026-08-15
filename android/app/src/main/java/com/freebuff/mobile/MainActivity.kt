@@ -269,7 +269,7 @@ class MainActivity : AppCompatActivity() {
         webView.isVerticalScrollBarEnabled = false
         CookieManager.getInstance().setAcceptCookie(true)
         webView.setDownloadListener { _, _, _, _, _ ->
-            showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Mobile")
+            showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
         }
     }
 

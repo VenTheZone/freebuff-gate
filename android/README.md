@@ -1,6 +1,6 @@
-# Freebuff Mobile Android
+# Freebuff Gate Android
 
-Native Android shell for Freebuff mobile pairing.
+Native Android shell for Freebuff Gate mobile pairing.
 
 ## Current scope
 
