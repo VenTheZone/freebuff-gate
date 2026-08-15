@@ -111,8 +111,9 @@ for narrow viewports:
   **auto-collapses the explorer on load** (the app starts with it open, which
   would hide the whole chat on a phone) and lets the app persist that choice,
   so the chat is always visible.
-- **700px (phones)** — dropdown menus and modals become bottom sheets, and
-  chat text bumps to 15px for readability.
+- **700px (phones)** — dropdown menus and modals become bottom sheets.
+  Text keeps the app's native sizes (no font bump, so the chat doesn't look
+  zoomed in), and the viewport stays user-zoomable (no user-scalable=no lock).
 - **480px** — further tightening for small phones.
 
 The tailnet proxy injects these after the app's own stylesheet, so the

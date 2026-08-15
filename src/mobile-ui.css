@@ -247,16 +247,12 @@
 
 /* ─────────────────────────── 700px: phones ─────────────────────────────── */
 @media (max-width: 700px) {
-  /* Readability: the message stream is the product — bump chat text. */
   .messages {
     --chat-gutter: 12px;
     padding-left: 12px;
     padding-right: 12px;
-    font-size: 15px;
-  }
-  .msg.assistant .prose {
-    font-size: 15px;
-    line-height: 1.65;
+    /* Keep the app's native text sizes — no font bump, so the chat doesn't
+       look zoomed in next to the rest of the UI. */
   }
 
   /* Dropdown menus become bottom sheets. */

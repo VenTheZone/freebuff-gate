@@ -19,9 +19,9 @@
 
   function patchViewport() {
     var meta = document.querySelector('meta[name="viewport"]');
-    var content =
-      'width=device-width, initial-scale=1, viewport-fit=cover, ' +
-      'maximum-scale=1, user-scalable=no';
+    // Keep zoom unlocked: locking it (user-scalable=no / maximum-scale=1) can
+    // trap a remembered zoom level on the phone, and it hurts accessibility.
+    var content = 'width=device-width, initial-scale=1, viewport-fit=cover';
     if (meta) {
       meta.setAttribute('content', content);
     } else {
