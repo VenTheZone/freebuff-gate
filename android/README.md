@@ -11,6 +11,7 @@ Native Android shell for Freebuff mobile pairing.
 - Track `Unpaired`, `Pairing`, `Connecting`, `Connected`, `Reconnecting`,
   `Offline`, `Pairing required`, `Revoked`, and `Disconnected` states.
 - Retry gateway refresh with exponential backoff and network callbacks.
+- Use a dark Material 3 setup shell with theme-aware surfaces and readable primary/secondary text.
 - Load only an HTTPS allowlisted Freebuff origin in WebView.
 - Exercise real claim, refresh, Secure/HttpOnly cookie exchange, and WebView
   loading through an ephemeral HTTPS relay in CI.

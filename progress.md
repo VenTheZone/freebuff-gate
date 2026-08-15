@@ -490,3 +490,10 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Published generic local debug APK as pre-release `mobile-v0.1.0-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.0-test
 - Verified public asset download checksum: `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
 - Release is installable for controlled testing, but no public managed relay is configured; real phone pairing still needs a reachable HTTPS relay and follow-up E2E fix.
+
+## 2026-08-15 — Android dark theme polish
+
+- Changed Android setup shell from Material3 DayNight to dark Material3 by default.
+- Replaced hardcoded white/black/gray layout colors with theme-aware background and text attributes.
+- Local Gradle 8.9 validation passed: `lintDebug`, debug APK, instrumentation APK, and APK v2 signature verification.
+- Updated APK is local only; current public `mobile-v0.1.0-test` release still contains previous light-shell APK until user requests commit/push and republish.

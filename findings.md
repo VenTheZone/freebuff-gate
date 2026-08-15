@@ -183,3 +183,9 @@
 - Local generic debug build passed lint, Android test APK compilation, APK v2 signature verification, and produced `android/app/build/outputs/apk/debug/app-debug.apk`. It remains a debug-signed test build and needs a reachable HTTPS relay; no production relay or release signing credential exists in this checkout.
 - Published pre-release `mobile-v0.1.0-test` at `https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.0-test` with the generic APK; downloaded release asset checksum matches local `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
 - GitHub run `31885659309` passed relay integration, lint/assembly, and APK signature verification. Five of six instrumentation tests passed; `MobilePairingE2EInstrumentedTest` still fails only at the 45-second WebView-ready assertion, so public pairing is not yet validated end to end.
+
+## Android dark theme polish
+
+- The Android setup shell used `Theme.Material3.DayNight.NoActionBar`, a hardcoded white root background, black app title, and darker-gray connection text; on a light phone this made pairing UI bright even before WebView navigation.
+- Switched shell to `Theme.Material3.Dark.NoActionBar`, replaced layout hardcodes with `?android:colorBackground`, `?android:textColorPrimary`, and `?android:textColorSecondary`, and kept status/navigation surfaces dark.
+- Local Gradle 8.9 lint, debug APK, instrumentation APK, and APK v2 signature verification passed after removing an API-27-only navigation attribute from `values/`.
