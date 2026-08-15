@@ -102,8 +102,10 @@ for narrow viewports:
   button and the active thread tab becomes a full-width title. Tapping that
   title opens a small **thread menu** (rename / move to new window / close)
   that reuses the app's own tab actions (dblclick for rename, the tab's
-  pop-out and close buttons). The menu opens with the app's popover
-  fade/scale animation and supports **swipe-down-to-close** on touch.
+  pop-out and close buttons), plus an on-demand **Larger chat text**
+  accessibility toggle (persisted in localStorage). The menu opens with the
+  app's popover fade/scale animation and supports **swipe-down-to-close** on
+  touch.
   The thread-window (popout) header gets a
   JS-injected back button too (the browser port has no tabs or window controls
   there), which closes the popout and returns focus to the opener.
@@ -111,9 +113,13 @@ for narrow viewports:
   **auto-collapses the explorer on load** (the app starts with it open, which
   would hide the whole chat on a phone) and lets the app persist that choice,
   so the chat is always visible.
-- **700px (phones)** — dropdown menus and modals become bottom sheets.
-  Text keeps the app's native sizes (no font bump, so the chat doesn't look
-  zoomed in), and the viewport stays user-zoomable (no user-scalable=no lock).
+- **700px (phones)** — dropdown menus stay anchored to their triggers but
+  widen and scroll (they must NOT become fixed bottom sheets: the composer's
+  model picker and workspace menus anchor upward with `bottom: calc(100% + …)`,
+  which goes off-screen under fixed positioning). Modals become bottom
+  sheets. Text keeps the app's native sizes (no font bump, so the chat doesn't
+  look zoomed in), and the viewport stays user-zoomable (no user-scalable=no
+  lock).
 - **480px** — further tightening for small phones.
 
 The tailnet proxy injects these after the app's own stylesheet, so the

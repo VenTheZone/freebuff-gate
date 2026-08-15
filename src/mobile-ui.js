@@ -17,6 +17,16 @@
 
   var MOBILE = '(max-width: 900px)';
 
+  // Accessibility: on-demand larger chat text, persisted per device. Applied
+  // on every page (including popouts) before the app paints, so no flash.
+  var root = document.documentElement;
+  var TEXT_KEY = 'fb-ui:text-large';
+  try {
+    if (localStorage.getItem(TEXT_KEY) === '1') {
+      root.classList.add('fb-text-large');
+    }
+  } catch (e) {}
+
   function patchViewport() {
     var meta = document.querySelector('meta[name="viewport"]');
     // Keep zoom unlocked: locking it (user-scalable=no / maximum-scale=1) can
@@ -128,6 +138,21 @@
           },
         },
         {
+          // Accessibility toggle: larger chat text, on demand, persisted.
+          label: 'Larger chat text',
+          toggle: true,
+          checked: function () {
+            return root.classList.contains('fb-text-large');
+          },
+          action: function () {
+            var on = root.classList.toggle('fb-text-large');
+            try {
+              if (on) localStorage.setItem(TEXT_KEY, '1');
+              else localStorage.removeItem(TEXT_KEY);
+            } catch (e) {}
+          },
+        },
+        {
           label: 'Close',
           danger: true,
           action: function () {
@@ -140,8 +165,20 @@
         var b = document.createElement('button');
         b.type = 'button';
         b.className = 'fb-tab-menu-item' + (it.danger ? ' danger' : '');
-        b.setAttribute('role', 'menuitem');
+        if (it.toggle) {
+          b.setAttribute('role', 'menuitemcheckbox');
+          b.setAttribute('aria-checked', String(!!it.checked()));
+        } else {
+          b.setAttribute('role', 'menuitem');
+        }
         b.textContent = it.label;
+        if (it.toggle) {
+          var check = document.createElement('span');
+          check.className = 'fb-tab-menu-check';
+          check.setAttribute('aria-hidden', 'true');
+          check.textContent = '\u2713';
+          b.appendChild(check);
+        }
         b.addEventListener('click', function (ev) {
           ev.stopPropagation();
           it.action();
