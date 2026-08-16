@@ -1681,6 +1681,38 @@
     border-color: var(--border);
     box-shadow: none;
   }
+
+  /* Dropdown and popover surfaces: flat elevation, no ambient bloom. The
+     app's 28-48px soft shadows and inner top highlight read as a glow halo;
+     replace them with one compact drop shadow so menus still lift off the
+     content beneath without glowing. */
+  .agent-menu,
+  .effort-menu,
+  .header-menu,
+  .home-context-menu,
+  .slash-menu,
+  .stash-menu,
+  .context-usage-popover,
+  .quote-btn,
+  .toast,
+  .app-tooltip {
+    box-shadow: 0 3px 12px color-mix(in srgb, var(--shadow) 30%, transparent);
+  }
+
+  /* Modal backdrop: dim the page, don't frost it. The blur is a glass glow
+     that softens everything behind the dialog; drop it. */
+  .modal-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  /* The composer context row is a stacking context (container-type: inline-size),
+     so the agent and effort menus that open upward from it paint at that
+     context's level and fall behind the working dock (z-index 4). Lift the
+     row above it so the menus overlay the working bar and the transcript. */
+  .composer-context {
+    z-index: 10;
+  }
 }
 
 /* Global mobile hygiene (not viewport-scoped — harmless everywhere). */
