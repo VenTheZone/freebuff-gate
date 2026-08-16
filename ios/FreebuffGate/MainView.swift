@@ -220,22 +220,22 @@ struct RestrictedWebViewHost: UIViewControllerRepresentable {
 /// churn (equivalent of Android's Activity-scoped controller).
 final class SessionController: ObservableObject {
     let sessionStore = SecureSessionStore()
-    private var reconnect: ReconnectController?
+    private var reconnectController: ReconnectController?
     var listener: ((ConnectionState, String, PairingSession?) -> Void)?
 
     func start() {
-        guard reconnect == nil else { return }
-        reconnect = ReconnectController(sessionStore: sessionStore) { [weak self] state, detail, session in
+        guard reconnectController == nil else { return }
+        reconnectController = ReconnectController(sessionStore: sessionStore) { [weak self] state, detail, session in
             self?.listener?(state, detail, session)
         }
-        reconnect?.start()
+        reconnectController?.start()
     }
 
-    func onResume() { reconnect?.onResume() }
+    func onResume() { reconnectController?.onResume() }
 
-    func reconnect() { reconnect?.reconnect() }
+    func reconnect() { reconnectController?.reconnect() }
 
-    func disconnect(clearSession: Bool) { reconnect?.disconnect(clearSession: clearSession) }
+    func disconnect(clearSession: Bool) { reconnectController?.disconnect(clearSession: clearSession) }
 
-    func close() { reconnect?.close() }
+    func close() { reconnectController?.close() }
 }
