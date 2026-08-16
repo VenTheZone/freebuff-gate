@@ -107,10 +107,10 @@ struct PairingSession: Equatable, Codable {
         return PairingSession(
             gatewayBaseUrl: baseUrl,
             deviceId: try required("deviceId"),
-            deviceToken: deviceTokenOverride ?? (try required("deviceToken")),
+            deviceToken: try (deviceTokenOverride ?? required("deviceToken")),
             accessToken: try required("accessToken"),
             accessTokenExpiresAt: try required("accessTokenExpiresAt"),
-            deviceExpiresAt: deviceExpiresAtOverride ?? (try required("deviceExpiresAt")),
+            deviceExpiresAt: try (deviceExpiresAtOverride ?? required("deviceExpiresAt")),
             relayUrl: optional("relayUrl"),
             uiUrl: optional("uiUrl")
         )
