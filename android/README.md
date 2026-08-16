@@ -67,6 +67,35 @@ GitHub Actions boots API 35 emulator and runs:
 gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
 ```
 
+## Install the debug APK
+
+Every push to `main` rebuilds the unpinned WebView debug APK and publishes it
+as `freebuff-gate-debug.apk` on the `mobile-debug-latest` GitHub release, with
+a SHA-256 checksum file (`freebuff-gate-debug.apk.sha256`) next to it. The APK
+is generic: it pairs against the HTTPS origin carried by the QR, not the CI
+relay. The repo is private, so downloads need repo access.
+
+Download both files from the release page (or with
+`gh release download mobile-debug-latest`), then verify the checksum before
+installing:
+
+```bash
+sha256sum -c freebuff-gate-debug.apk.sha256
+```
+
+It must print `freebuff-gate-debug.apk: OK`. If it reports FAILED or the
+checksum file is missing, do not install the APK: the download was truncated
+or tampered with.
+
+Install the verified APK with adb:
+
+```bash
+adb install freebuff-gate-debug.apk
+```
+
+or copy it to the phone and open it, allowing "install unknown apps" for your
+file manager or browser when prompted.
+
 ## Pairing contract
 
 The app expects the terminal URL fragment format emitted by the gateway:
