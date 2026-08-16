@@ -417,6 +417,10 @@ jobs:
           # root again, then remount and poll until a touch probe on
           # /system/etc/security/cacerts succeeds. adb root restarts adbd
           # (device briefly vanishes) so each phase re-checks adbd is ready.
+          # After injection: restorecon the SELinux label and reboot, because
+          # Chromium/WebView caches the platform CA list per browser process
+          # and the first-boot process predates the injection. Confirm the
+          # cert survived in the overlay before running the E2E.
           script: >-
             set -u &&
             cert="$RUNNER_TEMP/freebuff-e2e/relay.crt" &&
@@ -438,6 +442,11 @@ jobs:
             adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null &&
             adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0" &&
             ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "System CA injection failed"; exit 1; } ) &&
+            adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true &&
+            adb reboot &&
+            i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
+            [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
+            ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "cert lost after reboot"; exit 1; } ) &&
             gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
 
       - name: Stop ephemeral relay fixture and remove generated test inputs
