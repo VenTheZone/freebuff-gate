@@ -21,6 +21,77 @@
  * usually null. Every feature that touches app DOM goes through waitForEl()
  * (or polls), so bindings happen once React has mounted.
  */
+/* Clipboard fallback: the app's copy buttons (referral link, code blocks)
+ * call navigator.clipboard.writeText, which browsers only expose in a secure
+ * context (https or localhost). Over plain http on a tailnet IP the API is
+ * missing and every copy silently no-ops. Shim it with a hidden textarea +
+ * execCommand('copy') (still allowed inside a user gesture), so copy works
+ * from any host. The fallback only touches the DOM when a copy is actually
+ * requested, so it is safe here even though document.body may not exist yet. */
+(function () {
+  var native = null;
+  try {
+    native = window.navigator.clipboard;
+  } catch (e) {
+    native = null;
+  }
+  if (native && typeof native.writeText === 'function') return;
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = String(text);
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    var sel = window.getSelection();
+    var prev = [];
+    for (var i = 0; i < sel.rangeCount; i++) {
+      prev.push(sel.getRangeAt(i).cloneRange());
+    }
+    var range = document.createRange();
+    range.selectNodeContents(ta);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    var ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    }
+    sel.removeAllRanges();
+    for (var j = 0; j < prev.length; j++) sel.addRange(prev[j]);
+    ta.remove();
+    return ok;
+  }
+  var shim = {
+    writeText: function (text) {
+      if (native && typeof native.writeText === 'function') {
+        return native.writeText(text);
+      }
+      return fallbackCopy(text)
+        ? Promise.resolve()
+        : Promise.reject(new Error('Copy failed'));
+    },
+    readText: function () {
+      if (native && typeof native.readText === 'function') {
+        return native.readText();
+      }
+      return Promise.reject(new Error('readText unavailable'));
+    },
+  };
+  try {
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: shim,
+      configurable: true,
+      writable: true,
+    });
+  } catch (e) {
+    try {
+      window.navigator.clipboard = shim;
+    } catch (e2) {}
+  }
+})();
 (function () {
   'use strict';
 
