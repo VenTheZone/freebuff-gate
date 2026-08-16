@@ -83,25 +83,44 @@ jobs:
 
   signed-ipa:
     # Produces a device-installable IPA when signing secrets are configured.
-    # Without an Apple Developer account + certificates, this job stays
-    # skipped; the simulator build above is the default CI path.
-    if: ${{ secrets.IOS_SIGNING_CERT_BASE64 != '' }}
+    # Without an Apple Developer account + certificates, every step below the
+    # check is skipped; the simulator build is the default CI path.
+    # The gate lives at step level because the `secrets` context is not
+    # available in a job-level `if` (using it there makes GitHub reject the
+    # whole workflow file before any job is created).
     runs-on: macos-14
     timeout-minutes: 40
     needs: build-test
 
     steps:
+      - name: Check signing secrets
+        id: signing
+        env:
+          CERT: ${{ secrets.IOS_SIGNING_CERT_BASE64 }}
+          PASS: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$PASS" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping signed IPA: IOS_SIGNING_CERT_BASE64 / IOS_SIGNING_CERT_PASSWORD are not set"
+          fi
+
       - name: Check out source
+        if: steps.signing.outputs.enabled == 'true'
         uses: actions/checkout@v4
 
       - name: Install XcodeGen
+        if: steps.signing.outputs.enabled == 'true'
         run: brew install xcodegen
 
       - name: Generate Xcode project
+        if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: xcodegen generate
 
       - name: Import signing certificate
+        if: steps.signing.outputs.enabled == 'true'
         env:
           IOS_SIGNING_CERT_BASE64: ${{ secrets.IOS_SIGNING_CERT_BASE64 }}
           IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
@@ -115,6 +134,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$RUNNER_TEMP" build.keychain
 
       - name: Archive signed app
+        if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: |
           set -euo pipefail
@@ -127,6 +147,7 @@ jobs:
             archive
 
       - name: Export IPA
+        if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: |
           set -euo pipefail
@@ -137,6 +158,7 @@ jobs:
             -exportPath "$RUNNER_TEMP/export"
 
       - name: Upload IPA
+        if: steps.signing.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: FreebuffGate-ipa

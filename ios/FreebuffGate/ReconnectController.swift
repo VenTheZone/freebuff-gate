@@ -81,8 +81,7 @@ class ReconnectController {
 
     private func connectOnce() {
         if manualDisconnect { return }
-        let stored = sessionStore.load()
-        if stored == nil {
+        guard let stored = sessionStore.load() else {
             emit(.unpaired, "Scan a pairing QR code", nil)
             return
         }
