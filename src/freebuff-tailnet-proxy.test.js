@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const test = require('node:test');
 
-const { createProxyServer, patchBundle } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE_V2 } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -111,4 +111,15 @@ test('patchBundle rewrites the home-tab mark and leaves unknown bytes alone', ()
   assert.ok(!patched.includes(mark), 'original create-thread mark is gone');
   assert.ok(patched.includes('fb.homeThread'), 'reuse callback pins the home thread');
   assert.equal(patchBundle('plain javascript'), 'plain javascript');
+});
+
+test('patchBundle pins the resolved thread id, not the createThread promise', () => {
+  const patched = patchBundle(CREATE_REUSE_V2);
+  // V3 must resolve createThread before reading .id; reading it off the
+  // Promise stores the literal string "undefined" and breaks the pin.
+  assert.ok(!patched.includes('setItem("fb.homeThread",nt.id)'), 'must not pin the un-awaited promise id');
+  assert.ok(patched.includes('.then(nt=>{let id=null;try{id=nt&&nt.id||null}'), 'must resolve the thread before pinning');
+  assert.ok(patched.includes('setItem("fb.homeThread",id)'), 'pins the resolved thread id');
+  // an already-V2-patched bundle upgrades to V3
+  assert.notEqual(patched, CREATE_REUSE_V2, 'V2 bundle is upgraded in place');
 });

@@ -308,8 +308,15 @@ const CREATE_MARK =
   'lr(t,()=>ve.createThread(n,{inheritFromThreadId:i}),"Could not open tab")';
 const CREATE_REUSE_V1 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home)||ts.find(x=>lv(x.id)),th=hb&&lv(hb.id)||(()=>{try{const k=localStorage.getItem("fb.homeThread");return k&&lv(k)}catch(e){}})();return th||(ts[0]&&lv(ts[0].id))},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);const nt=ve.createThread(n,{inheritFromThreadId:i});try{localStorage.setItem("fb.homeThread",nt.id)}catch(e){}q(nt)},800))},"Could not open tab")';
-const CREATE_REUSE =
+const CREATE_REUSE_V2 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home);if(hb&&lv(hb.id))return lv(hb.id);let k=null;try{k=localStorage.getItem("fb.homeThread")}catch(e){}if(k&&lv(k))return lv(k);return null},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);const nt=ve.createThread(n,{inheritFromThreadId:i});try{localStorage.setItem("fb.homeThread",nt.id)}catch(e){}q(nt)},800))},"Could not open tab")';
+// V3: ve.createThread is an async API call (returns a Promise), so reading
+// nt.id off the returned promise stores the literal string "undefined" and
+// the pin never matches. Resolve the thread first, then pin its real id &
+// hand the resolved thread to q. Without this every reload sees no pin and
+// creates a fresh empty home thread, stacking "New thread" tabs.
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home);if(hb&&lv(hb.id))return lv(hb.id);let k=null;try{k=localStorage.getItem("fb.homeThread")}catch(e){}if(k&&lv(k))return lv(k);return null},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}q(nt||id)},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}})},800))},"Could not open tab")';
 const SETSTATE_MARK =
   'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
 const SETSTATE_FIX =
@@ -358,6 +365,7 @@ function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
   if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
@@ -541,6 +549,7 @@ module.exports = {
   CLOSE_MARK3,
   CREATE_REUSE,
   CREATE_REUSE_V1,
+  CREATE_REUSE_V2,
   SCROLL_FIX,
   SCROLL_MARK,
   SETSTATE_FIX,
