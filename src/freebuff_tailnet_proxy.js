@@ -15,6 +15,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 
 const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
@@ -400,17 +401,37 @@ const server = http.createServer((req, res) => {
         const out = patchBundle(body);
         const outHeaders = { ...pres.headers };
         outHeaders['content-length'] = Buffer.byteLength(out);
-        // The bundle is patched per request (boot thread fix); never let a
-        // cache serve an unpatched copy.
-        outHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
-        outHeaders.pragma = 'no-cache';
+        const isMainBundle = /\/assets\/index-[^/]+\.js$/.test(pathname);
+        if (isMainBundle) {
+          // The main bundle is patched per request. Cache it but always
+          // revalidate so a patch or upstream update propagates; a 304 skips
+          // re-downloading the ~1.5MB body.
+          const etag = '"' + crypto.createHash('sha1').update(out).digest('hex') + '"';
+          if (req.headers['if-none-match'] === etag) {
+            res.writeHead(304, { etag: etag, 'cache-control': 'public, max-age=0, must-revalidate' });
+            res.end();
+            return;
+          }
+          outHeaders.etag = etag;
+          outHeaders['cache-control'] = 'public, max-age=0, must-revalidate';
+        } else {
+          // Lazy JS chunks are content-hashed and never patched.
+          outHeaders['cache-control'] = 'public, max-age=31536000, immutable';
+        }
         res.writeHead(pres.statusCode || 200, outHeaders);
         res.end(out);
       });
       pres.on('error', () => res.destroy());
       return;
     }
-    res.writeHead(pres.statusCode || 200, pres.headers);
+    const passHeaders = { ...pres.headers };
+    if (pathname.startsWith('/assets/')) {
+      // Hashed static assets (CSS, fonts, images, audio) are immutable.
+      passHeaders['cache-control'] = 'public, max-age=31536000, immutable';
+    } else if (pathname.startsWith('/api/')) {
+      passHeaders['cache-control'] = 'no-store';
+    }
+    res.writeHead(pres.statusCode || 200, passHeaders);
     pres.pipe(res);
     pres.on('error', () => res.destroy());
   });

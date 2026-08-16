@@ -272,11 +272,10 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setSupportMultipleWindows(false)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
-            // The remote UI is rewritten per request (mobile layer, shim,
-            // bundle patch), so a cached page can serve stale UI (e.g. the old
-            // folder picker that opens the phone's own file browser). Always
-            // hit the network for the main document.
-            cacheMode = WebSettings.LOAD_NO_CACHE
+            // The HTML document is no-store and hashed assets are immutable
+            // (both set by the proxy/orchestrator), so normal HTTP caching is
+            // safe and avoids re-downloading the ~1.5MB bundle every load.
+            cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = "$userAgentString FreebuffMobile/0.1"
         }
         webView.isVerticalScrollBarEnabled = false

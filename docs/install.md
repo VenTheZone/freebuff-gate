@@ -133,11 +133,13 @@ If the phone app is used:
 
 ### Persistence notes
 - App UPDATES overwrite ui/index.html, ui/assets/index-*.js, and
-  orchestrator.js. After an update, re-run steps 3, 4, and the
-  /api/fb/dirlist orchestrator patch (the proxy keeps applying its own
-  bundle patch at serve time, but the on-disk index.html shim, the on-disk
-  bundle patch, and the orchestrator route must be re-applied for direct
-  58060 clients).
+  orchestrator.js. After an update, re-run steps 3, 4, the
+  /api/fb/dirlist orchestrator patch, and the orchestrator cache-header
+  patch (json3 no-store + serveSpa HTML no-store / assets immutable; see
+  the freebuff_tailnet_proxy.js commit history for the exact strings). The
+  proxy keeps applying its own bundle patch and cache headers at serve
+  time, but the on-disk index.html shim, bundle patch, and orchestrator
+  routes must be re-applied for direct 58060 clients.
 - The ad sniffer (optional debug tool) patches orchestrator.js the same
   way: it wraps the Ads class `post`/`auction` methods and appends JSON
   lines to ~/.config/freebuff-desktop/ad-sniff.log. Re-apply after app
@@ -183,3 +185,7 @@ the same /v1/mobile/session cookie exchange as Android.
   `/api/fb/dirlist` route. No path typing needed.
 - **Mobile adaptation**: the desktop UI isn't mobile friendly; the proxy
   injects the scoped mobile layer at ≤1000px.
+- **WebView caching**: the Android WebView used LOAD_NO_CACHE, so every load
+  re-downloaded the ~1.5MB bundle through the relay chain. The WebView now
+  uses LOAD_DEFAULT; HTML is no-store, hashed assets are immutable, and the
+  proxy serves the patched bundle with an ETag so reloads return 304.
