@@ -4449,12 +4449,57 @@
     close.focus();
   }
 
+  // Copy feedback: the app's copy buttons (referral link, code blocks, and
+  // message copy) only swap a subtle label/icon on success. Highlight them
+  // with a clear green flash so a successful copy is obvious. The click is
+  // watched because the copied state flips a tick or two after the clipboard
+  // promise resolves, and the app resets it after ~1-2s.
+  var copyFeedbackBound = false;
+  function copyFeedback() {
+    if (copyFeedbackBound) return;
+    copyFeedbackBound = true;
+    function sync(btn) {
+      if (!btn || !document.contains(btn)) return;
+      var copied = false;
+      if (btn.classList.contains('referral-copy-btn')) {
+        copied = btn.classList.contains('copied');
+      } else if (btn.classList.contains('md-copy')) {
+        copied = (btn.textContent || '').trim() === 'Copied';
+      } else if (btn.classList.contains('msg-copy')) {
+        copied = /copied/i.test(btn.getAttribute('aria-label') || '');
+      }
+      btn.classList.toggle('fb-copied', copied);
+    }
+    function schedule(btn) {
+      [0, 60, 250].forEach(function (ms) {
+        setTimeout(function () {
+          sync(btn);
+        }, ms);
+      });
+      setTimeout(function () {
+        sync(btn);
+      }, 2400);
+    }
+    document.addEventListener(
+      'click',
+      function (ev) {
+        var btn =
+          ev.target && ev.target.closest
+            ? ev.target.closest('.md-copy, .msg-copy, .referral-copy-btn')
+            : null;
+        if (btn) schedule(btn);
+      },
+      true,
+    );
+  }
+
   threadWindowBack();
   browserReloadCleanup();
   homeCatalogProjectLines();
   homeThreadHistory();
   bindMessageCompact();
   sessionSwitcher();
+  copyFeedback();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();
   watchMedia(mq, function (ev) {

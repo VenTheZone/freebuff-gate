@@ -56,6 +56,21 @@
   mask-image: none;
 }
 
+/* Copied-state emphasis for the app's copy buttons (referral link, code
+   blocks, message copy). The app only swaps a subtle label/icon on success,
+   so mobile-ui.js adds .fb-copied while the copied state is active and this
+   flashes the button green so a successful copy is obvious. */
+.referral-copy-btn.copied,
+.referral-copy-btn.fb-copied,
+.md-copy.fb-copied,
+.msg-copy.fb-copied {
+  border-color: color-mix(in srgb, #2eaa62 55%, var(--border, #444));
+  background: color-mix(in srgb, #2eaa62 16%, var(--surface-2, #1a1a1a));
+  color: #2eaa62;
+  transition: background 0.12s ease, color 0.12s ease,
+    border-color 0.12s ease;
+}
+
 /* Transcript-level bulk control: floats at the top-right of the
    thread-bottom region (the transcript itself is virtualizer-managed, so
    injected nodes must live outside it). Only visible while the thread has
