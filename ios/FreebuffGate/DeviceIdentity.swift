@@ -24,8 +24,8 @@ class DeviceIdentity {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecSuccess, let key = item as? SecKey {
-            return key
+        if status == errSecSuccess {
+            return item as! SecKey
         }
         if status != errSecItemNotFound {
             throw KeychainError.unexpected("Key lookup failed (\(status))")
