@@ -75,8 +75,15 @@
     border: 0;
     border-left: 1px solid var(--border);
     border-radius: 0;
-    box-shadow: -10px 0 36px color-mix(in srgb, var(--shadow) 38%, transparent);
+    /* No halo: the desktop theme's 36-48px glow shadows read as a bright
+       halo on phones, and the panel already has its own left border. */
+    box-shadow: none;
     animation: fb-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  /* Tame the desktop glow on the panel header/rail too. */
+  .explorer-header,
+  .explorer.collapsed .explorer-header {
+    box-shadow: none;
   }
   .explorer-resize-handle {
     display: none;
@@ -189,6 +196,12 @@
     display: none;
   }
   .tabbar-account {
+    display: none;
+  }
+  /* Desktop window controls (minimize / maximize / close) are useless in a
+     mobile WebView — the OS owns the window. Drop them from the slim
+     header so the title has room and the bar stays clean. */
+  .tabbar .window-controls {
     display: none;
   }
 
@@ -1546,6 +1559,24 @@
   }
 }
 
+/* ─────────────── Desktop glow removal (≥1001px) ────────────────────────────
+   The packaged app ships big halo shadows on the explorer panel and its
+   collapsed rail, plus a glowing brand hairline on the update sheet. On
+   desktop those read as glow bars; the panels already have their own
+   borders, so the halos are pure noise. Scoped to desktop — the mobile
+   rules above already kill the same effects below 1000px. */
+@media (min-width: 1001px) {
+  .explorer,
+  .explorer.fill,
+  .explorer.collapsed .explorer-header,
+  .explorer-header {
+    box-shadow: none;
+  }
+  .update-sheet::before {
+    display: none;
+  }
+}
+
 /* Global mobile hygiene (not viewport-scoped — harmless everywhere). */
 .tabbar button,
 .explorer button,
@@ -1559,4 +1590,349 @@
 }
 body {
   -webkit-text-size-adjust: 100%;
+}
+
+/* Home catalog directory line (mobile-ui.js): the browser-port home screen
+   lists threads under a selected project chip without showing the directory
+   each thread lives in. The injected line wraps below the title. */
+.home-thread {
+  flex-wrap: wrap;
+}
+.home-thread .fb-thread-project {
+  display: block;
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.3;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─────────────── Mobile polish: depth, glass, and accent (≤1000px) ────────
+   Cosmetic-only pass so the phone view stops reading as a flat desktop
+   transplant: a glassy slim header, gradient user bubbles, richer pills,
+   and a focused composer. No ambient glow washes or brand-colored bars —
+   the flat surfaces stay flat. All colors mix from the app's own theme
+   variables, so dark and light themes both stay coherent. */
+@media (max-width: 1000px) {
+  /* Slim header: translucent glass with a neutral bottom edge and a soft
+     drop shadow — no colored glow line. */
+  .tabbar {
+    background: color-mix(in srgb, var(--chrome) 84%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.25);
+    backdrop-filter: blur(18px) saturate(1.25);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    box-shadow: 0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
+  }
+
+  /* User bubbles: flat surface, no glow, no tinted edge — just the rounder
+     chat-app corner treatment. */
+  .msg.user .bubble {
+    background: var(--raised);
+    border: 0;
+    border-radius: 18px 18px 6px 18px;
+    box-shadow: none;
+  }
+
+  /* Message timestamps: slightly brighter than the desktop --faint so they
+     stay legible without shouting. */
+  .msg-time {
+    color: color-mix(in srgb, var(--muted) 85%, var(--text));
+  }
+
+  /* Composer surface: translucent gradient so the ambient wash shows through
+     at the bottom, keeping the top hairline instead of the flat slab. */
+  .composer {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg) 40%, transparent),
+      color-mix(in srgb, var(--bg) 90%, transparent)
+    );
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .composer textarea {
+    background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+    border-color: color-mix(in srgb, var(--border) 80%, transparent);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .composer textarea:focus {
+    border-color: color-mix(in srgb, var(--brand) 38%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 9%, transparent);
+  }
+
+  /* Floating model/effort/time pills: gradient glass, brand chevrons, a
+     deeper soft shadow so they read as buttons, not flat chips. */
+  .fb-model-pill,
+  .fb-effort-pill,
+  .fb-time-pill {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--raised) 94%, transparent),
+      color-mix(in srgb, var(--surface-2) 86%, transparent)
+    );
+    border-color: color-mix(in srgb, var(--border) 70%, transparent);
+    box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--shadow) 55%, transparent);
+  }
+  .fb-model-pill-chev,
+  .fb-effort-pill-chev,
+  .fb-time-pill-icon {
+    color: var(--brand);
+  }
+
+  /* Active-turn working chip: flat, no tinted glow. */
+  .thread-working {
+    background: color-mix(in srgb, var(--raised) 92%, transparent);
+    border-color: var(--border);
+    box-shadow: 0 3px 12px color-mix(in srgb, var(--shadow) 28%, transparent);
+  }
+
+  /* Todo dock: keep the card header flat — no tinted wash. */
+  .thread-bottom .todo-dock-header {
+    background: transparent;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  /* Home catalog: carded sections with rounded search, so the thread list
+     stops being a flat list of rows. */
+  .home-thread-section {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 88%, transparent),
+      var(--surface)
+    );
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 4px;
+  }
+  .home-section-label {
+    padding: 5px 10px 4px;
+  }
+  .home-thread-search {
+    background: var(--surface);
+    border-color: var(--border);
+    border-radius: 12px;
+  }
+  .home-thread-search:focus-within {
+    border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 9%, transparent);
+  }
+  .home-project {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-2) 92%, transparent),
+      var(--surface)
+    );
+    border-radius: 10px;
+  }
+
+  /* Empty states: a touch more presence than the desktop --faint text. */
+  .lane-empty,
+  .home-thread-filter-empty {
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    color: var(--faint);
+  }
+
+  /* Thread history (mobile-ui.js): entry button above the home search box
+     and the full-screen sheet it opens. */
+  .fb-history-entry {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 42px;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fb-history-entry:active {
+    background: var(--raised);
+  }
+  .fb-history-entry svg {
+    color: var(--faint);
+  }
+  .fb-history-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    animation: fb-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  .fb-history-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: var(--fb-mobile-safe-top) 10px 8px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--chrome) 88%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+  .fb-history-title {
+    flex: 1;
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--text);
+  }
+  .fb-history-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .fb-history-close:active {
+    background: var(--raised);
+    color: var(--text);
+  }
+  .fb-history-search {
+    flex: none;
+    margin: 10px 12px 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 13.5px;
+    outline: none;
+  }
+  .fb-history-search:focus {
+    border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+  }
+  .fb-history-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 6px 12px 24px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .fb-history-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fb-history-row:active {
+    background: var(--raised);
+  }
+  .fb-history-row-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .fb-history-row-title > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fb-history-row-time {
+    flex: none;
+    margin-left: auto;
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--faint);
+  }
+  .fb-history-row-dir {
+    font-size: 11px;
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fb-history-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  }
+  .fb-history-act {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-height: 32px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 650;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fb-history-act:active {
+    background: var(--raised);
+    color: var(--text);
+  }
+  .fb-history-act-del {
+    color: #e5484d;
+    border-color: color-mix(in srgb, #e5484d 35%, var(--border));
+  }
+  .fb-history-act-del:active {
+    background: color-mix(in srgb, #e5484d 14%, var(--surface-2));
+    color: #e5484d;
+  }
+  .fb-history-rename {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    outline: none;
+  }
+  .fb-history-empty {
+    padding: 26px 10px;
+    color: var(--faint);
+    font-size: 13px;
+    text-align: center;
+  }
 }

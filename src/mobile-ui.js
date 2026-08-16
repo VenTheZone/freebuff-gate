@@ -843,6 +843,137 @@
     return { request: request };
   })();
 
+  // Session-delete confirmation, same visual family as the close dialog.
+  // Deleting a session is destructive and permanent, so it always requires
+  // an explicit Yes (red) — No / Escape / backdrop / Back all cancel. The
+  // parent sheet stays mounted so cancel returns to the list.
+  var deleteSessionConfirm = (function () {
+    var overlay = null;
+    var pending = null;
+    var restoreFocus = null;
+
+    function focusPrevious() {
+      var previous = restoreFocus;
+      restoreFocus = null;
+      if (
+        previous &&
+        previous !== document.body &&
+        document.documentElement.contains(previous) &&
+        typeof previous.focus === 'function'
+      ) {
+        previous.focus();
+      }
+    }
+
+    function close(reason) {
+      var task = pending;
+      var cancelled =
+        reason === 'cancelled' || !!(reason && reason.fromBack);
+      if (overlay) {
+        overlay.remove();
+        overlay = null;
+      }
+      pending = null;
+      mobileOverlay.dismiss('session-delete-confirm');
+      focusPrevious();
+      if (cancelled && task) {
+        mobileLiveRegion.announce(
+          'Session “' + task.label + '” kept.',
+          'polite',
+        );
+      }
+    }
+
+    function accept() {
+      var task = pending;
+      close('accepted');
+      if (task) task.onAccept();
+    }
+
+    function request(thread, onAccept, parent) {
+      if (!thread) return;
+      close();
+      restoreFocus = document.activeElement;
+      var label = thread.title || 'New thread';
+      pending = { label: label, onAccept: onAccept };
+
+      overlay = document.createElement('div');
+      overlay.className = 'fb-session-close-confirm';
+      overlay.setAttribute('role', 'presentation');
+
+      var dialog = document.createElement('section');
+      dialog.className = 'fb-session-close-dialog';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      dialog.setAttribute('aria-labelledby', 'fb-session-delete-title');
+      dialog.setAttribute('aria-describedby', 'fb-session-delete-copy');
+
+      var heading = document.createElement('h2');
+      heading.id = 'fb-session-delete-title';
+      heading.className = 'fb-session-close-title';
+      heading.textContent = 'Delete session?';
+      dialog.appendChild(heading);
+
+      var copy = document.createElement('p');
+      copy.id = 'fb-session-delete-copy';
+      copy.className = 'fb-session-close-copy';
+      copy.textContent =
+        'Delete “' +
+        label +
+        '”? This permanently removes the session and its history. This cannot be undone.';
+      dialog.appendChild(copy);
+
+      var announcement = document.createElement('p');
+      announcement.className = 'fb-session-close-announcement';
+      announcement.setAttribute('role', 'status');
+      announcement.setAttribute('aria-live', 'assertive');
+      announcement.setAttribute('aria-atomic', 'true');
+      announcement.textContent =
+        'Confirmation required for “' +
+        label +
+        '”. Choose Yes to delete session or No to keep it.';
+      dialog.appendChild(announcement);
+
+      var actions = document.createElement('div');
+      actions.className = 'fb-session-close-actions';
+      var no = document.createElement('button');
+      no.type = 'button';
+      no.className = 'fb-session-close-no';
+      no.textContent = 'No';
+      no.addEventListener('click', function () {
+        close('cancelled');
+      });
+      var yes = document.createElement('button');
+      yes.type = 'button';
+      yes.className = 'fb-session-close-yes';
+      yes.textContent = 'Yes';
+      yes.addEventListener('click', accept);
+      actions.appendChild(no);
+      actions.appendChild(yes);
+      dialog.appendChild(actions);
+      overlay.appendChild(dialog);
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) close('cancelled');
+      });
+      overlay.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close('cancelled');
+        }
+      });
+      document.body.appendChild(overlay);
+      mobileOverlay.open(
+        'session-delete-confirm',
+        close,
+        parent ? { parent: parent } : null,
+      );
+      no.focus();
+    }
+
+    return { request: request };
+  })();
+
   // Programmatic native close clicks bubble through the injected title-menu
   // capture handler. Suppress that one synthetic activation so closing a
   // session cannot reopen the thread menu underneath the confirmation.
@@ -1843,6 +1974,91 @@
     });
   }
 
+  // Open a closed session as a tab via the app's home catalog — the only
+  // native path (the store is module-private). Go home, make sure the right
+  // project is selected (matching the full path in data-tooltip), then click
+  // the matching .home-thread row (its onClick runs the app's own open-thread
+  // action → new tab + loadThread). Shared by the session menu's Recent
+  // section and the home-page Thread history sheet.
+  function openThreadViaHomeCatalog(th) {
+    var home = document.querySelector('.tab.home');
+    if (home) home.click();
+    var attempts = 0;
+    var timer = setInterval(function () {
+      if (++attempts > 60) {
+        clearInterval(timer);
+        return; // ~3s cap
+      }
+      // Clear any leftover catalog search/filter so the row can match.
+      var inp = document.querySelector('.home-thread-search input');
+      if (inp && inp.value) {
+        var setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        ).set;
+        setter.call(inp, '');
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      var activeTab = document.querySelector(
+        '#home-catalog-tab-active:not([aria-selected="true"])',
+      );
+      if (activeTab) activeTab.click();
+      var rows = document.querySelectorAll('.home-thread');
+      if (!rows.length) return; // catalog not rendered yet
+      var sel = document.querySelector('.home-project.selected');
+      if (!sel || sel.getAttribute('data-tooltip') !== th.projectPath) {
+        var pr = Array.prototype.slice
+          .call(document.querySelectorAll('.home-project'))
+          .find(function (b) {
+            return b.getAttribute('data-tooltip') === th.projectPath;
+          });
+        if (pr) {
+          pr.click(); // switching project re-renders — keep polling
+          return;
+        }
+      }
+      // Match the row by title; if several rows share the title, prefer
+      // the one whose relative age is closest to the thread's own.
+      function ageFromText(txt) {
+        if (!txt) return null;
+        txt = txt.trim();
+        if (txt === 'now') return 0;
+        var m = txt.match(/^(\d+)m$/);
+        if (m) return +m[1] * 60000;
+        var h = txt.match(/^(\d+)h$/);
+        if (h) return +h[1] * 3600000;
+        var d = txt.match(/^(\d+)d$/);
+        if (d) return +d[1] * 86400000;
+        return null; // date text — can't compare reliably
+      }
+      var expected =
+        Date.now() - (th.lastPromptAt || th.updatedAt || Date.now());
+      var matches = Array.prototype.slice.call(rows).filter(function (r) {
+        var t = r.querySelector('.home-thread-title');
+        return t && t.textContent.trim() === th.title;
+      });
+      if (!matches.length) return; // still loading — keep polling
+      var target = matches[0];
+      if (matches.length > 1) {
+        matches.sort(function (a, b) {
+          var aa = ageFromText(
+            (a.querySelector('.home-thread-time') || {}).textContent,
+          );
+          var ba = ageFromText(
+            (b.querySelector('.home-thread-time') || {}).textContent,
+          );
+          if (aa == null && ba == null) return 0;
+          if (aa == null) return 1;
+          if (ba == null) return -1;
+          return Math.abs(aa - expected) - Math.abs(ba - expected);
+        });
+        target = matches[0];
+      }
+      clearInterval(timer);
+      target.click(); // the app's open-thread action
+    }, 50);
+  }
+
   // Session switcher (mobile): the tab strip is hidden on phones (slim
   // header), so switching between open sessions needs a dropdown. A header
   // button opens a menu listing the open session tabs; picking one clicks the
@@ -2226,84 +2442,12 @@
       // only native path is the home catalog: go home, make sure the right
       // project is selected (matching the full path in data-tooltip), then
       // click the matching .home-thread row (its onClick runs the app's own
-      // open-thread action → new tab + loadThread).
+      // Open a closed session: shared catalog-clicking logic now lives at
+      // module scope (openThreadViaHomeCatalog), reused by the home-page
+      // Thread history sheet.
       function openRecent(th) {
         close();
-        var home = tabbar.querySelector('.tab.home');
-        if (home) home.click();
-        var attempts = 0;
-        var timer = setInterval(function () {
-          if (++attempts > 60) {
-            clearInterval(timer);
-            return; // ~3s cap
-          }
-          // Clear any leftover catalog search/filter so the row can match.
-          var inp = document.querySelector('.home-thread-search input');
-          if (inp && inp.value) {
-            var setter = Object.getOwnPropertyDescriptor(
-              window.HTMLInputElement.prototype,
-              'value',
-            ).set;
-            setter.call(inp, '');
-            inp.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          var activeTab = document.querySelector(
-            '#home-catalog-tab-active:not([aria-selected="true"])',
-          );
-          if (activeTab) activeTab.click();
-          var rows = document.querySelectorAll('.home-thread');
-          if (!rows.length) return; // catalog not rendered yet
-          var sel = document.querySelector('.home-project.selected');
-          if (!sel || sel.getAttribute('data-tooltip') !== th.projectPath) {
-            var pr = Array.prototype.slice
-              .call(document.querySelectorAll('.home-project'))
-              .find(function (b) {
-                return b.getAttribute('data-tooltip') === th.projectPath;
-              });
-            if (pr) {
-              pr.click(); // switching project re-renders — keep polling
-              return;
-            }
-          }
-          // Match the row by title; if several rows share the title, prefer
-          // the one whose relative age is closest to the thread's own.
-          function ageFromText(txt) {
-            if (!txt) return null;
-            txt = txt.trim();
-            if (txt === 'now') return 0;
-            var m = txt.match(/^(\d+)m$/);
-            if (m) return +m[1] * 60000;
-            var h = txt.match(/^(\d+)h$/);
-            if (h) return +h[1] * 3600000;
-            var d = txt.match(/^(\d+)d$/);
-            if (d) return +d[1] * 86400000;
-            return null; // date text — can't compare reliably
-          }
-          var expected = Date.now() - (th.lastPromptAt || th.updatedAt || Date.now());
-          var matches = Array.prototype.slice.call(rows).filter(function (r) {
-            var t = r.querySelector('.home-thread-title');
-            return t && t.textContent.trim() === th.title;
-          });
-          if (!matches.length) return; // still loading — keep polling
-          var target = matches[0];
-          if (matches.length > 1) {
-            matches.sort(function (a, b) {
-              var aa = ageFromText(
-                (a.querySelector('.home-thread-time') || {}).textContent,
-              );
-              var ba = ageFromText(
-                (b.querySelector('.home-thread-time') || {}).textContent,
-              );
-              if (aa == null && ba == null) return 0;
-              if (aa == null) return 1;
-              if (ba == null) return -1;
-              return Math.abs(aa - expected) - Math.abs(ba - expected);
-            });
-            target = matches[0];
-          }
-          clearInterval(timer);
-          target.click(); // the app's open-thread action
-        }, 50);
+        openThreadViaHomeCatalog(th);
       }
       function stopSessionStatusPolling() {
         if (sessionStatusPollTimer) {
@@ -3691,8 +3835,347 @@
     resetFloatLayout();
   }
 
+  // Home catalog (browser port): the app's home screen lists threads for the
+  // selected project but never shows WHICH directory a thread lives under.
+  // Append a muted directory line under every row — the basename of the
+  // selected project chip's path — and keep it in sync while the catalog
+  // re-renders (project switch, search, archive toggle). Runs at every
+  // viewport: the home page is a first-class surface in the browser port.
+  var homeCatalogBound = false;
+  function homeCatalogProjectLines() {
+    if (homeCatalogBound) return;
+    homeCatalogBound = true;
+    waitForEl('.home-thread-list', function () {
+      var list = document.querySelector('.home-thread-list');
+      if (!list) return;
+      function apply() {
+        var sel = document.querySelector('.home-project.selected');
+        var path = sel && sel.getAttribute('data-tooltip');
+        if (!path) return;
+        var parts = path.split('/').filter(Boolean);
+        var dir = parts.length ? parts[parts.length - 1] : path;
+        Array.prototype.forEach.call(
+          document.querySelectorAll('.home-thread'),
+          function (row) {
+            var line = row.querySelector('.fb-thread-project');
+            if (!line) {
+              line = document.createElement('span');
+              line.className = 'fb-thread-project';
+              var title = row.querySelector('.home-thread-title');
+              (title ? title.parentNode : row).appendChild(line);
+            }
+            if (line.textContent !== dir) line.textContent = dir;
+          },
+        );
+      }
+      apply();
+      new MutationObserver(apply).observe(list, {
+        childList: true,
+        subtree: true,
+      });
+    });
+  }
+
+  // Thread history (mobile home page): the native home catalog only lists the
+  // selected project's threads, so add a "Thread history" entry above the
+  // search box that opens a full-screen list of EVERY thread across all
+  // directories — title, directory, relative time — with live search, and
+  // native click-to-open via the home catalog (openThreadViaHomeCatalog).
+  function fetchThreadHistory() {
+    return fetch('/api/projects', { headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var items = [];
+        ((data && data.projects) || []).forEach(function (p) {
+          (p.threads || []).forEach(function (th) {
+            // Every non-archived session across all directories — including
+            // empty "New thread" rows, so the manager can clean them up.
+            if (th && th.archivedAt === null) {
+              items.push(th);
+            }
+          });
+        });
+        items.sort(function (a, b) {
+          return (
+            (b.lastPromptAt || b.updatedAt || 0) -
+            (a.lastPromptAt || a.updatedAt || 0)
+          );
+        });
+        return items;
+      });
+  }
+  function dirNameOf(path) {
+    var parts = String(path || '').split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : String(path || '');
+  }
+  function relativeTime(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    if (diff < 60000) return 'now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h';
+    if (diff < 604800000) return Math.floor(diff / 86400000) + 'd';
+    var d = new Date(ts);
+    return d.getMonth() + 1 + '/' + d.getDate();
+  }
+  var historyBound = false;
+  function homeThreadHistory() {
+    if (historyBound) return;
+    historyBound = true;
+    if (!window.matchMedia(MOBILE).matches) return;
+    waitForEl('.home-thread-search', function () {
+      var search = document.querySelector('.home-thread-search');
+      if (!search) return;
+      if (search.parentNode.querySelector('.fb-history-entry')) return;
+      var entry = document.createElement('button');
+      entry.type = 'button';
+      entry.className = 'fb-history-entry';
+      entry.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.5h10M3 8h10M3 12.5h6"></path></svg><span>Thread history</span>';
+      search.parentNode.insertBefore(entry, search);
+      entry.addEventListener('click', openHistorySheet);
+    });
+  }
+  var historySheetOpen = false;
+  function openHistorySheet() {
+    if (historySheetOpen) return;
+    historySheetOpen = true;
+    var overlay = document.createElement('div');
+    overlay.className = 'fb-history-sheet';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Thread history');
+
+    var head = document.createElement('div');
+    head.className = 'fb-history-head';
+    var title = document.createElement('div');
+    title.className = 'fb-history-title';
+    title.textContent = 'Thread history';
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'fb-history-close';
+    close.setAttribute('aria-label', 'Close thread history');
+    close.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"></path></svg>';
+    close.addEventListener('click', closeSheet);
+    head.appendChild(title);
+    head.appendChild(close);
+    overlay.appendChild(head);
+
+    var searchBox = document.createElement('input');
+    searchBox.type = 'search';
+    searchBox.className = 'fb-history-search';
+    searchBox.placeholder = 'Search threads';
+    searchBox.setAttribute('aria-label', 'Search threads');
+    overlay.appendChild(searchBox);
+
+    var list = document.createElement('div');
+    list.className = 'fb-history-list';
+    overlay.appendChild(list);
+
+    var empty = document.createElement('div');
+    empty.className = 'fb-history-empty';
+    empty.textContent = 'No threads yet.';
+
+    function closeSheet() {
+      historySheetOpen = false;
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      mobileOverlay.dismiss('thread-history');
+    }
+    mobileOverlay.open('thread-history', closeSheet);
+    attachSwipeDownClose(overlay, closeSheet);
+
+    var lastItems = [];
+    function apiCall(id, action, body) {
+      return fetch('/api/thread/' + encodeURIComponent(id) + '/' + action, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }
+    // Inline rename: swap the title line for an input, save on Enter/blur,
+    // cancel on Escape. Saved through the same API the native UI uses.
+    function beginRename(th, line1) {
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'fb-history-rename';
+      input.value = th.title || '';
+      input.setAttribute('aria-label', 'Rename session');
+      line1.replaceChildren(input);
+      input.focus();
+      input.select();
+      var done = false;
+      function finish(save) {
+        if (done) return;
+        done = true;
+        var title = input.value.trim();
+        if (save && title && title !== th.title) {
+          apiCall(th.id, 'rename', { title: title, projectPath: th.projectPath })
+            .then(function () {
+              th.title = title;
+              render(lastItems);
+              mobileLiveRegion.announce(
+                'Session renamed to “' + title + '”.',
+                'polite',
+              );
+            })
+            .catch(function () {
+              render(lastItems);
+              mobileLiveRegion.announce('Could not rename session.', 'polite');
+            });
+        } else {
+          render(lastItems);
+        }
+      }
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          finish(true);
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          finish(false);
+        }
+      });
+      input.addEventListener('blur', function () {
+        finish(true);
+      });
+      input.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+      });
+    }
+    // Delete with confirmation; the sheet stays mounted underneath so No
+    // returns to the list. Row removed locally on success.
+    function requestDelete(th) {
+      var label = th.title || 'New thread';
+      deleteSessionConfirm.request(th, function () {
+        apiCall(th.id, 'delete', { projectPath: th.projectPath })
+          .then(function () {
+            lastItems = lastItems.filter(function (t) {
+              return t.id !== th.id;
+            });
+            if (overlay.parentNode) render(lastItems);
+            mobileLiveRegion.announce(
+              'Session “' + label + '” deleted.',
+              'polite',
+            );
+          })
+          .catch(function () {
+            mobileLiveRegion.announce(
+              'Session “' + label + '” could not be deleted.',
+              'polite',
+            );
+          });
+      }, 'thread-history');
+    }
+    function render(items) {
+      lastItems = items;
+      var q = searchBox.value.trim().toLowerCase();
+      var shown = 0;
+      list.textContent = '';
+      items.forEach(function (th) {
+        var titleText = th.title || 'New thread';
+        var dir = dirNameOf(th.projectPath);
+        if (
+          q &&
+          titleText.toLowerCase().indexOf(q) < 0 &&
+          dir.toLowerCase().indexOf(q) < 0
+        ) {
+          return;
+        }
+        shown++;
+        var row = document.createElement('div');
+        row.className = 'fb-history-row';
+        row.setAttribute('role', 'button');
+        row.tabIndex = 0;
+        row.setAttribute('aria-label', 'Open session ' + titleText);
+        var line1 = document.createElement('span');
+        line1.className = 'fb-history-row-title';
+        var titleSpan = document.createElement('span');
+        titleSpan.textContent = titleText;
+        var time = document.createElement('span');
+        time.className = 'fb-history-row-time';
+        time.textContent = relativeTime(th.lastPromptAt || th.updatedAt);
+        line1.appendChild(titleSpan);
+        line1.appendChild(time);
+        var line2 = document.createElement('span');
+        line2.className = 'fb-history-row-dir';
+        line2.textContent = dir;
+        var actions = document.createElement('div');
+        actions.className = 'fb-history-actions';
+        var renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'fb-history-act';
+        renameBtn.setAttribute('aria-label', 'Rename session ' + titleText);
+        renameBtn.innerHTML =
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.3 2.7a1.6 1.6 0 0 1 2.3 2.3L5.5 13.1 2 14l.9-3.5 8.4-7.8z"></path></svg><span>Rename</span>';
+        renameBtn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          beginRename(th, line1);
+        });
+        var delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'fb-history-act fb-history-act-del';
+        delBtn.setAttribute('aria-label', 'Delete session ' + titleText);
+        delBtn.innerHTML =
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.5 7v4M9.5 7v4"></path></svg><span>Delete</span>';
+        delBtn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          requestDelete(th);
+        });
+        actions.appendChild(renameBtn);
+        actions.appendChild(delBtn);
+        row.appendChild(line1);
+        row.appendChild(line2);
+        row.appendChild(actions);
+        row.addEventListener('click', function () {
+          closeSheet();
+          openThreadViaHomeCatalog(th);
+        });
+        row.addEventListener('keydown', function (ev) {
+          // Enter from the rename input (or buttons) bubbles here — only
+          // activate when the row itself is the target.
+          if (ev.target !== row) return;
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            closeSheet();
+            openThreadViaHomeCatalog(th);
+          }
+        });
+        list.appendChild(row);
+      });
+      if (!shown) {
+        empty.textContent = q ? 'No threads match “' + searchBox.value.trim() + '”.' : 'No threads yet.';
+        list.appendChild(empty);
+      }
+    }
+
+    fetchThreadHistory()
+      .then(function (items) {
+        if (!overlay.parentNode) return; // closed meanwhile
+        render(items);
+        searchBox.addEventListener('input', function () {
+          render(items);
+        });
+      })
+      .catch(function () {
+        if (!overlay.parentNode) return;
+        empty.textContent = 'Could not load thread history.';
+        list.appendChild(empty);
+      });
+    document.body.appendChild(overlay);
+    close.focus();
+  }
+
   threadWindowBack();
   browserReloadCleanup();
+  homeCatalogProjectLines();
+  homeThreadHistory();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();
   watchMedia(mq, function (ev) {
