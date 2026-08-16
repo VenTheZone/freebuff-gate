@@ -50,6 +50,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # The emulator enforces a 6GiB minimum userdata partition (API >= 24) and
+      # needs 1.2x that free, so the ~14GB runner can run short. Drop the
+      # preinstalled NDK/CMake (several GB, unused by this no-native job) before
+      # the build fills the disk again.
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake
+          df -h / | tail -n 1
+
       - name: Install Android SDK packages
         shell: bash
         run: |
