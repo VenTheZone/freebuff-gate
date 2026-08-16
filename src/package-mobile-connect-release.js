@@ -14,6 +14,12 @@ const RELEASE_FILES = Object.freeze([
   'mobile-connect-agent.js',
   'mobile-connect-protocol.js',
   'mobile-connect-qr.js',
+  // Tailnet proxy stack, deployed by the installer (steps 2-4): the proxy,
+  // the mobile UI layer it reads per request, and the perf probe.
+  'freebuff_tailnet_proxy.js',
+  'mobile-ui.css',
+  'mobile-ui.js',
+  'perf-probe.js',
 ]);
 
 function normalizeReleaseVersion(value) {

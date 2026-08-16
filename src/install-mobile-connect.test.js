@@ -8,14 +8,31 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  CREATE_MARK,
+  CLOSE_MARK1,
+  CLOSE_MARK2,
+  CLOSE_MARK3,
+  CREATE_REUSE,
+  SCROLL_MARK,
+  SETSTATE_MARK,
+} = require('./freebuff_tailnet_proxy');
+
+const {
   LAUNCH_AGENT_LABEL,
   MANAGED_MARKER,
+  PROXY_FILES,
+  PROXY_SERVICE_NAME,
   SYSTEMD_SERVICE_NAME,
   WINDOWS_TASK_NAME,
   applyAutoStart,
+  applyBundlePatch,
+  applyIndexShim,
+  applyOrchestratorPatches,
   autoStartPaths,
   defaultPaths,
+  findFreebuffDesktop,
   install,
+  installUiStack,
   launchAgentPlistSource,
   parseArgs,
   systemdUnitSource,
@@ -36,6 +53,7 @@ function optionsFor(root, args = []) {
     '--state-file', path.join(root, 'config', 'agent-state.json'),
     '--bin-dir', path.join(root, 'bin'),
     '--relay-http-url', 'https://relay.example.test',
+    '--no-ui-patches',
     ...args,
   ], {
     platform: 'linux',
@@ -206,7 +224,136 @@ test('auto-start refuses unmanaged file collisions', () => {
   }
 });
 
-test('auto-start enable and disable lifecycle is opt-in and command-injectable', () => {
+// ---- UI stack (steps 2-4): proxy deploy + on-disk patches ----------------------------------
+
+function fakeDesktop(root) {
+  const orchRoot = path.join(root, 'desktop', 'squashfs-root', 'resources', 'orchestrator');
+  const uiDir = path.join(orchRoot, 'ui');
+  const assets = path.join(uiDir, 'assets');
+  fs.mkdirSync(assets, { recursive: true });
+  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};};`;
+  fs.writeFileSync(path.join(assets, 'index-ABC.js'), stockBundle);
+  fs.writeFileSync(path.join(uiDir, 'index.html'), `<!doctype html><head><title>t</title></head><body></body></html>`);
+  const stockOrch = [
+    'let match12 = findRoute(routes, req.method, pathname);',
+    'return json3({ error: "upgrade required" }, 426);',
+    '      }',
+    '      let match12 = findRoute(routes, req.method, pathname);',
+    'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+    '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+  ].join('\n');
+  fs.writeFileSync(path.join(orchRoot, 'orchestrator.js'), stockOrch);
+  return { root: path.join(root, 'desktop'), orchRoot, uiDir };
+}
+
+function uiOptions(root, desktop, args = []) {
+  return parseArgs([
+    '--source-dir', path.resolve(__dirname),
+    '--install-dir', path.join(root, 'agent'),
+    '--config-file', path.join(root, 'config', 'desktop.json'),
+    '--bin-dir', path.join(root, 'bin'),
+    '--desktop-dir', desktop,
+    '--relay-http-url', 'https://relay.example.test',
+    ...args,
+  ], {
+    platform: 'linux',
+    home: root,
+    env: { PATH: '' },
+  });
+}
+
+function recordingCommands() {
+  const calls = [];
+  const runPlatformCommand = (command, args, options) => {
+    calls.push({ command, args, options });
+  };
+  return { calls, runPlatformCommand };
+}
+
+test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently', async () => {
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    const options = uiOptions(root, fake.root);
+    const { calls, runPlatformCommand } = recordingCommands();
+    const first = installUiStack(options, {}, { runPlatformCommand });
+    assert.equal(first.enabled, true);
+    for (const file of PROXY_FILES) {
+      assert.equal(fs.existsSync(path.join(first.proxy, file)), true, `proxy file ${file}`);
+    }
+    assert.match(first.applied.join(' '), /bundle:index-ABC\.js:patched/);
+    assert.match(first.applied.join(' '), /shim:patched/);
+    assert.match(first.applied.join(' '), /orchestrator:routes,perf-helper/);
+
+    const bundle = fs.readFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'utf8');
+    assert.equal(bundle.includes(CREATE_REUSE), true);
+    const html = fs.readFileSync(path.join(fake.uiDir, 'index.html'), 'utf8');
+    assert.equal(html.includes('fb-desktop-shim'), true);
+    assert.match(html, /fb-desktop-shim[\s\S]*<\/script>[\s\S]*<\/head>/);
+    const orch = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
+    assert.equal(orch.includes('/api/fb/dirlist'), true);
+    assert.equal(orch.includes('/api/fb/perf-report'), true);
+    assert.equal(orch.includes('async function injectPerfProbe('), true);
+    assert.equal(orch.includes('"cache-control": "no-store"'), true);
+    assert.match(orch, /perf-report\.log/);
+    assert.equal(calls.some((c) => c.command === 'systemctl' && c.args[1] === 'restart'), true);
+    assert.equal(fs.existsSync(path.join(root, '.config', 'systemd', 'user', PROXY_SERVICE_NAME)), true);
+
+    // Idempotent second run: nothing changes, outcomes report already-patched.
+    const before = fs.readFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'utf8');
+    const second = installUiStack(options, {}, { runPlatformCommand });
+    assert.match(second.applied.join(' '), /bundle:index-ABC\.js:already-patched/);
+    assert.match(second.applied.join(' '), /shim:already-patched/);
+    assert.match(second.applied.join(' '), /orchestrator:already-patched/);
+    assert.equal(fs.readFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'utf8'), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ui: missing patch anchors fail loudly instead of silently regressing', async () => {
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'const stock = 1;');
+    const options = uiOptions(root, fake.root);
+    const { runPlatformCommand } = recordingCommands();
+    assert.throws(
+      () => installUiStack(options, {}, { runPlatformCommand }),
+      /did not match any patch anchor/,
+    );
+
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};`);
+    fs.writeFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'const m=42;');
+    assert.throws(
+      () => installUiStack(options, {}, { runPlatformCommand }),
+      /route anchor not found/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ui: desktop discovery finds the squashfs layout and uninstall keeps on-disk patches', async () => {
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    assert.equal(findFreebuffDesktop({ candidates: [fake.root] }), fake.root);
+    const options = uiOptions(root, fake.root);
+    const { runPlatformCommand } = recordingCommands();
+    installUiStack(options, {}, { runPlatformCommand });
+    const orchBefore = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
+    uninstall({ ...options, command: 'uninstall' });
+    // Proxy unit + dir removed; on-disk patches intentionally preserved.
+    assert.equal(fs.existsSync(path.join(root, '.config', 'systemd', 'user', PROXY_SERVICE_NAME)), false);
+    const orchAfter = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
+    assert.equal(orchAfter, orchBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('auto-start defaults and lifecycle is opt-in and command-injectable', () => {
   const root = tempRoot();
   try {
     const calls = [];

@@ -531,7 +531,24 @@ server.on('upgrade', (req, socket, head) => {
   return server;
 }
 
-module.exports = { createProxyServer, patchBundle };
+module.exports = {
+  CREATE_MARK,
+  CLOSE_FIX1,
+  CLOSE_FIX2,
+  CLOSE_FIX3,
+  CLOSE_MARK1,
+  CLOSE_MARK2,
+  CLOSE_MARK3,
+  CREATE_REUSE,
+  CREATE_REUSE_V1,
+  SCROLL_FIX,
+  SCROLL_MARK,
+  SETSTATE_FIX,
+  SETSTATE_MARK,
+  SHIM,
+  createProxyServer,
+  patchBundle,
+};
 
 if (require.main === module) {
   const server = createProxyServer();

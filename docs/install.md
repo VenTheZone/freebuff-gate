@@ -44,58 +44,37 @@ The orchestrator serves the browser UI on 127.0.0.1:58060 (and tailnet IP).
   the bundled Bun, e.g.:
   nohup <bun> orchestrator.js --port 58060 >> /tmp/freebuff-orchestrator.log 2>&1 &
 
-### 2. Install the tailnet proxy (port 58061)
-The proxy injects the mobile adaptation and the window.freebuffDesktop shim,
-and patches the UI bundle. It lives at ~/FB-Browser-UI/src/freebuff_tailnet_proxy.js.
-- Copy it to ~/.local/share/freebuff-desktop/freebuff_tailnet_proxy.js
-- Install a systemd USER unit so it survives reboots:
-  ~/.config/systemd/user/freebuff-tailnet-proxy.service with
-  ExecStart=/usr/bin/node /home/<user>/.local/share/freebuff-desktop/freebuff_tailnet_proxy.js
-  (or the pi-node path if that is what the machine uses), Restart=always.
-- systemctl --user daemon-reload && systemctl --user enable --now freebuff-tailnet-proxy
+### 2. Install the tailnet proxy + on-disk UI patches (automated)
+The Node installer (run by the bootstrap) now deploys the tailnet proxy and
+applies every on-disk UI patch below automatically and idempotently:
+- Deploys freebuff_tailnet_proxy.js, mobile-ui.css, mobile-ui.js, and
+  perf-probe.js to ~/.local/share/freebuff/tailnet-proxy and writes the
+  systemd USER unit freebuff-tailnet-proxy.service (enables + starts it).
+- Applies the boot-home/scroll/close bundle patch to
+  <install>/squashfs-root/resources/orchestrator/ui/assets/index-*.js
+  (same markers as src/freebuff_tailnet_proxy.js patchBundle): boot home
+  must not hijack the active thread, thread switches land at the last
+  message, and closing a phantom "New thread" tab works.
+- Injects the window.freebuffDesktop shim (server-side file browser) into
+  ui/index.html as a fb-desktop-shim tag right before </head>.
+- Patches orchestrator.js with the GET /api/fb/dirlist route, the
+  /api/fb/perf-report route, the perf probe injection helper, and
+  best-effort no-store/immutable cache headers for serveSpa.
+Every patch is marker-gated: already-patched files are left alone, and a
+patch whose anchors no longer match after an app update FAILS loudly with
+the exact file instead of silently shipping a stock UI. Control flags:
+--no-ui-patches to skip the whole stack, --desktop-dir <path> to point at
+an install (the bootstrap sets DESKTOP_DIR automatically when it finds the
+app).
 - Verify: curl http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
-
-### 3. Patch the packaged UI bundle (boot home must not hijack the active thread)
-The packaged UI's boot hook calls openTab(path, threadId, home=true) on every
-page load. Stock code creates an empty "New thread" for the home tab; the
-earlier reuse patch reused an arbitrary restored tab, which wiped its
-messages, duplicated the tab id, and moved the active thread off the last
-chat. The current patch (apply ALL of these to the on-disk bundle, exactly
-as src/freebuff_tailnet_proxy.js does in patchBundle):
-- Bundle: <install>/squashfs-root/resources/orchestrator/ui/assets/index-*.js
-- CREATE: prefer the existing home tab, else the pinned fb.homeThread id;
-  create a fresh home thread only when neither exists (and pin it).
-- SETSTATE: never wipe an existing thread entry, promote the reused tab
-  instead of duplicating it, and keep activeId untouched on the home path.
-- SCROLL + CLOSE patches: same constants as the proxy (thread switch lands
-  at the last message; closing a phantom tab prefers the non-home copy).
-- Easiest: mirror patchBundle() from ~/FB-Browser-UI/src/freebuff_tailnet_proxy.js
-  (CREATE_MARK/CREATE_REUSE_V1 -> CREATE_REUSE, SETSTATE_MARK -> SETSTATE_FIX,
-  SCROLL_MARK -> SCROLL_FIX, CLOSE_MARK1..3 -> CLOSE_FIX1..3).
-- After replacing, run: node --check on the bundle file.
-- Verify the served bundle contains the markers:
-  curl -s http://127.0.0.1:58060/assets/index-*.js | grep -c fb.homeThread
-  (should be 1) and
-  curl -s http://127.0.0.1:58060/assets/index-*.js | grep -c 'h.id!==s.id'
-  (should be 1).
-
-### 4. Inject the desktop shim into index.html (server-side folder browser)
-The "Open project" flow needs window.freebuffDesktop.pickDirectory. The shim
-now opens a server-side file browser (breadcrumb path bar, directory list,
-Up/Home buttons, quick-pick recent projects) backed by the orchestrator's
-GET /api/fb/dirlist?path=... route. Extract the SHIM template string from
-~/FB-Browser-UI/src/freebuff_tailnet_proxy.js and inject it into
-<install>/squashfs-root/resources/orchestrator/ui/index.html as
-<script id="fb-desktop-shim">…</script> right before </head> (replace any
-existing fb-desktop-shim tag).
-- Verify: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
-- Verify the dirlist route: curl -s
-  'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.
+- Verify the shim on the direct UI: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
+- Verify the dirlist route: curl -s 'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.
 - Verify the browser works: open the UI, click "New session", click the
   project picker, choose "Open project". A file browser listing the server's
-  folders must appear (start at the most recent project directory); click
+  folders must appear (starting at the most recent project directory); click
   into folders and select one. The chosen path is a real server path.
 
+### 3. Mobile relay + connector (optional, for the Freebuff Gate Android app)
 ### 5. Mobile relay + connector (optional, for the Freebuff Gate Android app)
 If the phone app is used:
 - Copy ~/FB-Browser-UI/src/mobile-connect-relay.js and
@@ -109,14 +88,14 @@ If the phone app is used:
 - Set a strong connector token (relay --connector-token) and store it in a
   root-only file (chmod 600). Never commit it.
 
-### 6. Exposure
+### 4. Exposure
 - The orchestrator already listens on the tailnet IP:58060 (verify with
   `tailscale ip -4`). If not, bind it to 0.0.0.0 or use `tailscale serve`.
 - 58061 (proxy) is loopback-only; the relay (step 5) is the public face for
   phones. Do NOT open raw ports to the internet; Tailscale (or the relay's
   HTTPS) is the only exposure.
 
-### 7. Final verification checklist
+### 5. Final verification checklist
 - curl http://127.0.0.1:58060/api/projects → projects list, no "New thread"
   garbage (or only real ones).
 - Two consecutive fresh loads of the UI (headless or browser) must NOT create
@@ -133,13 +112,15 @@ If the phone app is used:
 
 ### Persistence notes
 - App UPDATES overwrite ui/index.html, ui/assets/index-*.js, and
-  orchestrator.js. After an update, re-run steps 3, 4, the
-  /api/fb/dirlist orchestrator patch, and the orchestrator cache-header
-  patch (json3 no-store + serveSpa HTML no-store / assets immutable; see
-  the freebuff_tailnet_proxy.js commit history for the exact strings). The
-  proxy keeps applying its own bundle patch and cache headers at serve
-  time, but the on-disk index.html shim, bundle patch, and orchestrator
-  routes must be re-applied for direct 58060 clients.
+  orchestrator.js. After an update, re-run the same install command (the
+  bootstrap one-liner works): the bundle patch, index.html shim, and
+  orchestrator dirlist/perf/cache patches re-apply automatically and
+  idempotently. If the app changed an anchor, the installer FAILS loudly
+  with the exact file so the regression is never silent. Clients through
+  the proxy (58061) do not even need that: the proxy applies patchBundle,
+  shim, mobile layer, and cache headers at serve time on every request.
+  The one patch still manual is API-level no-store on json3 routes (anchor
+  not stable across app builds; see the commit history for the strings).
 - The ad sniffer (optional debug tool) patches orchestrator.js the same
   way: it wraps the Ads class `post`/`auction` methods and appends JSON
   lines to ~/.config/freebuff-desktop/ad-sniff.log. Re-apply after app

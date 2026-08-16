@@ -22,6 +22,13 @@ const WINDOWS_LAUNCHER_NAME = 'freebuff-mobile-connect.cmd';
 const MANAGED_MARKER = 'Managed by Freebuff mobile-connect installer';
 const DEFAULT_AGENT_VERSION = 'local';
 const SYSTEMD_SERVICE_NAME = 'freebuff-mobile-connect.service';
+const PROXY_SERVICE_NAME = 'freebuff-tailnet-proxy.service';
+const PROXY_FILES = Object.freeze([
+  'freebuff_tailnet_proxy.js',
+  'mobile-ui.css',
+  'mobile-ui.js',
+  'perf-probe.js',
+]);
 const LAUNCH_AGENT_LABEL = 'com.freebuff.mobile-connect';
 const WINDOWS_TASK_NAME = 'Freebuff Mobile Connect';
 const RELEASE_VERSION_PATTERN = /^v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)*$/;
@@ -88,6 +95,7 @@ function defaultPaths({ platform = process.platform, env = process.env, home = o
     const root = path.join(localAppData, 'Freebuff');
     return {
       installDir: path.join(root, 'mobile-connect'),
+      proxyDir: path.join(root, 'tailnet-proxy'),
       configFile: path.join(root, 'mobile-connect-desktop.json'),
       stateFile: path.join(root, 'mobile-connect-agent.json'),
       connectorCredentialFile: path.join(root, 'mobile-connect-connector.json'),
@@ -101,6 +109,7 @@ function defaultPaths({ platform = process.platform, env = process.env, home = o
     : path.join(configHome, 'systemd', 'user', SYSTEMD_SERVICE_NAME);
   return {
     installDir: path.join(dataHome, 'freebuff', 'mobile-connect'),
+    proxyDir: path.join(dataHome, 'freebuff', 'tailnet-proxy'),
     configFile: path.join(configHome, 'freebuff', 'mobile-connect-desktop.json'),
     stateFile: path.join(configHome, 'freebuff', 'mobile-connect-agent.json'),
     connectorCredentialFile: path.join(configHome, 'freebuff', 'mobile-connect-connector.json'),
@@ -134,7 +143,12 @@ Options:
   --purge                 With uninstall, remove config and agent state
   --auto-start            Enable and start companion at user login
   --no-auto-start         Disable and remove companion auto-start registration
-  --help                  Show this help
+  --install-ui-patches    Deploy the tailnet proxy (systemd unit) and apply the
+                          on-disk UI bundle/shim/orchestrator patches (default)
+  --no-ui-patches         Skip proxy deploy and on-disk UI patches
+  --desktop-dir <path>    Freebuff Desktop install dir (auto-discovered when
+                          omitted; the shell bootstrap exports DESKTOP_DIR)
+  --help                Show this help
 
 Runtime:
   Pass --enrollment-token to provision connector credentials, or set
@@ -172,6 +186,9 @@ function parseArgs(argv, context = {}) {
     purge: false,
     autoStart: false,
     autoStartSpecified: false,
+    uiPatches: true,
+    uiPatchesSpecified: false,
+    desktopDir: env.DESKTOP_DIR || env.FREEBUFF_DESKTOP_DIR || null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -202,6 +219,9 @@ function parseArgs(argv, context = {}) {
       case '--purge': options.purge = true; break;
       case '--auto-start': options.autoStart = true; options.autoStartSpecified = true; break;
       case '--no-auto-start': options.autoStart = false; options.autoStartSpecified = true; break;
+      case '--install-ui-patches': options.uiPatches = true; options.uiPatchesSpecified = true; break;
+      case '--no-ui-patches': options.uiPatches = false; options.uiPatchesSpecified = true; break;
+      case '--desktop-dir': options.desktopDir = path.resolve(next()); break;
       case '--help':
       case '-h':
         usage();
@@ -632,6 +652,283 @@ function printInstallSummary(options, config, paths) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Freebuff Desktop UI stack (steps 2-4 of the install guide): the tailnet
+// proxy on 58061 with a systemd user unit, plus the on-disk bundle/shim/
+// orchestrator patches so DIRECT 58060 clients get the same fixes the proxy
+// applies at serve time. Every patch is idempotent and marker-checked: an
+// already-patched file is left alone, and a patch that cannot find its
+// anchors fails LOUDLY instead of silently shipping an unpatched UI.
+// ---------------------------------------------------------------------------
+const DESKTOP_CANDIDATES = [
+  path.join(os.homedir(), '.local', 'share', 'freebuff-desktop'),
+  path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'freebuff-desktop'),
+  path.join(os.homedir(), 'AppData', 'Local', 'freebuff-desktop'),
+  '/Applications/Freebuff Desktop.app/Contents/Resources',
+  '/usr/local/share/freebuff-desktop',
+  '/opt/freebuff-desktop',
+];
+const DESKTOP_MARKERS = [
+  'squashfs-root/resources/orchestrator/orchestrator.js',
+  'resources/orchestrator/orchestrator.js',
+  'orchestrator.js',
+];
+
+// Path to the orchestrator's data dir (ui/, assets/ live there).
+function desktopOrchestratorDir(desktopDir) {
+  return path.join(desktopDir, 'squashfs-root', 'resources', 'orchestrator');
+}
+
+function findFreebuffDesktop(options = {}) {
+  const explicit = options.desktopDir || process.env.DESKTOP_DIR || process.env.FREEBUFF_DESKTOP_DIR;
+  if (explicit) {
+    if (!fs.existsSync(explicit)) throw new Error(`Freebuff Desktop directory does not exist: ${explicit}`);
+    return explicit;
+  }
+  const candidates = [...(options.candidates || []), ...DESKTOP_CANDIDATES];
+  for (const candidate of candidates) {
+    if (!candidate || !fs.existsSync(candidate)) continue;
+    for (const marker of DESKTOP_MARKERS) {
+      if (fs.existsSync(path.join(candidate, marker))) return candidate;
+    }
+  }
+  throw new Error('Freebuff Desktop install was not found; pass --desktop-dir or run the bootstrap installer shell script');
+}
+
+function orchestratorDirOf(desktopDir) {
+  const candidate = path.join(desktopDir, 'squashfs-root', 'resources', 'orchestrator');
+  if (fs.existsSync(path.join(candidate, 'orchestrator.js'))) return candidate;
+  const flat = path.join(desktopDir, 'resources', 'orchestrator');
+  if (fs.existsSync(path.join(flat, 'orchestrator.js'))) return flat;
+  return candidate;
+}
+
+function systemdProxyUnitSource(nodePath, proxyDir) {
+  return `# ${MANAGED_MARKER}
+[Unit]
+Description=Freebuff Desktop tailnet proxy (UI injection, bundle patch, shim)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${systemdEscape(nodePath)} ${systemdEscape(path.join(proxyDir, 'freebuff_tailnet_proxy.js'))}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function proxyAutoStartPaths(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== 'linux') {
+    return { platform, type: 'unsupported', name: null, file: null };
+  }
+  const defaults = defaultPaths({
+    platform,
+    env: options.env || process.env,
+    home: options.home || os.homedir(),
+  });
+  return {
+    platform,
+    type: 'systemd-user',
+    name: PROXY_SERVICE_NAME,
+    file: path.join(
+      (options.env || process.env).XDG_CONFIG_HOME || path.join(options.home || os.homedir(), '.config'),
+      'systemd',
+      'user',
+      PROXY_SERVICE_NAME,
+    ),
+    proxyDir: defaults.proxyDir,
+  };
+}
+
+function deployProxy(options, { runPlatformCommand = runPlatformCommand, dryRun = false } = {}) {
+  const registration = proxyAutoStartPaths(options);
+  if (registration.type === 'unsupported') {
+    console.warn(`Warning: tailnet proxy auto-start is unsupported on ${registration.platform}; deploy the files and start the proxy manually.`);
+  }
+  const proxyDir = options.proxyDir || registration.proxyDir;
+  const missing = PROXY_FILES.filter((file) => !fs.existsSync(path.join(options.sourceDir, file)));
+  if (missing.length > 0) throw new Error(`Missing proxy source file(s) in --source-dir: ${missing.join(', ')}`);
+  if (dryRun) {
+    console.log(`Would deploy tailnet proxy to ${proxyDir}`);
+    if (registration.type === 'systemd-user') console.log(`Would write and enable ${registration.file}`);
+    return { changed: true, proxyDir, registration };
+  }
+  fs.mkdirSync(proxyDir, { recursive: true, mode: 0o755 });
+  for (const file of PROXY_FILES) {
+    fs.copyFileSync(path.join(options.sourceDir, file), path.join(proxyDir, file));
+    try { fs.chmodSync(path.join(proxyDir, file), 0o644); } catch {}
+  }
+  if (registration.type === 'systemd-user') {
+    if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
+      throw new Error(`Refusing to overwrite unmanaged auto-start registration: ${registration.file}`);
+    }
+    writeAtomically(registration.file, systemdProxyUnitSource(process.execPath, proxyDir), 0o644);
+    runPlatformCommand('systemctl', ['--user', 'daemon-reload']);
+    runPlatformCommand('systemctl', ['--user', 'enable', registration.name]);
+    runPlatformCommand('systemctl', ['--user', 'restart', registration.name]);
+  }
+  return { copied: true, proxyDir, registration };
+}
+
+function applyBundlePatch(bundleFile) {
+  const body = fs.readFileSync(bundleFile, 'utf8');
+  const proxy = require(path.join(__dirname, 'freebuff_tailnet_proxy.js'));
+  const fixed = [
+    proxy.CREATE_REUSE,
+    proxy.SETSTATE_FIX,
+    proxy.SCROLL_FIX,
+    proxy.CLOSE_FIX1,
+    proxy.CLOSE_FIX2,
+    proxy.CLOSE_FIX3,
+  ];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3'];
+  const already = fixed.every((mark) => body.includes(mark));
+  if (already) return { file: bundleFile, outcome: 'already-patched' };
+  const patched = proxy.patchBundle(body);
+  if (patched === body) throw new Error(`bundle did not match any patch anchor: ${bundleFile} (app updated its bundle; update the patch anchors)`);
+  const stillMissing = names.filter((mark, index) => !patched.includes(fixed[index]));
+  if (stillMissing.length > 0) throw new Error(`bundle patch incomplete after apply; missing markers: ${stillMissing.join(', ')}`);
+  writeAtomically(bundleFile, patched, 0o644);
+  return { file: bundleFile, outcome: 'patched' };
+}
+
+function applyIndexShim(indexFile) {
+  let html = fs.readFileSync(indexFile, 'utf8');
+  const present = html.includes('fb-desktop-shim');
+  if (present && /<script id="fb-desktop-shim">[\s\S]*?<\/script>/.test(html)) {
+    return { file: indexFile, outcome: 'already-patched' };
+  }
+  if (!html.includes('</head>')) throw new Error(`index.html has no </head> to anchor the shim: ${indexFile}`);
+  const { SHIM } = require('./freebuff_tailnet_proxy');
+  html = html.replace(/<script id="fb-desktop-shim">[\s\S]*?<\/script>\s*/g, '');
+  html = html.replace('</head>', `<script id="fb-desktop-shim">${SHIM}</script></head>`);
+  if (!html.includes('fb-desktop-shim')) throw new Error(`shim injection failed for ${indexFile}`);
+  writeAtomically(indexFile, html, 0o644);
+  return { file: indexFile, outcome: 'patched' };
+}
+
+// Inserted route block: dirlist + perf-report. These are additive inserts
+// anchored after the terminal-upgrade route; they reuse the orchestrator's
+// own json3/url2 helpers. configDir is where the perf log lands.
+function orchestratorRouteBlock(configDir) {
+  return `      if (pathname === "/api/fb/dirlist") {
+        let root = url2.searchParams.get("path") || "/";
+        let entries = [];
+        try {
+          let { readdir } = await import("fs/promises");
+          let items = await readdir(root, { withFileTypes: true });
+          entries = items.map((it) => ({ name: it.name, dir: it.isDirectory() })).sort((a, b) => a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1);
+        } catch (error47) {
+          return json3({ error: error47 instanceof Error ? error47.message : String(error47) }, 400);
+        }
+        return json3({ path: root, entries });
+      }
+      if (pathname === "/api/fb/perf-report") {
+        let body = "";
+        try {
+          body = await req.text();
+        } catch {
+          body = "";
+        }
+        let ua = req.headers.get("user-agent") || "";
+        let client = /FreebuffMobile\//.test(ua) ? "webview" : /Firefox\//.test(ua) ? "firefox" : "browser";
+        try {
+          let parsed = {};
+          try {
+            parsed = JSON.parse(body || "{}");
+          } catch {
+          }
+          let { appendFile, mkdir } = await import("fs/promises");
+          let dir = ${JSON.stringify(configDir)};
+          await mkdir(dir, { recursive: true });
+          await appendFile(dir + "/perf-report.log", JSON.stringify({ ts: new Date().toISOString(), client, ...parsed }) + "\\n");
+        } catch {
+        }
+        return json3({ ok: true });
+      }
+`;
+}
+
+// Perf probe injection helper, inserted before serveSpa, reading the probe
+// from the installed proxy directory (shipped next to the proxy).
+function perfHelperSource(perfProbePath) {
+  return `async function injectPerfProbe(html) {
+  if (!html || html.includes("fb-perf-probe"))
+    return html;
+  try {
+    let { readFile } = await import("fs/promises");
+    let src2 = await readFile(${JSON.stringify(perfProbePath)}, "utf8");
+    let tag = '<script id="fb-perf-probe">' + src2 + '</script>';
+    return html.includes("</head>") ? html.replace("</head>", tag + "</head>") : tag + html;
+  } catch {
+    return html;
+  }
+}
+`;
+}
+
+const ORCH_ROUTE_MARK = 'if (pathname === "/api/fb/dirlist")';
+const ORCH_ROUTE_ANCHOR = 'return json3({ error: "upgrade required" }, 426);\n      }\n      let match12 = findRoute(routes, req.method, pathname);';
+const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
+const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
+// Best-effort serveSpa cache-header candidates (stock -> patched). The stock
+// string may reorder across app versions; unmatched candidates become a loud
+// warning, not a silent success.
+const SERVE_SPA_CACHE_CANDIDATES = [
+  [
+    'return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+    'let text = await file2.text();\n        return new Response(await injectPerfProbe(text), { headers: { ...securityHeaders, "cache-control": "no-store", "content-type": "text/html" } });',
+  ],
+  [
+    'return new Response(file2, { headers: { "content-type": "text/html", ...securityHeaders } });',
+    'let text = await file2.text();\n        return new Response(await injectPerfProbe(text), { headers: { "content-type": "text/html", "cache-control": "no-store", ...securityHeaders } });',
+  ],
+  [
+    'return new Response(index, { headers: { "content-type": "text/html", ...securityHeaders } });',
+    'let text = await index.text();\n    return new Response(await injectPerfProbe(text), { headers: { "content-type": "text/html", "cache-control": "no-store", ...securityHeaders } });',
+  ],
+  [
+    'return new Response(index, { headers: { ...securityHeaders } });',
+    'let text = await index.text();\n    return new Response(await injectPerfProbe(text), { headers: { ...securityHeaders, "cache-control": "no-store", "content-type": "text/html" } });',
+  ],
+];
+
+function applyOrchestratorPatches(orchestratorFile, { configDir, perfProbePath }) {
+  const src = fs.readFileSync(orchestratorFile, 'utf8');
+  const changes = [];
+  let out = src;
+  const performed = [];
+  if (!out.includes(ORCH_ROUTE_MARK)) {
+    if (!out.includes(ORCH_ROUTE_ANCHOR)) {
+      throw new Error(`orchestrator route anchor not found (app update may have renamed helpers); expected: ${ORCH_ROUTE_ANCHOR.slice(0, 80)}…`);
+    }
+    out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${orchestratorRouteBlock(configDir)}      let match12 = findRoute(routes, req.method, pathname);`);
+    performed.push('routes');
+  }
+  if (!out.includes(ORCH_HELPER_MARK)) {
+    if (!out.includes(ORCH_HELPER_ANCHOR)) {
+      throw new Error(`orchestrator serveSpa anchor not found; expected: ${ORCH_HELPER_ANCHOR}`);
+    }
+    out = out.split(ORCH_HELPER_ANCHOR).join(perfHelperSource(perfProbePath) + ORCH_HELPER_ANCHOR);
+    performed.push('perf-helper');
+  }
+  const bestEffort = [];
+  for (const [stock, patched] of SERVE_SPA_CACHE_CANDIDATES) {
+    if (out.includes(stock)) {
+      out = out.split(stock).join(patched);
+      bestEffort.push(`cache:${stock.slice(0, 60)}`);
+    }
+  }
+  if (bestEffort.length > 0) performed.push('cache-headers');
+  writeAtomically(orchestratorFile, out, 0o644);
+  return { changes: performed, bestEffort };
+}
+
 async function install(options) {
   const existing = readJsonIfPresent(options.configFile);
   if (!options.relayHttpUrl) options.relayHttpUrl = existing.relayHttpUrl || null;
@@ -654,6 +951,7 @@ async function install(options) {
   const autoStartRegistration = autoStartPaths(options);
   const paths = {
     installDir: options.installDir,
+    proxyDir: options.proxyDir || autoStartRegistration.proxyDir,
     configFile: options.configFile,
     connectorCredentialFile: config.connectorCredentialFile,
     binDir: options.binDir,
@@ -666,6 +964,14 @@ async function install(options) {
 
   if (options.dryRun) {
     printInstallSummary(options, config, paths);
+    if (options.uiPatches) {
+      try {
+        const desktopDir = findFreebuffDesktop(options);
+        console.log(`UI patches: would deploy proxy to ${paths.proxyDir} and patch ${desktopOrchestratorDir(desktopDir)}`);
+      } catch (error) {
+        console.log(`UI patches: SKIPPED (${error.message})`);
+      }
+    }
     return { changed: false, dryRun: true, config, paths };
   }
 
@@ -729,8 +1035,60 @@ async function install(options) {
   const autoStart = applyAutoStart(options, wrapperPath, {
     previouslyEnabled: options.previousAutoStart,
   });
+
+  let uiStack = { enabled: false };
+  if (options.uiPatches) {
+    uiStack = installUiStack(options, paths, {
+      runPlatformCommand,
+      applyBundle: applyBundlePatch,
+      applyShim: applyIndexShim,
+      applyOrchestrator: applyOrchestratorPatches,
+    });
+    config.uiPatches = uiStack;
+    try { fs.writeFileSync(options.configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 }); } catch {}
+  }
   printInstallSummary(options, config, paths);
-  return { changed: true, dryRun: false, config, paths, autoStart };
+  return { changed: true, dryRun: false, config, paths, autoStart, uiStack };
+}
+
+// Deploys the tailnet proxy (install-guide step 2) and applies the on-disk
+// UI patches (steps 3-4: bundle, index.html shim, orchestrator dirlist +
+// perf-report routes + best-effort cache headers) so direct-58060 clients
+// get the same fixes the proxy applies at serve time. Every patch is
+// idempotent and marker-checked: already-patched files are left alone, and
+// a patch whose anchors no longer match fails loudly instead of silently
+// shipping a stock (regressed) UI after an app update.
+function installUiStack(options, paths, { runPlatformCommand = runPlatformCommand } = {}) {
+  const desktopDir = findFreebuffDesktop(options);
+  const registration = proxyAutoStartPaths(options);
+  const proxyDeploy = deployProxy(options, { runPlatformCommand });
+  const results = { proxy: proxyDeploy.proxyDir, applied: [], bestEffort: [] };
+
+  const orchDir = orchestratorDirOf(desktopDir);
+  const uiDir = path.join(orchDir, 'ui');
+  const configDir = path.join(
+    (options.env || process.env).XDG_CONFIG_HOME || path.join(os.homedir(), '.config'),
+    'freebuff-desktop',
+  );
+  const perfProbePath = path.join(proxyDeploy.proxyDir, 'perf-probe.js');
+
+  const assetsDir = path.join(uiDir, 'assets');
+  const bundles = fs.readdirSync(assetsDir).filter((name) => /^index-[^/]+\.js$/.test(name));
+  if (bundles.length === 0) throw new Error(`no UI bundle found under ${assetsDir}`);
+  for (const name of bundles) {
+    results.applied.push(`bundle:${name}:${applyBundlePatch(path.join(assetsDir, name)).outcome}`);
+  }
+  const indexHtml = path.join(uiDir, 'index.html');
+  if (!fs.existsSync(indexHtml)) throw new Error(`missing ${indexHtml}`);
+  results.applied.push(`shim:${applyIndexShim(indexHtml).outcome}`);
+
+  const orchFile = path.join(orchDir, 'orchestrator.js');
+  if (!fs.existsSync(orchFile)) throw new Error(`missing ${orchFile}`);
+  const orchResult = applyOrchestratorPatches(orchFile, { configDir, perfProbePath });
+  const changes = orchResult.changes;
+  results.applied.push(`orchestrator:${changes.includes('routes') || changes.includes('perf-helper') || changes.includes('cache-headers') ? changes.join(',') : 'already-patched'}`);
+  results.bestEffort = orchResult.bestEffort || [];
+  return { enabled: true, desktopDir, configDir, uiDir, proxyUnit: registration.file, ...results };
 }
 
 function removeFileIfManaged(file, marker = MANAGED_MARKER) {
@@ -803,14 +1161,41 @@ function uninstall(options) {
   try { fs.rmdirSync(options.installDir); } catch (error) {
     if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
   }
+  // Tailnet proxy stack: managed proxy dir + systemd unit are removed when
+  // present. The on-disk UI patches are intentionally NOT reverted (they are
+  // harmless, and reverting them would require trusting app-update anchors);
+  // tell the user instead.
+  let proxyChanged = false;
+  const proxyRegistration = proxyAutoStartPaths({ ...options, platform });
+  if (proxyRegistration.type === 'systemd-user') {
+    const proxyUnit = proxyRegistration.file;
+    if (fs.existsSync(proxyUnit) && isManagedFile(proxyUnit)) {
+      const execute = options.runPlatformCommand || runPlatformCommand;
+      execute('systemctl', ['--user', 'stop', PROXY_SERVICE_NAME], { ignoreFailure: true });
+      execute('systemctl', ['--user', 'disable', PROXY_SERVICE_NAME], { ignoreFailure: true });
+      fs.unlinkSync(proxyUnit);
+      execute('systemctl', ['--user', 'daemon-reload'], { ignoreFailure: true });
+      proxyChanged = true;
+    }
+  }
+  const proxyDir = manifest?.proxyDir || options.proxyDir || (() => defaultPaths({
+    platform,
+    env: options.env || process.env,
+    home: options.home || os.homedir(),
+  }).proxyDir)();
+  try { fs.rmdirSync(proxyDir); } catch (error) {
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+  }
   if (options.purge) {
     for (const file of [paths.configFile, paths.stateFile, paths.connectorCredentialFile]) {
       try { fs.unlinkSync(file); changed = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
   console.log(`${changed ? 'Removed' : 'Already absent'} Freebuff Desktop mobile-connect companion`);
+  if (proxyChanged) console.log('Removed the tailnet proxy service and files.');
   if (!options.purge) console.log(`Config, state, and connector credential preserved. Use --purge to remove them.`);
-  return { changed, dryRun: false, paths };
+  console.log('On-disk UI patches kept (bundle, shim, orchestrator routes); re-run install when the app updates to re-apply cleanly.');
+  return { changed: changed || proxyChanged, dryRun: false, paths };
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -837,21 +1222,36 @@ module.exports = {
   DEFAULT_UPSTREAM_URL,
   LAUNCH_AGENT_LABEL,
   MANAGED_MARKER,
+  PROXY_FILES,
+  PROXY_SERVICE_NAME,
   SYSTEMD_SERVICE_NAME,
   WINDOWS_TASK_NAME,
   applyAutoStart,
+  applyBundlePatch,
+  applyIndexShim,
+  applyOrchestratorPatches,
   autoStartPaths,
-  launchAgentPlistSource,
-  normalizeAgentVersion,
+  deployProxy,
   defaultPaths,
   deriveWsUrl,
+  DESKTOP_CANDIDATES,
+  desktopOrchestratorDir,
+  findFreebuffDesktop,
   install,
+  installUiStack,
+  launchAgentPlistSource,
+  normalizeAgentVersion,
+  orchestratorDirOf,
+  orchestratorRouteBlock,
+  parseArgs,
+  perfHelperSource,
+  proxyAutoStartPaths,
+  provisionConnector,
+  systemdProxyUnitSource,
   systemdUnitSource,
   main,
   normalizeHttpUrl,
   normalizeWsUrl,
-  parseArgs,
-  provisionConnector,
   uninstall,
   windowsTaskRun,
 };

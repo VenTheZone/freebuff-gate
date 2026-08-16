@@ -51,7 +51,9 @@ test('release package contains pinned versioned files and verifiable checksums',
       const content = fs.readFileSync(target);
       assert.equal(file.bytes, content.length);
       assert.equal(file.sha256, sha256(content));
-      childProcess.execFileSync(process.execPath, ['--check', target]);
+      if (file.logicalName.endsWith('.js')) {
+        childProcess.execFileSync(process.execPath, ['--check', target]);
+      }
     }
 
     const checksums = fs.readFileSync(result.checksums, 'utf8').trim().split('\n');

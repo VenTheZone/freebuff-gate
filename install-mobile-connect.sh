@@ -362,6 +362,10 @@ LOGICAL_FILES=(
   'mobile-connect-agent.js'
   'mobile-connect-protocol.js'
   'mobile-connect-qr.js'
+  'freebuff_tailnet_proxy.js'
+  'mobile-ui.css'
+  'mobile-ui.js'
+  'perf-probe.js'
 )
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/freebuff-mobile-connect.XXXXXXXX")"
@@ -402,6 +406,10 @@ const expected = [
   'mobile-connect-agent.js',
   'mobile-connect-protocol.js',
   'mobile-connect-qr.js',
+  'freebuff_tailnet_proxy.js',
+  'mobile-ui.css',
+  'mobile-ui.js',
+  'perf-probe.js',
 ];
 if (manifest.product !== 'freebuff-mobile-connect' || manifest.version !== expectedVersion) {
   console.error('release manifest version or product does not match requested release');
