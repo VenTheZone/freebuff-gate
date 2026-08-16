@@ -407,7 +407,9 @@ jobs:
           disable-animations: true
           working-directory: android
           script: |
-            set -euo pipefail
+            # The emulator-runner action executes this with /usr/bin/sh (dash),
+            # so keep it POSIX sh: no pipefail, no bashisms.
+            set -eu
             cert="$RUNNER_TEMP/freebuff-e2e/relay.crt"
             adb root >/dev/null
             adb wait-for-device
