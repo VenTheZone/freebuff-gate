@@ -3833,9 +3833,10 @@
     if (query.addEventListener) query.addEventListener('change', fn);
     else if (query.addListener) query.addListener(fn);
   }
-  // User messages collapse on mobile so a long prompt does not fill the
-  // whole screen; "Show more" expands the bubble back to full height. Only
-  // applied to overflow bubbles (measured once, then skipped forever).
+  // User messages collapse so a long prompt does not fill the whole
+  // transcript; "Show more" expands the bubble back to full height. Runs
+  // at every viewport (bound once at init; enterMobile re-call is a no-op).
+  // Only applied to overflow bubbles (measured once, then skipped forever).
   var msgCompactBound = false;
   var msgCompactProcessed = null;
   function compactUserMessages() {
@@ -4240,6 +4241,7 @@
   browserReloadCleanup();
   homeCatalogProjectLines();
   homeThreadHistory();
+  bindMessageCompact();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();
   watchMedia(mq, function (ev) {
