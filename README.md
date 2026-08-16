@@ -1,7 +1,7 @@
 # FB-Browser-UI
 
-Dotfile configuration for a browser port of the **Freebuff Desktop** UI —
-with the **folder-selection tweak**.
+Dotfile configuration for a browser port of the **Freebuff Desktop** UI,
+including the **folder-selection tweak**.
 
 Desktop Freebuff runs as a native app and can open a real folder dialog. A
 browser port cannot, so folder selection must be re-implemented with web APIs.
@@ -79,9 +79,9 @@ fragile and would be lost on update.
 
 ## Mobile pairing gateway
 
-First gateway slice adds secure pairing control plane for managed Freebuff
-relay. It keeps Tailscale, IPv6, port forwarding, and firewall details
-out of normal user flow.
+This gateway slice adds a secure pairing control plane for the managed
+Freebuff relay. It keeps Tailscale, IPv6, port forwarding, and firewall
+details out of the normal user flow.
 
 Start local gateway on loopback:
 
@@ -150,12 +150,10 @@ FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
 node src/mobile-connect-agent.js pair --relay-http-url http://127.0.0.1:8795
 ```
 
-Production relay must terminate HTTPS/WSS at a trusted public origin. Relay
-operator can read proxied payloads; WSS protects network transit, not relay
-end-to-end confidentiality. Desktop agent currently uses Node 22's built-in
-WebSocket client; native Freebuff CLI integration remains separate. `GET
-/v1/mobile/session` exchanges app access token for Secure/HttpOnly cookie before
-WebView navigation.
+Production relay must terminate HTTPS/WSS at a trusted public origin. The
+relay operator can read proxied payloads; WSS protects network transit, not
+relay end-to-end confidentiality. The desktop agent currently uses Node 22's
+built-in WebSocket client; native Freebuff CLI integration remains separate.
 
 ## Freebuff Desktop mobile-connect installer
 
@@ -173,11 +171,14 @@ curl -fsSL https://github.com/VenTheZone/FB-Browser-UI/releases/download/v0.1.0/
       --enrollment-token '<relay-bootstrap-token>'
 ```
 
-Pin the release tag instead of using a moving `main` URL. Bootstrap validates
-Node 22 or newer before downloading code, fetches versioned agent files from the
-same release, validates the release manifest, verifies SHA-256 checksums, and
-only then runs the existing Node installer. It requires `bash`, `curl`, and
-`sha256sum` or `shasum`; it does not install Node or elevate privileges.
+Pin the release tag instead of using a moving `main` URL. Before downloading
+code the bootstrap locates the Freebuff Desktop install, checks Node 22+,
+`curl`, and `sha256sum`/`shasum`, and offers to install anything missing
+(`--check` for a report only, `-y` to install unprompted, `--no-prompt` to
+fail instead of asking, `--skip-checks` to bypass). It then fetches versioned
+agent files from the same release, validates the release manifest, verifies
+SHA-256 checksums, and only then runs the existing Node installer. It does not
+elevate privileges.
 
 The bootstrap also accepts `--version v1.2.3` and
 `--release-base-url https://mirror.example.com/freebuff/v1.2.3` for private
@@ -261,12 +262,11 @@ launchctl, or Task Scheduler.
 `--relay-ws-url` is derived from HTTPS URL when omitted. Desktop UI defaults to
 `http://127.0.0.1:58061`; override with `--upstream-url`. Use
 `--dry-run` before writing, `uninstall` to remove installed agent files, and
-`uninstall --purge` only when config/state should also be removed. Installer
-refuses insecure non-loopback relay URLs, refuses unmanaged destination
-collisions, rotates short-lived connector tokens through the relay, and never
-stores provider credentials. Node 22 is required because agent uses built-in
-WebSocket. Keep bootstrap token out of shell history where possible; rotate it after
-provisioning.
+`uninstall --purge` only when config/state should also be removed.Installer refuses insecure non-loopback relay URLs, refuses unmanaged
+destination collisions, rotates short-lived connector tokens through the
+relay, and never stores provider credentials. Node 22 is required because the
+agent uses a built-in WebSocket. Keep the bootstrap token out of shell history
+where possible; rotate it after provisioning.
 
 This is a companion process, not a patch to Freebuff's compiled native CLI.
 Run it beside Desktop until Freebuff exposes a supported connector/plugin
@@ -318,19 +318,19 @@ integration tests and uploads TAP output.
 
 `src/folder-select.js` reproduces desktop folder selection in the browser:
 
-1. **User-gesture discipline** — `window.showDirectoryPicker()` must be called
+1. **User-gesture discipline.** `window.showDirectoryPicker()` must be called
    synchronously inside a click handler; `await`ing anything first kills user
    activation and the browser rejects with `SecurityError`. The tweak makes
    this a hard rule of the API.
-2. **`webkitdirectory` fallback** — Firefox/Safari have no File System Access
+2. **`webkitdirectory` fallback.** Firefox/Safari have no File System Access
    API, so a hidden `<input type="file" webkitdirectory>` is used instead
    (read-only, session-scoped).
-3. **Handle persistence** — the `DirectoryHandle` is stored in IndexedDB and
+3. **Handle persistence.** The `DirectoryHandle` is stored in IndexedDB and
    permission is re-requested via `handle.requestPermission({ mode })` on
    reload, since handles don't auto-grant across sessions.
-4. **Last-folder restore** — passing `{ id }` to the picker makes Chromium
+4. **Last-folder restore.** Passing `{ id }` to the picker makes Chromium
    remember the last-picked folder with no path stored.
-5. **Virtual paths** — browsers refuse to expose absolute paths, so the UI
+5. **Virtual paths.** Browsers refuse to expose absolute paths, so the UI
    shows a stable synthetic path like `workspace://name`.
 
 Tune every knob in the `folderSelection` block of `.fb-browser-ui.json`:
@@ -367,13 +367,13 @@ const handle = await restoreLastFolder(cfg);
 
 ## Serving ads to the browser UI
 
-The browser port shows the same sponsored ads as the native desktop window —
-there is no forwarding toggle. The UI fetches a banner ad from the desktop
+The browser port shows the same sponsored ads as the native desktop window.
+There is no forwarding toggle. The UI fetches a banner ad from the desktop
 orchestrator (`POST /api/ad/slot`) and renders inline ad cards inside long
 assistant responses; the orchestrator auctions both placements server-side
 against `https://www.codebuff.com/api/v1/ads` using the auth token in
 `~/.config/freebuff-desktop/state.json`. If the network returns an empty
-`ads` array (no fill), nothing renders — which is expected and not a config
+`ads` array (no fill), nothing renders. That is expected, not a config
 issue. `src/check-ads.js` polls that auction so you can watch for real fill:
 
 ```bash
@@ -388,17 +388,17 @@ The desktop UI targets a mouse and a wide window; on a phone it falls apart
 and inputs zoom on focus). `src/mobile-ui.css` + `src/mobile-ui.js` fix that
 for narrow viewports:
 
-- **1000px** — full mobile layout: the chat goes full-bleed (all desktop
+- **1000px**: full mobile layout. The chat goes full-bleed (all desktop
   side-reserves zeroed), the composer stays docked with 16px input
   text (no iOS zoom-on-focus) and safe-area padding, and touch targets grow.
   The explorer is **hidden entirely** (no drawer, no rail): a header button
   (`.fb-panel-toggle`, next to the session switcher) summons it as a
   **sliding panel** that slides in from the right over the chat with a
-  dimmed scrim behind — dismiss it via the scrim, the panel's own close
+  dimmed scrim behind. Dismiss it via the scrim, the panel's own close
   (the app's collapse toggle), or Escape. It toggles through the app's own
   control, and its open state is **remembered per thread** (localStorage,
   same model as the context card): switching sessions or reloading
-  restores each thread's panel state — opening records the thread, closing
+  restores each thread's panel state. Opening records the thread, closing
   on it clears the memory, and the home screen is left alone.
   The tab strip collapses into a **slim header**: the home tab becomes a back
   button and the active thread tab becomes a full-width title. Tapping that
@@ -406,7 +406,7 @@ for narrow viewports:
   that reuses the app's own tab actions (dblclick for rename, the tab's
   pop-out and close buttons), plus an on-demand **Larger chat text**
   accessibility toggle (persisted in localStorage) and a **Report an issue**
-  entry (the bottom-right report pill is hidden on mobile — this menu reopens
+  entry (the bottom-right report pill is hidden on mobile; this menu reopens
   the app's own feedback modal for active sessions). Home/catalog mode and
   popout mode also get a compact header report affordance, so reporting stays
   available in every mobile view. The menu opens with the app's popover
@@ -437,16 +437,16 @@ for narrow viewports:
   The list refreshes live as sessions open/close, and closing the active one
   dismisses the menu. Below the open sessions, a **Recent** section lists
   recently-active **closed** sessions from the app's own catalog API
-  (  `/api/projects`, same-origin — titled, non-archived, newest first, with a
+  (`/api/projects`, same-origin: titled, non-archived, newest first, with a
   relative time, and the **project name** under each title so sessions from
   different projects are easy to tell apart), and its header has a
   **refresh** button that re-fetches the catalog in place (with a spinner)
   so the list updates without reopening the menu. Picking one reopens it as a
   tab through the app's native
-  path: go home, select its project, and click the matching catalog row  (a
+  path: go home, select its project, and click the matching catalog row (a
   time-based tiebreak disambiguates duplicate titles). The session button
   shows a small pulsing **attention dot** (same `--brand` color as the app's
-  own tab unseen-dot) whenever any open session needs attention — it mirrors
+  own tab unseen-dot) whenever any open session needs attention. It mirrors
   the app's native `unseen` tab class (not active, not running, attention
   revision unacknowledged), kept in sync by the tabbar observer's live class
   updates. The button appears only while a session is open, the menu animates
@@ -475,18 +475,18 @@ for narrow viewports:
   Mobile menus, sheets, and the tools panel share one overlay stack: opening
   one closes conflicting layers, while Android/browser Back dismisses the
   topmost layer before navigating away.
-- **700px (phones)** — the **model picker becomes a full-screen scrollable
+- **700px (phones)**: the **model picker becomes a full-screen scrollable
   sheet** (`inset: 0`, `max-height: 100dvh !important` to beat the app's
   inline trigger-position max-height), with a JS-injected close button
   (`src/mobile-ui.js` observes the menu, adds a fixed X, and closes it via
-  Escape keydown — the app natively closes the menu on outside mousedown, so
+  Escape keydown; the app natively closes the menu on outside mousedown, so
   the button lives in `<body>` and works without touching the menu's own
   logic). The composer's **context chips row** (agent / model / effort /
   workspace selectors) is hidden and replaced by a **floating button** just
   above the composer; tapping it pops the chips up as a floating card so the
   composer never over-extends on narrow screens. The button is a **chevron**
   that rotates smoothly (up when closed, down when open) while the card
-  **slides up** into place and **slides down** out of it — dismiss it with
+  **slides up** into place and **slides down** out of it. Dismiss it with
   the same button, an outside tap, or Escape.
   Small **floating model**, **reasoning**, and **time-limit** pills stay just
   above the message box, so a new session still exposes its selected model,
@@ -512,11 +512,11 @@ for narrow viewports:
   into that same card too, so the input area on phones is just the
   textarea (Enter still sends). The card's action bar shows attach always,
   stop only while a turn is running, stash when there's something to
-  restore, and a send button that lights up when the message is ready —
-  each one clicks the app's own (hidden) button, so behaviors stay native.
+  restore, and a send button that lights up when the message is ready.
+  Each one clicks the app's own (hidden) button, so behaviors stay native.
   The **stop button also stays visible next to the textarea** while a turn
-  is running (the app only renders it then, so it adds no idle clutter) —
-  stopping a run stays one tap away even though the card lives in the
+  is running (the app only renders it then, so it adds no idle clutter).
+  Stopping a run stays one tap away even though the card lives in the
   header.
   The card's open state is **persisted per thread** (localStorage), so
   switching away and back, or reloading the page, restores the chip layout
@@ -546,7 +546,7 @@ for narrow viewports:
   Text keeps the app's native sizes (no font bump, so the chat doesn't look
   zoomed in), and the viewport stays user-zoomable (no user-scalable=no
   lock).
-- **480px** — further tightening for small phones.
+- **480px**: further tightening for small phones.
 
 Automated mobile regression coverage runs the injected CSS and JavaScript in a
 native-UI fixture at a 390×844 phone viewport. It captures
@@ -583,14 +583,14 @@ body = body.replace(marker, MOBILE_TAG('css') + MOBILE_TAG('js') + SHIM + marker
 
 where `MOBILE_TAG` inlines `src/mobile-ui.css` / `src/mobile-ui.js` into
 `<style>` / `<script>` tags read fresh per request (edit the files, reload
-the page — no proxy restart needed).
+the page; no proxy restart needed).
 
 ## Secrets
 
 This repo must stay free of secrets. The `.gitignore` excludes `.env*`,
 `state.json`, keypair/key/token files, databases, logs, and runtime state.
 
-- Real values always live in a local, git-ignored `.env` — never in
+- Real values always live in a local, git-ignored `.env`, never in
   `.fb-browser-ui.json`.
 - The Freebuff Desktop `state.json` (which holds auth tokens) is mirrored in
   shape only; the real file stays outside the repo.

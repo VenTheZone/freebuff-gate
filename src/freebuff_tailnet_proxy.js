@@ -26,97 +26,183 @@ const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 // ---- window.freebuffDesktop shim (browser fallbacks for the Electron preload bridge) ----
 // The browser UI runs against the orchestrator on the SERVER, so "pick a
 // folder" cannot use the browser's local filesystem (showDirectoryPicker
-// would resolve to a local path the server never sees). Instead we ask for
-// an absolute path on the server, prefilled with the directory of the most
-// recently opened project and with quick-pick buttons for known projects.
+// would resolve to a local path the server never sees). Instead we open a
+// server-side file browser backed by GET /api/fb/dirlist?path=... (the
+// orchestrator's on-disk bundle carries that route; the proxy serves the
+// same page and forwards the call upstream).
 const SHIM = `(function () {
   if (window.freebuffDesktop) return;
   var virtualPick = function () {
     return new Promise(function (resolve) {
-      function show(hint) {
+      var current = '/';
+      var recents = [];
+      function esc(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+      function joinPath(base, name) {
+        var b = base === '/' ? '' : String(base).replace(/\/+$/, '');
+        return b + '/' + name;
+      }
+      function parentOf(p) {
+        var t = String(p).replace(/\/+$/, '');
+        if (!t) return '/';
+        var i = t.lastIndexOf('/');
+        return i <= 0 ? '/' : t.slice(0, i);
+      }
+      function build() {
         var wrap = document.createElement('div');
         wrap.className = 'fb-pick-wrap';
         var style = document.createElement('style');
-        style.textContent = '.fb-pick-wrap{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.55);font-family:system-ui,-apple-system,sans-serif}.fb-pick-box{width:min(100%,420px);padding:18px;border:1px solid var(--border,#333);border-radius:14px;background:var(--bg,#111);color:var(--text,#eee);box-shadow:0 18px 44px rgba(0,0,0,.5)}.fb-pick-box h3{margin:0 0 6px;font-size:15px}.fb-pick-box p{margin:0 0 12px;font-size:12.5px;color:var(--muted,#999);line-height:1.4}.fb-pick-input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border,#444);border-radius:9px;background:var(--surface-2,#1a1a1a);color:var(--text,#eee);font:inherit;font-size:13.5px;outline:none}.fb-pick-input:focus{border-color:var(--accent,#4ade80)}.fb-pick-recents{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.fb-pick-recents button{padding:6px 10px;border:1px solid var(--border,#444);border-radius:8px;background:var(--surface-2,#1a1a1a);color:var(--muted,#bbb);font:inherit;font-size:12px;cursor:pointer}.fb-pick-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.fb-pick-actions button{min-width:88px;min-height:40px;padding:8px 14px;border:1px solid transparent;border-radius:9px;font:inherit;font-size:13px;font-weight:650;color:#fff;cursor:pointer}.fb-pick-ok{background:#2eaa62}.fb-pick-cancel{background:#555}@media(max-width:700px){.fb-pick-box h3{font-size:16px}.fb-pick-actions button{min-height:44px}}';
+        style.textContent = '.fb-pick-wrap{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.55);font-family:system-ui,-apple-system,sans-serif}.fb-browse-box{width:min(100%,560px);max-height:82vh;display:flex;flex-direction:column;padding:18px;box-sizing:border-box;border:1px solid var(--border,#333);border-radius:14px;background:var(--bg,#111);color:var(--text,#eee);box-shadow:0 18px 44px rgba(0,0,0,.5)}.fb-browse-box h3{margin:0 0 10px;font-size:15px}.fb-browse-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border,#444);border-radius:9px;background:var(--surface-2,#1a1a1a);font-size:12.5px;overflow-x:auto;white-space:nowrap}.fb-crumb{background:none;border:none;color:var(--accent,#4ade80);cursor:pointer;font:inherit;font-size:12.5px;padding:2px 3px}.fb-crumb:hover{text-decoration:underline}.fb-crumb-sep{color:var(--muted,#777);user-select:none}.fb-browse-list{flex:1;overflow-y:auto;min-height:160px;max-height:46vh;border:1px solid var(--border,#333);border-radius:9px;background:var(--surface-2,#0d0d0d)}.fb-browse-item{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;box-sizing:border-box;border:none;background:none;color:var(--text,#eee);text-align:left;font:inherit;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}.fb-browse-item:hover{background:rgba(78,222,128,.09)}.fb-browse-item .fb-ic{opacity:.85;flex:none}.fb-browse-item.file{color:var(--muted,#888);cursor:default}.fb-browse-item.file:hover{background:none}.fb-browse-msg{padding:14px;color:var(--muted,#999);font-size:13px}.fb-browse-recents{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.fb-browse-recents button{padding:6px 10px;border:1px solid var(--border,#444);border-radius:8px;background:var(--surface-2,#1a1a1a);color:var(--muted,#bbb);font:inherit;font-size:12px;cursor:pointer}.fb-browse-recents button:hover{color:var(--text,#eee);border-color:var(--accent,#4ade80)}.fb-pick-actions{display:flex;justify-content:space-between;gap:8px;margin-top:14px}.fb-pick-actions .fb-acts{display:flex;gap:8px}.fb-pick-actions button{min-width:80px;min-height:40px;padding:8px 14px;border:1px solid transparent;border-radius:9px;font:inherit;font-size:13px;font-weight:650;color:#fff;cursor:pointer}.fb-pick-ok{background:#2eaa62}.fb-pick-cancel{background:#555}.fb-pick-up{background:#444}@media(max-width:700px){.fb-browse-box h3{font-size:16px}.fb-pick-actions button{min-height:44px}}';
         wrap.appendChild(style);
         var box = document.createElement('div');
-        box.className = 'fb-pick-box';
+        box.className = 'fb-browse-box';
         var h = document.createElement('h3');
         h.textContent = 'Open project folder';
-        var p = document.createElement('p');
-        p.textContent = 'Enter the absolute path of the folder on the server (for example ' + (hint || '/home/you/my-project') + ').';
-        var input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'fb-pick-input';
-        input.value = hint || '';
-        input.setAttribute('spellcheck', 'false');
-        input.setAttribute('aria-label', 'Server folder path');
-        var recents = document.createElement('div');
-        recents.className = 'fb-pick-recents';
-        if (recentsArr && recentsArr.length) {
-          recentsArr.forEach(function (r) {
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.textContent = r;
-            b.addEventListener('click', function () { input.value = r; input.focus(); });
-            recents.appendChild(b);
-          });
-        }
+        var crumbs = document.createElement('div');
+        crumbs.className = 'fb-browse-crumbs';
+        var list = document.createElement('div');
+        list.className = 'fb-browse-list';
+        list.setAttribute('role', 'listbox');
+        list.setAttribute('aria-label', 'Server folders');
+        var rec = document.createElement('div');
+        rec.className = 'fb-browse-recents';
         var actions = document.createElement('div');
         actions.className = 'fb-pick-actions';
+        var acts = document.createElement('div');
+        acts.className = 'fb-acts';
+        var up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'fb-pick-up';
+        up.textContent = 'Up';
+        var home = document.createElement('button');
+        home.type = 'button';
+        home.className = 'fb-pick-up';
+        home.textContent = 'Home';
         var ok = document.createElement('button');
         ok.type = 'button';
         ok.className = 'fb-pick-ok';
-        ok.textContent = 'Open';
+        ok.textContent = 'Select this folder';
         var cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.className = 'fb-pick-cancel';
         cancel.textContent = 'Cancel';
-        function done() {
-          var v = input.value.trim();
+        box.appendChild(h);
+        box.appendChild(crumbs);
+        box.appendChild(list);
+        if (recents.length) {
+          recents.forEach(function (r) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = r;
+            b.addEventListener('click', function () { current = r; load(); });
+            rec.appendChild(b);
+          });
+          box.appendChild(rec);
+        }
+        acts.appendChild(up);
+        acts.appendChild(home);
+        actions.appendChild(acts);
+        actions.appendChild(cancel);
+        actions.appendChild(ok);
+        box.appendChild(actions);
+        wrap.appendChild(box);
+        document.body.appendChild(wrap);
+        up.addEventListener('click', function () { current = parentOf(current); load(); });
+        home.addEventListener('click', function () { current = '/'; load(); });
+        ok.addEventListener('click', function () {
+          var v = String(current || '').trim();
           if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
           resolve(v || null);
-        }
+        });
         function cancelPick() {
           if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
           resolve(null);
         }
-        ok.addEventListener('click', done);
         cancel.addEventListener('click', cancelPick);
-        input.addEventListener('keydown', function (ev) {
-          if (ev.key === 'Enter') { ev.preventDefault(); done(); }
-          else if (ev.key === 'Escape') { ev.preventDefault(); cancelPick(); }
-        });
         wrap.addEventListener('click', function (ev) { if (ev.target === wrap) cancelPick(); });
-        actions.appendChild(cancel);
-        actions.appendChild(ok);
-        box.appendChild(h);
-        box.appendChild(p);
-        box.appendChild(input);
-        if (recentsArr && recentsArr.length) box.appendChild(recents);
-        box.appendChild(actions);
-        wrap.appendChild(box);
-        document.body.appendChild(wrap);
-        input.focus();
-        input.select();
+        document.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') { ev.preventDefault(); cancelPick(); }
+        }, { once: true });
+        return { crumbs: crumbs, list: list };
       }
-      var hint = '/home/';
-      var recentsArr = [];
-      try {
-        fetch('/api/project/recents', { headers: { Accept: 'application/json' } })
-          .then(function (r) { return r.ok ? r.json() : null; })
+      function renderCrumbs(parts, holder) {
+        holder.innerHTML = '';
+        var root = document.createElement('button');
+        root.type = 'button';
+        root.className = 'fb-crumb';
+        root.textContent = '/';
+        root.setAttribute('aria-label', 'Go to root');
+        root.addEventListener('click', function () { current = '/'; load(); });
+        holder.appendChild(root);
+        parts.forEach(function (seg, idx) {
+          if (idx > 0) {
+            var sep = document.createElement('span');
+            sep.className = 'fb-crumb-sep';
+            sep.textContent = '/';
+            holder.appendChild(sep);
+          }
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'fb-crumb';
+          b.textContent = seg;
+          b.addEventListener('click', function () { current = '/' + parts.slice(0, idx + 1).join('/'); load(); });
+          holder.appendChild(b);
+        });
+      }
+      function load() {
+        var ui = window.__fbBrowseUi;
+        if (!ui) return;
+        ui.list.innerHTML = '<div class="fb-browse-msg">Loading ' + esc(current) + '…</div>';
+        fetch('/api/fb/dirlist?path=' + encodeURIComponent(current), { headers: { Accept: 'application/json' } })
+          .then(function (r) { return r.json(); })
           .then(function (d) {
-            var list = (d && (d.paths || d.recentProjects)) || [];
-            if (list.length) {
-              var first = String(list[0]).replace(/\/+$/, '');
-              var slash = first.lastIndexOf('/');
-              if (slash > 0) hint = first.slice(0, slash + 1);
-              recentsArr = list.slice(0, 6);
+            if (d && d.error) {
+              ui.list.innerHTML = '<div class="fb-browse-msg">' + esc(d.error) + '</div>';
+              return;
             }
-            show(hint, recentsArr);
+            current = (d && d.path) || current;
+            var parts = String(current).replace(/^\/+/, '').replace(/\/+$/, '').split('/').filter(Boolean);
+            renderCrumbs(parts, ui.crumbs);
+            var entries = (d && d.entries) || [];
+            if (!entries.length) {
+              ui.list.innerHTML = '<div class="fb-browse-msg">This folder is empty</div>';
+              return;
+            }
+            ui.list.innerHTML = '';
+            entries.forEach(function (e) {
+              var row = document.createElement('button');
+              row.type = 'button';
+              row.className = 'fb-browse-item' + (e.dir ? '' : ' file');
+              var ic = document.createElement('span');
+              ic.className = 'fb-ic';
+              ic.textContent = e.dir ? '📁' : '📄';
+              var name = document.createElement('span');
+              name.textContent = e.name;
+              row.appendChild(ic);
+              row.appendChild(name);
+              if (e.dir) {
+                row.setAttribute('role', 'option');
+                row.addEventListener('click', function () { current = joinPath(current, e.name); load(); });
+              }
+              ui.list.appendChild(row);
+            });
           })
-          .catch(function () { show(hint, recentsArr); });
-      } catch (e) { show(hint, recentsArr); }
+          .catch(function () {
+            ui.list.innerHTML = '<div class="fb-browse-msg">Could not list the folder on the server</div>';
+          });
+      }
+      var ui = build();
+      window.__fbBrowseUi = ui;
+      fetch('/api/project/recents', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          var list = (d && (d.paths || d.recentProjects)) || [];
+          recents = list.slice(0, 6);
+          if (list.length && !current || current === '/') current = String(list[0]);
+          load();
+        })
+        .catch(function () { load(); });
     });
   };
   window.freebuffDesktop = {
@@ -212,6 +298,12 @@ const server = http.createServer((req, res) => {
         const out = injectInto(body);
         const outHeaders = { ...pres.headers };
         outHeaders['content-length'] = Buffer.byteLength(out);
+        // The HTML is rewritten per request (shim + bundle patch + mobile
+        // layer), so a cached copy can silently serve stale UI (e.g. the old
+        // folder picker that opens the phone's own file browser). Force
+        // revalidation on every load.
+        outHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+        outHeaders.pragma = 'no-cache';
         res.writeHead(pres.statusCode || 200, outHeaders);
         res.end(out);
       });
@@ -226,6 +318,10 @@ const server = http.createServer((req, res) => {
         const out = patchBundle(body);
         const outHeaders = { ...pres.headers };
         outHeaders['content-length'] = Buffer.byteLength(out);
+        // The bundle is patched per request (boot thread fix); never let a
+        // cache serve an unpatched copy.
+        outHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+        outHeaders.pragma = 'no-cache';
         res.writeHead(pres.statusCode || 200, outHeaders);
         res.end(out);
       });
