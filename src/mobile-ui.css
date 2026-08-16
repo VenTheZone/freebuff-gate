@@ -104,6 +104,14 @@
     max-height: 120px;
   }
 
+  /* The bulk "Expand all"/"Collapse all" pill floats in thread-bottom, which
+     on phones is the docked composer. There it covers the input and jitters
+     with the keyboard/visual viewport, so hide it on mobile; the per-message
+     "Show more"/"Show less" buttons still collapse and expand every message. */
+  .thread-bottom .fb-msg-toggle {
+    display: none !important;
+  }
+
   /* Zero every desktop-side reserve so the chat uses the full width. */
   .app,
   .workspace {
