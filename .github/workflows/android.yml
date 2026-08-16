@@ -446,8 +446,10 @@ jobs:
             echo "apex dir: $(adb shell ls -ld /apex/com.android.conscrypt/cacerts 2>&1 || echo absent)" &&
             echo "selinux: $(adb shell getenforce 2>&1 || true) label: $(adb shell ls -laZ /system/etc/security/cacerts/ 2>&1 | grep "${hash}" || true)" &&
             echo "local sha1: $(sha1sum "$cert" | cut -d' ' -f1) device sha1: $(adb shell sha1sum /system/etc/security/cacerts/${hash}.0 2>&1 || true)" &&
-            ( adb shell ls -ld /apex/com.android.conscrypt/cacerts >/dev/null 2>&1 && adb push "$cert" "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && adb shell chmod 644 "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
-            ( adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || adb shell chcon u:object_r:system_file:s0 "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
+            ( adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
+            ( adb shell mount -o rw,remount /apex/com.android.conscrypt >/dev/null 2>&1 && echo "apex remount: ok" || echo "apex remount: failed" ) &&
+            ( adb push "$cert" "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && adb shell chmod 644 "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && echo "apex push: ok" || echo "apex push: failed" ) &&
+            echo "apex files: $(adb shell ls /apex/com.android.conscrypt/cacerts/ 2>/dev/null | wc -l) sha1: $(adb shell sha1sum /apex/com.android.conscrypt/cacerts/${hash}.0 2>&1 || echo missing)" &&
             adb reboot &&
             i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
             [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
