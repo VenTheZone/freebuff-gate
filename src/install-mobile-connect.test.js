@@ -37,6 +37,7 @@ const {
   parseArgs,
   systemdUnitSource,
   uninstall,
+  verifyUiStack,
   windowsTaskRun,
 } = require('./install-mobile-connect');
 
@@ -329,6 +330,49 @@ test('ui: missing patch anchors fail loudly instead of silently regressing', asy
       () => installUiStack(options, {}, { runPlatformCommand }),
       /route anchor not found/,
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verify: reports healthy stack, then fails loudly on each wiped patch', async () => {
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    const options = uiOptions(root, fake.root);
+    const { runPlatformCommand } = recordingCommands();
+    installUiStack(options, {}, { runPlatformCommand });
+
+    const healthy = verifyUiStack(options);
+    assert.equal(healthy.ok, true, JSON.stringify(healthy.errors));
+    assert.deepEqual(healthy.errors, []);
+
+    // App update wipes the bundle: patch markers gone -> verify fails.
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'const stock = 1;');
+    let report = verifyUiStack(options);
+    assert.equal(report.ok, false);
+    assert.equal(report.errors.some((e) => e.item.startsWith('bundle:')), true);
+    assert.match(report.errors[0].message, /CREATE_REUSE/);
+
+    // Shim tag missing.
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'index.html'), '<!doctype html><head></head></html>');
+    report = verifyUiStack(options);
+    assert.equal(report.ok, false);
+    assert.equal(report.errors.some((e) => e.item === 'shim'), true);
+
+    // Orchestrator update wipes dirlist + perf routes.
+    installUiStack(options, {}, { runPlatformCommand });
+    fs.writeFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'const m=42;');
+    report = verifyUiStack(options);
+    assert.equal(report.ok, false);
+    assert.equal(report.errors.some((e) => e.item === 'orchestrator.routes'), true);
+    assert.equal(report.errors.some((e) => e.item === 'orchestrator.perf'), true);
+
+    // Missing desktop dir itself fails.
+    report = verifyUiStack({ ...options, desktopDir: path.join(root, 'nope') });
+    assert.equal(report.ok, false);
+    assert.equal(report.errors.some((e) => e.item === 'desktop'), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

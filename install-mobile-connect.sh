@@ -12,6 +12,7 @@ DEFAULT_RELEASE_BASE_URL='https://github.com/VenTheZone/freebuff-gate/releases/d
 VERSION="${FB_MOBILE_CONNECT_VERSION:-$DEFAULT_VERSION}"
 RELEASE_BASE_URL="${FB_MOBILE_CONNECT_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"
 FORWARD_ARGS=()
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 RUN_CHECKS=1
 ASSUME_YES=0
 NO_PROMPT=0
@@ -32,6 +33,9 @@ Bootstrap options:
   --version <v>             Release tag, for example v0.1.0
   --release-base-url <url>  HTTPS base URL containing versioned assets
   --check                   Check Freebuff Desktop + dependencies only, then exit
+  --verify                  Verify the on-disk UI patches (bundle markers,
+                            shim tag, dirlist/perf routes) and exit non-zero
+                            when any are missing after an app update
   --skip-checks             Skip Desktop discovery and dependency checks
   -y, --assume-yes          Install missing dependencies without prompting
   --no-prompt               Fail on missing dependencies instead of prompting
@@ -77,6 +81,11 @@ while (($# > 0)); do
     --check)
       RUN_CHECKS=1
       CHECK_ONLY=1
+      shift
+      ;;
+    --verify)
+      RUN_CHECKS=1
+      UI_VERIFY=1
       shift
       ;;
     --skip-checks)
@@ -291,6 +300,35 @@ install_missing_deps() {
 # Main flow
 # ---------------------------------------------------------------------------
 
+if [[ "${UI_VERIFY:-0}" -eq 1 ]]; then
+  # Verify is a read-only scan: prefer the installer JS that ships next to
+  # this script (repo layout), and skip the release download entirely. When
+  # run as a curl-piped bootstrap there is no local copy, so fall through to
+  # the download below.
+  VERIFY_JS=''
+  if [[ -s "$SCRIPT_DIR/src/install-mobile-connect.js" ]]; then
+    VERIFY_JS="$SCRIPT_DIR/src/install-mobile-connect.js"
+  elif [[ -s "$SCRIPT_DIR/install-mobile-connect.js" ]]; then
+    VERIFY_JS="$SCRIPT_DIR/install-mobile-connect.js"
+  fi
+  if [[ -n "$VERIFY_JS" ]]; then
+    command -v node >/dev/null 2>&1 || fail 'node is required to verify the on-disk UI patches'
+    if [[ -n "${DESKTOP_DIR:-}" ]]; then
+      printf 'Freebuff Desktop install: %s\n' "$DESKTOP_DIR"
+      printf 'Verifying on-disk UI patches...\n'
+      exec node "$VERIFY_JS" verify --desktop-dir "$DESKTOP_DIR" "${FORWARD_ARGS[@]}"
+    elif DESKTOP_DIR="$(find_freebuff_desktop 2>/dev/null)"; then
+      printf 'Freebuff Desktop install: %s\n' "$DESKTOP_DIR"
+      printf 'Verifying on-disk UI patches...\n'
+      exec node "$VERIFY_JS" verify --desktop-dir "$DESKTOP_DIR" "${FORWARD_ARGS[@]}"
+    else
+      printf 'Freebuff Desktop install: NOT FOUND\n' >&2
+      printf 'Pass --desktop-dir <path> if Freebuff Desktop lives somewhere unusual.\n' >&2
+      exit 1
+    fi
+  fi
+fi
+
 if [[ "${RUN_CHECKS:-1}" -eq 1 ]]; then
   if DESKTOP_DIR="$(find_freebuff_desktop)"; then
     export DESKTOP_DIR
@@ -311,9 +349,13 @@ if [[ "${RUN_CHECKS:-1}" -eq 1 ]]; then
   fi
 
   if ! check_gate_ready; then
-    install_missing_deps
-    printf 'Re-checking dependencies after install...\n'
-    check_gate_ready || fail 'dependencies still missing after install'
+    if [[ "${UI_VERIFY:-0}" -eq 1 ]]; then
+      printf 'Note: host dependencies incomplete (Node 22+ preferred); verify still runs.\n' >&2
+    else
+      install_missing_deps
+      printf 'Re-checking dependencies after install...\n'
+      check_gate_ready || fail 'dependencies still missing after install'
+    fi
   fi
 fi
 
@@ -327,7 +369,15 @@ esac
 command -v node >/dev/null 2>&1 || fail 'Node 22 or newer is required; node was not found'
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] || fail 'could not determine Node.js version'
-(( NODE_MAJOR >= 22 )) || fail "Node 22 or newer is required; found $(node --version)"
+if (( NODE_MAJOR < 22 )); then
+  # Verify is a read-only scan; it runs fine on older Node. The install
+  # path still fails hard below.
+  if [[ "${UI_VERIFY:-0}" -eq 1 ]]; then
+    printf 'Warning: Node %s detected (22+ preferred); verify still works.\n' "$(node --version)" >&2
+  else
+    fail "Node 22 or newer is required; found $(node --version)"
+  fi
+fi
 
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
 if command -v sha256sum >/dev/null 2>&1; then
@@ -471,6 +521,18 @@ fi
 for logical in "${LOGICAL_FILES[@]}"; do
   cp "$DOWNLOAD_DIR/${ASSET_PREFIX}-${logical}" "$SOURCE_DIR/$logical"
 done
+
+if [[ "${UI_VERIFY:-0}" -eq 1 ]]; then
+  printf 'Verifying on-disk UI patches...\n'
+  if [[ -n "${DESKTOP_DIR:-}" ]]; then
+    exec node "$SOURCE_DIR/install-mobile-connect.js" verify \
+      --desktop-dir "$DESKTOP_DIR" \
+      "${FORWARD_ARGS[@]}"
+  else
+    exec node "$SOURCE_DIR/install-mobile-connect.js" verify \
+      "${FORWARD_ARGS[@]}"
+  fi
+fi
 
 printf 'Launching verified installer...\n'
 exec node "$SOURCE_DIR/install-mobile-connect.js" install \

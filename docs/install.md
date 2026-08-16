@@ -35,6 +35,9 @@ installer. Useful flags:
 - bash install-mobile-connect.sh --skip-checks  # bypass discovery/checks
 - bash install-mobile-connect.sh -y             # install missing deps unprompted
 - bash install-mobile-connect.sh --no-prompt    # fail instead of asking
+- bash install-mobile-connect.sh --verify       # post-update regression check: exits
+                                               # non-zero if bundle/shim/dirlist markers
+                                               # are missing (e.g. right after an app update)
 
 ### 1. Verify the orchestrator
 The orchestrator serves the browser UI on 127.0.0.1:58060 (and tailnet IP).
@@ -66,6 +69,11 @@ the exact file instead of silently shipping a stock UI. Control flags:
 --no-ui-patches to skip the whole stack, --desktop-dir <path> to point at
 an install (the bootstrap sets DESKTOP_DIR automatically when it finds the
 app).
+- After every Freebuff Desktop update, run bash install-mobile-connect.sh --verify
+  (or `node src/install-mobile-connect.js verify`): it scans the on-disk
+  bundle/shim/orchestrator for the patch markers and exits non-zero with the
+  exact file when any are missing, so a regression is caught loudly. Re-run
+  the install command to re-apply.
 - Verify: curl http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
 - Verify the shim on the direct UI: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
 - Verify the dirlist route: curl -s 'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.
@@ -75,7 +83,6 @@ app).
   into folders and select one. The chosen path is a real server path.
 
 ### 3. Mobile relay + connector (optional, for the Freebuff Gate Android app)
-### 5. Mobile relay + connector (optional, for the Freebuff Gate Android app)
 If the phone app is used:
 - Copy ~/FB-Browser-UI/src/mobile-connect-relay.js and
   ~/FB-Browser-UI/src/mobile-connect-agent.js to

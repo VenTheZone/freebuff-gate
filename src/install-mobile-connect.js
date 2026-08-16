@@ -124,6 +124,8 @@ function usage() {
 Commands:
   install             Install companion agent and launcher (default)
   uninstall           Remove installed agent and launcher
+  verify              Verify the on-disk UI patches after an app update (exit
+                      non-zero when bundle/shim/orchestrator markers missing)
 
 Options:
   --relay-http-url <url>  Managed relay HTTPS URL
@@ -148,7 +150,12 @@ Options:
   --no-ui-patches         Skip proxy deploy and on-disk UI patches
   --desktop-dir <path>    Freebuff Desktop install dir (auto-discovered when
                           omitted; the shell bootstrap exports DESKTOP_DIR)
-  --help                Show this help
+
+Commands:
+  install             Install companion agent and launcher (default)
+  uninstall           Remove installed agent and launcher
+  verify              Verify the on-disk UI patches after an app update (exit
+                      non-zero when bundle/shim/orchestrator markers missing)
 
 Runtime:
   Pass --enrollment-token to provision connector credentials, or set
@@ -202,6 +209,8 @@ function parseArgs(argv, context = {}) {
       case 'install': options.command = 'install'; break;
       case 'uninstall':
       case '--uninstall': options.command = 'uninstall'; break;
+      case 'verify':
+      case '--verify': options.command = 'verify'; break;
       case '--relay-http-url': options.relayHttpUrl = next(); break;
       case '--relay-ws-url': options.relayWsUrl = next(); break;
       case '--upstream-url': options.upstreamUrl = next(); break;
@@ -1091,6 +1100,147 @@ function installUiStack(options, paths, { runPlatformCommand = runPlatformComman
   return { enabled: true, desktopDir, configDir, uiDir, proxyUnit: registration.file, ...results };
 }
 
+// ---------------------------------------------------------------------------
+// Verify: post-update regression check. Freebuff Desktop updates overwrite
+// ui/index.html, ui/assets/index-*.js, and orchestrator.js, silently wiping
+// every on-disk patch. verifyUiStack() scans for the patch markers and
+// reports each missing one by file; main() exits non-zero when anything is
+// missing, so an update that regressed the UI is caught loudly instead of
+// being discovered by a confused user.
+// ---------------------------------------------------------------------------
+
+function collectProblems(desktopDir, options = {}) {
+  const problems = [];
+  const orchDir = orchestratorDirOf(desktopDir);
+  const uiDir = path.join(orchDir, 'ui');
+  const assetsDir = path.join(uiDir, 'assets');
+  const proxy = require(path.join(__dirname, 'freebuff_tailnet_proxy.js'));
+  const fixed = [
+    proxy.CREATE_REUSE,
+    proxy.SETSTATE_FIX,
+    proxy.SCROLL_FIX,
+    proxy.CLOSE_FIX1,
+    proxy.CLOSE_FIX2,
+    proxy.CLOSE_FIX3,
+  ];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3'];
+
+  let bundles = [];
+  try {
+    bundles = fs.readdirSync(assetsDir)
+      .filter((name) => /^index-[^/]+\.js$/.test(name))
+      .sort();
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      problems.push({ level: 'error', item: 'bundle', message: `UI assets dir missing (app update removed it?): ${assetsDir}` });
+    } else {
+      throw error;
+    }
+  }
+  if (bundles.length === 0) {
+    problems.push({ level: 'error', item: 'bundle', message: `no UI bundle found under ${assetsDir}` });
+  }
+  for (const name of bundles) {
+    let body;
+    try {
+      body = fs.readFileSync(path.join(assetsDir, name), 'utf8');
+    } catch (error) {
+      problems.push({ level: 'error', item: `bundle:${name}`, message: `unreadable: ${error.message}` });
+      continue;
+    }
+    const missing = names.filter((mark, index) => !body.includes(fixed[index]));
+    if (missing.length > 0) {
+      problems.push({
+        level: 'error',
+        item: `bundle:${name}`,
+        message: `missing patch marker(s): ${missing.join(', ')} (app update likely replaced the bundle; re-run install)`,
+      });
+    }
+  }
+
+  const indexHtml = path.join(uiDir, 'index.html');
+  if (!fs.existsSync(indexHtml)) {
+    problems.push({ level: 'error', item: 'shim', message: `missing index.html: ${indexHtml}` });
+  } else {
+    const html = fs.readFileSync(indexHtml, 'utf8');
+    if (!/<script id="fb-desktop-shim">[\s\S]*?<\/script>/.test(html)) {
+      problems.push({ level: 'error', item: 'shim', message: `fb-desktop-shim script missing from ${indexHtml}` });
+    }
+  }
+
+  const orchFile = path.join(orchDir, 'orchestrator.js');
+  if (!fs.existsSync(orchFile)) {
+    problems.push({ level: 'error', item: 'orchestrator', message: `missing orchestrator.js: ${orchFile}` });
+  } else {
+    const src = fs.readFileSync(orchFile, 'utf8');
+    if (!src.includes('/api/fb/dirlist')) {
+      problems.push({ level: 'error', item: 'orchestrator.routes', message: 'dirlist route missing (app update replaced orchestrator.js; re-run install)' });
+    }
+    if (!src.includes('/api/fb/perf-report')) {
+      problems.push({ level: 'error', item: 'orchestrator.routes', message: 'perf-report route missing (app update replaced orchestrator.js; re-run install)' });
+    }
+    if (!src.includes('async function injectPerfProbe(')) {
+      problems.push({ level: 'error', item: 'orchestrator.perf', message: 'injectPerfProbe helper missing (app update replaced orchestrator.js; re-run install)' });
+    }
+    if (!src.includes('"cache-control": "no-store"')) {
+      problems.push({ level: 'warn', item: 'orchestrator.cache', message: 'serveSpa no-store cache header missing (best-effort patch; re-run install to retry)' });
+    }
+    if (!src.includes('"public, max-age=31536000, immutable"')) {
+      problems.push({ level: 'warn', item: 'orchestrator.cache', message: 'serveSpa immutable asset header missing (best-effort patch; re-run install to retry)' });
+    }
+  }
+
+  // Proxy deployment (install state, not an on-disk UI patch: warn, not error).
+  const registration = proxyAutoStartPaths(options);
+  const proxyDir = options.proxyDir || (registration.proxyDir || '');
+  if (proxyDir && !fs.existsSync(proxyDir)) {
+    problems.push({ level: 'warn', item: 'proxy-deploy', message: `proxy directory missing: ${proxyDir}` });
+  } else if (proxyDir) {
+    const missingFiles = PROXY_FILES.filter((file) => !fs.existsSync(path.join(proxyDir, file)));
+    if (missingFiles.length > 0) {
+      problems.push({ level: 'warn', item: 'proxy-deploy', message: `proxy files missing in ${proxyDir}: ${missingFiles.join(', ')}` });
+    }
+  }
+  if (registration.type === 'systemd-user' && registration.file && !fs.existsSync(registration.file)) {
+    problems.push({ level: 'warn', item: 'proxy-unit', message: `proxy systemd unit missing: ${registration.file}` });
+  }
+  return problems;
+}
+
+function verifyUiStack(options = {}) {
+  let desktopDir;
+  try {
+    desktopDir = findFreebuffDesktop(options);
+  } catch (error) {
+    return {
+      ok: false,
+      desktopDir: null,
+      errors: [{ level: 'error', item: 'desktop', message: error.message }],
+      warnings: [],
+    };
+  }
+  const problems = collectProblems(desktopDir, options);
+  return {
+    ok: problems.every((problem) => problem.level !== 'error'),
+    desktopDir,
+    errors: problems.filter((problem) => problem.level === 'error'),
+    warnings: problems.filter((problem) => problem.level === 'warn'),
+  };
+}
+
+function printVerifyReport(report) {
+  if (report.desktopDir) console.log(`Freebuff Desktop: ${report.desktopDir}`);
+  for (const problem of [...report.errors, ...report.warnings]) {
+    console.log(`  [${problem.level}] ${problem.item}: ${problem.message}`);
+  }
+  if (report.errors.length === 0 && report.warnings.length === 0) {
+    console.log('All UI patches present. Gate stack looks healthy.');
+  } else if (report.errors.length === 0) {
+    console.log('No errors: all required patches present.');
+  }
+  return report.ok;
+}
+
 function removeFileIfManaged(file, marker = MANAGED_MARKER) {
   if (!fs.existsSync(file)) return false;
   if (!isManagedFile(file, marker)) return false;
@@ -1203,9 +1353,14 @@ async function main(argv = process.argv.slice(2)) {
   if (options.help) return 0;
   if (options.command === 'uninstall') {
     uninstall(options);
-  } else {
-    await install(options);
+    return 0;
   }
+  if (options.command === 'verify') {
+    const report = verifyUiStack(options);
+    printVerifyReport(report);
+    return report.ok ? 0 : 1;
+  }
+  await install(options);
   return 0;
 }
 
@@ -1242,6 +1397,7 @@ module.exports = {
   launchAgentPlistSource,
   normalizeAgentVersion,
   orchestratorDirOf,
+  printVerifyReport,
   orchestratorRouteBlock,
   parseArgs,
   perfHelperSource,
@@ -1253,5 +1409,6 @@ module.exports = {
   normalizeHttpUrl,
   normalizeWsUrl,
   uninstall,
+  verifyUiStack,
   windowsTaskRun,
 };
