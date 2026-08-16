@@ -29,10 +29,8 @@ class SecureSessionStore {
                 throw KeychainError.unexpected("Stored session is malformed")
             }
             let key = try loadOrCreateKey()
-            guard let nonce = AES.GCM.Nonce(data: iv) else {
-                throw KeychainError.unexpected("Stored session nonce is malformed")
-            }
-            let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ct, tag: tag)
+            let nonce = try AES.GCM.Nonce(data: iv)
+            let sealed = AES.GCM.SealedBox(nonce: nonce, ciphertext: ct, tag: tag)
             let data = try AES.GCM.open(sealed, using: key)
             return try JSONDecoder().decode(PairingSession.self, from: data)
         } catch {
