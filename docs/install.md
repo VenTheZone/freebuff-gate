@@ -130,6 +130,11 @@ If the phone app is used:
   bundle patch at serve time, but the on-disk index.html shim, the on-disk
   bundle patch, and the orchestrator route must be re-applied for direct
   58060 clients).
+- The ad sniffer (optional debug tool) patches orchestrator.js the same
+  way: it wraps the Ads class `post`/`auction` methods and appends JSON
+  lines to ~/.config/freebuff-desktop/ad-sniff.log. Re-apply after app
+  updates; the proxy-side half lives in the repo (src/freebuff_tailnet_proxy.js)
+  and only needs a proxy restart.
 - The proxy reads src/mobile-ui.css and src/mobile-ui.js from the repo on
   every request, so UI changes only need a proxy restart (or nothing).
 - systemd user units keep proxy/relay/agent alive across reboots (loginctl

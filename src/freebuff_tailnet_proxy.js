@@ -13,6 +13,7 @@
  */
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
@@ -22,6 +23,18 @@ const up = new URL(UPSTREAM);
 const REPO = '/home/admin/FB-Browser-UI/src';
 const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
+
+// ---- ad request sniffer ----
+// Logs every /api/ad/* request and response that flows through the proxy
+// (browser -> orchestrator) so ad payloads can be cross-checked against the
+// orchestrator's outbound auction sniffer. Same log file as the orchestrator
+// side (kind prefix distinguishes the source).
+const AD_SNIFF_LOG = path.join(os.homedir(), '.config', 'freebuff-desktop', 'ad-sniff.log');
+function adSniff(kind, data) {
+  try {
+    fs.appendFileSync(AD_SNIFF_LOG, JSON.stringify({ ts: new Date().toISOString(), kind: kind, ...data }) + '\n');
+  } catch (e) { /* sniffer must never break the proxy */ }
+}
 
 // ---- window.freebuffDesktop shim (browser fallbacks for the Electron preload bridge) ----
 // The browser UI runs against the orchestrator on the SERVER, so "pick a
@@ -282,6 +295,12 @@ const server = http.createServer((req, res) => {
     try { headers.origin = up.origin; } catch (e) { /* keep as-is */ }
   }
   headers['accept-encoding'] = 'identity';
+  let pathname = req.url || '/';
+  try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch (e) { /* keep raw */ }
+  const sniffAd = pathname.startsWith('/api/ad/');
+  if (sniffAd) adSniff('proxy-request', { path: pathname, method: req.method });
+  const reqChunks = [];
+  if (sniffAd) req.on('data', (c) => reqChunks.push(c));
   const preq = http.request({
     host: up.hostname,
     port: up.port || 80,
@@ -290,6 +309,22 @@ const server = http.createServer((req, res) => {
     headers,
   }, (pres) => {
     const type = String(pres.headers['content-type'] || '');
+    if (sniffAd) {
+      const chunks = [];
+      pres.on('data', (c) => chunks.push(c));
+      pres.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        adSniff('proxy-response', {
+          path: pathname,
+          status: pres.statusCode || 200,
+          body: (() => { try { return JSON.parse(body); } catch (e) { return body.slice(0, 2000); } })(),
+        });
+        res.writeHead(pres.statusCode || 200, pres.headers);
+        res.end(body);
+      });
+      pres.on('error', () => res.destroy());
+      return;
+    }
     if (type.includes('text/html')) {
       const chunks = [];
       pres.on('data', (c) => chunks.push(c));
@@ -333,7 +368,11 @@ const server = http.createServer((req, res) => {
     pres.on('error', () => res.destroy());
   });
   preq.on('error', () => res.destroy());
-  req.pipe(preq);
+  if (sniffAd) {
+    req.on('end', () => preq.end(Buffer.concat(reqChunks)));
+  } else {
+    req.pipe(preq);
+  }
 });
 
 server.on('upgrade', (req, socket, head) => {
