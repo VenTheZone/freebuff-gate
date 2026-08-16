@@ -1,4 +1,4 @@
-# FB-Browser-UI
+# Freebuff Gate
 
 Dotfile configuration for a browser port of the **Freebuff Desktop** UI,
 including the **folder-selection tweak**.
@@ -165,7 +165,7 @@ After publishing a tagged release, a non-technical Desktop user can install the
 verified companion with one command:
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/FB-Browser-UI/releases/download/v0.1.0/install-mobile-connect.sh \\
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.1.0/install-mobile-connect.sh \\
   | bash -s -- \\
       --relay-http-url https://relay.example.com \\
       --enrollment-token '<relay-bootstrap-token>'

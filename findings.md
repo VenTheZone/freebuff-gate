@@ -181,7 +181,7 @@
 - Android CI run `31885173796` built APKs and relay tests successfully but emulator action failed before tests because folded backslash continuations became literal Gradle task `\\`. APK verification/upload steps were skipped by default.
 - Workflow fix folds the emulator command into one shell line and marks APK verification/upload `if: always()`, so a later emulator regression cannot hide installable debug artifact.
 - Local generic debug build passed lint, Android test APK compilation, APK v2 signature verification, and produced `android/app/build/outputs/apk/debug/app-debug.apk`. It remains a debug-signed test build and needs a reachable HTTPS relay; no production relay or release signing credential exists in this checkout.
-- Published pre-release `mobile-v0.1.0-test` at `https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.0-test` with the generic APK; downloaded release asset checksum matches local `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
+- Published pre-release `mobile-v0.1.0-test` at `https://github.com/VenTheZone/freebuff-gate/releases/tag/mobile-v0.1.0-test` with the generic APK; downloaded release asset checksum matches local `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
 - GitHub run `31885659309` passed relay integration, lint/assembly, and APK signature verification. Five of six instrumentation tests passed; `MobilePairingE2EInstrumentedTest` still fails only at the 45-second WebView-ready assertion, so public pairing is not yet validated end to end.
 
 ## Android dark theme polish

@@ -7,7 +7,7 @@ const path = require('node:path');
 const { URL } = require('node:url');
 
 const PRODUCT_NAME = 'freebuff-mobile-connect';
-const DEFAULT_REPOSITORY = 'VenTheZone/FB-Browser-UI';
+const DEFAULT_REPOSITORY = 'VenTheZone/freebuff-gate';
 const RELEASE_VERSION_PATTERN = /^v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)*$/;
 const RELEASE_FILES = Object.freeze([
   'install-mobile-connect.js',

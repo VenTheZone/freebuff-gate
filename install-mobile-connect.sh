@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Release packaging replaces these defaults with the published version.
 DEFAULT_VERSION='v0.1.0'
-DEFAULT_RELEASE_BASE_URL='https://github.com/VenTheZone/FB-Browser-UI/releases/download/v0.1.0'
+DEFAULT_RELEASE_BASE_URL='https://github.com/VenTheZone/freebuff-gate/releases/download/v0.1.0'
 
 VERSION="${FB_MOBILE_CONNECT_VERSION:-$DEFAULT_VERSION}"
 RELEASE_BASE_URL="${FB_MOBILE_CONNECT_RELEASE_BASE_URL:-$DEFAULT_RELEASE_BASE_URL}"

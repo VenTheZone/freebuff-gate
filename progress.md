@@ -129,7 +129,7 @@
 - Local branch is `main` and tracks `origin/main`; Android workflow exists only as untracked local `.github/workflows/android.yml`.
 - All mobile-connect and Android implementation files remain uncommitted in this checkout.
 - `gh workflow list --all` returned no workflows.
-- Dispatch attempt failed as expected: `HTTP 404: Not Found (https://api.github.com/repos/VenTheZone/FB-Browser-UI/actions/workflows/android.yml)`.
+- Dispatch attempt failed as expected: `HTTP 404: Not Found (https://api.github.com/repos/VenTheZone/freebuff-gate/actions/workflows/android.yml)`.
 - Emulator/APK validation cannot start until workflow and source are published to GitHub; no commit or push performed without explicit request.
 
 ## Next
@@ -172,7 +172,7 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 
 ## 2026-08-15 — Versioned installer artifact planning
 
-- Confirmed repository remote is `https://github.com/VenTheZone/FB-Browser-UI.git`, current branch is `main`, and all mobile-connect work remains local/uncommitted.
+- Confirmed repository remote is `https://github.com/VenTheZone/freebuff-gate.git`, current branch is `main`, and all mobile-connect work remains local/uncommitted.
 - Existing installer copies local source files and already requires Node 22 through the agent's built-in WebSocket client; it has no release packaging or remote download path.
 - Chosen release shape: version-pinned Unix bootstrap plus four versioned JavaScript assets, JSON manifest, SHA-256 sidecar, and optional tarball. Bootstrap will validate Node 22 before downloading and verifying files, then invoke existing installer.
 - Bootstrap will default to GitHub release assets but allow explicit mirror/version overrides; no credentials or runtime state enter release assets.
@@ -487,7 +487,7 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Dispatched Android workflow run `31885659309` against `b461b24`.
 - Relay integration passed. Android lint/assembly and debug APK signature verification passed. The emulator ran all six tests; five passed, while `MobilePairingE2EInstrumentedTest` failed its `Freebuff E2E Ready` WebView assertion after 45 seconds.
 - Downloaded and verified CI APK artifact separately: Android debug v2 signature valid. CI artifact is pinned to emulator relay origin and was not published for phone use.
-- Published generic local debug APK as pre-release `mobile-v0.1.0-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.0-test
+- Published generic local debug APK as pre-release `mobile-v0.1.0-test`: https://github.com/VenTheZone/freebuff-gate/releases/tag/mobile-v0.1.0-test
 - Verified public asset download checksum: `d1e431e31f127663214b7cfbaf76e20dcb16ceadc0b109c99217ed40dbe11641`.
 - Release is installable for controlled testing, but no public managed relay is configured; real phone pairing still needs a reachable HTTPS relay and follow-up E2E fix.
 
@@ -502,8 +502,8 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 
 - Built commit `5e86d91` with local Gradle 8.9: `lintDebug` and `assembleDebug` passed.
 - Verified debug APK v2 signature; SHA-256: `abe168e66fbd36f552ae34c3b5ad419098a179950501ea454e84125495e78dfc`.
-- Published pre-release `mobile-v0.1.1-dark-theme-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.1-dark-theme-test
-- Public APK download: https://github.com/VenTheZone/FB-Browser-UI/releases/download/mobile-v0.1.1-dark-theme-test/app-debug.apk
+- Published pre-release `mobile-v0.1.1-dark-theme-test`: https://github.com/VenTheZone/freebuff-gate/releases/tag/mobile-v0.1.1-dark-theme-test
+- Public APK download: https://github.com/VenTheZone/freebuff-gate/releases/download/mobile-v0.1.1-dark-theme-test/app-debug.apk
 - Added public checksum sidecar `freebuff-mobile-v0.1.1-dark-theme-test-debug.apk.sha256`; direct download hash matches local APK.
 - Release is clearly labeled as debug/test; it still needs a reachable HTTPS relay and running Desktop connector for pairing.
 
@@ -515,12 +515,12 @@ Publish current changes before dispatching workflow; then inspect emulator instr
 - Renamed Android display label to `Freebuff Gate`, bumped versionCode to `2` and versionName to `0.1.2`; package ID remains `com.freebuff.mobile`.
 - Local validation passed: Gradle `lintDebug`, debug APK, instrumentation APK, 21/21 Node relay tests, and APK compilation.
 - Public staging relay deployment remains blocked because checkout contains no host, domain, or deployment credentials.
-- Published `mobile-v0.1.2-freebuff-gate-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.2-freebuff-gate-test; public APK hash `13f5b6516ebc3dffeda3993606d7c0c2b8551655084fdadbdc809c8907262f37` matches checksum sidecar.
+- Published `mobile-v0.1.2-freebuff-gate-test`: https://github.com/VenTheZone/freebuff-gate/releases/tag/mobile-v0.1.2-freebuff-gate-test; public APK hash `13f5b6516ebc3dffeda3993606d7c0c2b8551655084fdadbdc809c8907262f37` matches checksum sidecar.
 - Android CI run `31889798169` diagnostics showed `Pairing failed (404): Pairing request is missing or expired`; the fixture's 60-second token expired during hosted emulator startup.
 - Increased CI-only fixture pairing TTL to 600 seconds; production/default pairing TTL remains unchanged. Node syntax and 21/21 relay tests pass. A final CI rerun is pending.
 - CI run `31890651787` then showed `Gateway response missing deviceExpiresAt`; refresh responses omit both immutable device token and expiry metadata.
 - Updated Android refresh parsing to preserve stored `deviceToken` and `deviceExpiresAt`; regression fixture now omits both fields. Gradle lint/debug/instrumentation APK compilation passes.
 - Final Android CI run `31891233534` passed relay integration and all 7 emulator tests, including real claim, refresh, cookie exchange, and relay WebView load.
-- Bumped versionCode to `3`/versionName `0.1.3` and published `mobile-v0.1.3-freebuff-gate-test`: https://github.com/VenTheZone/FB-Browser-UI/releases/tag/mobile-v0.1.3-freebuff-gate-test.
+- Bumped versionCode to `3`/versionName `0.1.3` and published `mobile-v0.1.3-freebuff-gate-test`: https://github.com/VenTheZone/freebuff-gate/releases/tag/mobile-v0.1.3-freebuff-gate-test.
 - Public APK hash `25e130f9d12b0ee200f3c36556f23405bb781cb0642e1f1dd60a019a0c2501f0` matches checksum sidecar.
 - Staging relay deployment remains blocked: relay URLs, enrollment token, deployment files, and GitHub environment secrets are absent.
