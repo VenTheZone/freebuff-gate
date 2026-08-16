@@ -3837,8 +3837,40 @@
   // transcript; "Show more" expands the bubble back to full height. Runs
   // at every viewport (bound once at init; enterMobile re-call is a no-op).
   // Only applied to overflow bubbles (measured once, then skipped forever).
+  // Expansions persist per message (threadId:msgId) in localStorage, so a
+  // message the user opened stays open across reloads and thread switches.
   var msgCompactBound = false;
   var msgCompactProcessed = null;
+  var msgExpandedSet = null;
+  var MSG_EXPANDED_KEY = 'fb.msg.expanded';
+  function msgKeyOf(bubble) {
+    var row = bubble.closest && bubble.closest('.msg');
+    var mid = row && row.getAttribute('data-msg-id');
+    if (!mid) return null;
+    var ws = document.getElementById('thread-workspace');
+    var tid = '';
+    if (ws) {
+      var lab = ws.getAttribute('aria-labelledby') || '';
+      tid = lab.replace(/^thread-tab-/, '');
+    }
+    return tid + ':' + mid;
+  }
+  function loadExpandedMessages() {
+    try {
+      var raw = localStorage.getItem(MSG_EXPANDED_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? new Set(arr) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  }
+  function saveExpandedMessages() {
+    try {
+      // Keep the newest 300 so the store cannot grow without bound.
+      var arr = Array.from(msgExpandedSet).slice(-300);
+      localStorage.setItem(MSG_EXPANDED_KEY, JSON.stringify(arr));
+    } catch (e) {}
+  }
   function compactUserMessages() {
     if (!msgCompactProcessed) return;
     var bubbles = document.querySelectorAll('.msg.user .bubble');
@@ -3846,16 +3878,17 @@
       var b = bubbles[i];
       if (msgCompactProcessed.has(b)) continue;
       msgCompactProcessed.add(b);
-      if (b.scrollHeight > 240) {
-        b.classList.add('fb-msg-collapsed');
-        if (!b.querySelector('.fb-msg-expand')) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'fb-msg-expand';
-          btn.setAttribute('aria-label', 'Show more');
-          btn.textContent = 'Show more';
-          b.appendChild(btn);
-        }
+      if (b.scrollHeight <= 240) continue;
+      var key = msgKeyOf(b);
+      if (key && msgExpandedSet && msgExpandedSet.has(key)) continue;
+      b.classList.add('fb-msg-collapsed');
+      if (!b.querySelector('.fb-msg-expand')) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'fb-msg-expand';
+        btn.setAttribute('aria-label', 'Show more');
+        btn.textContent = 'Show more';
+        b.appendChild(btn);
       }
     }
   }
@@ -3864,6 +3897,7 @@
     msgCompactBound = true;
     if (typeof WeakSet !== 'function') return;
     msgCompactProcessed = new WeakSet();
+    msgExpandedSet = loadExpandedMessages();
     document.addEventListener('click', function (ev) {
       var btn = ev.target && ev.target.closest && ev.target.closest('.fb-msg-expand');
       if (!btn) return;
@@ -3871,6 +3905,14 @@
       if (!bubble) return;
       bubble.classList.remove('fb-msg-collapsed');
       bubble.classList.add('fb-msg-expanded');
+      // The button has done its job; drop it so "Show more" does not linger
+      // as a dead control next to an already-expanded message.
+      if (btn.parentNode === bubble) btn.parentNode.removeChild(btn);
+      var key = msgKeyOf(bubble);
+      if (key && msgExpandedSet) {
+        msgExpandedSet.add(key);
+        saveExpandedMessages();
+      }
     });
     waitForEl('.messages', function () {
       compactUserMessages();
