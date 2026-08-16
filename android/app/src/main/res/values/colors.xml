@@ -1,6 +1,6 @@
 <resources>
     <color name="freebuff_blue">#315EFB</color>
-    <color name="ic_launcher_background">#315EFB</color>
+    <color name="ic_launcher_background">#2FBF71</color>
     <color name="freebuff_brand">#2FBF71</color>
     <color name="freebuff_brand_pressed">#27A862</color>
     <color name="freebuff_brand_ink">#06130A</color>
