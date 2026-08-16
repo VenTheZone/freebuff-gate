@@ -45,8 +45,12 @@ ephemeral HTTPS certificate, starts the local relay/desktop/upstream fixture,
 configures both Gradle relay origins, boots an API 35 Google APIs x86_64 emulator,
 and runs `connectedDebugAndroidTest`. The E2E test trusts only generated debug
 certificate resource, so production trust settings remain strict. CI builds the
-AGP-generated signed debug APK, verifies its signature with `apksigner`, and
-uploads APK/test reports for 14 days. Android Studio can import
+debug APK for the emulator run, verifies its signature with `apksigner`, and
+uploads APK/test reports for 14 days. Before the debug APK is published to the
+`mobile-debug-latest` release, a separate main-only job smoke-tests the generic
+(unpinned) build on an API 35 emulator: it injects the CI relay cert into the
+emulator's system CA store and runs the pairing + gateway-UI-load
+instrumentation against the exact artifact that ships. Android Studio can import
 this project locally; do not commit local SDK paths. The same workflow also
 runs Node 22 relay/agent integration tests and uploads TAP output.
 

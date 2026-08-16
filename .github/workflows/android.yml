@@ -303,7 +303,7 @@ jobs:
   release-apk:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 40
 
     steps:
       - name: Check out source
@@ -319,24 +319,134 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # The emulator needs ~7.4GB free for its userdata partition; drop the
+      # preinstalled NDK/CMake this no-native job never uses.
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake
+
       - name: Install Android SDK packages
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "system-images;android-35;google_apis;x86_64"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      # Built without -PfreebuffPairingOrigin/-PfreebuffWebOrigin so the APK
-      # is generic: it pairs against whatever HTTPS origin the QR carries
-      # instead of the ephemeral CI relay pinned into the E2E build above.
-      - name: Build unpinned webview debug APK
-        working-directory: android
+      - name: Generate ephemeral HTTPS relay certificate
+        shell: bash
         run: |
-          gradle --no-daemon --stacktrace :app:assembleWebviewDebug
+          set -euo pipefail
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          mkdir -p "$e2e_dir" android/app/src/androidTest/assets
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+            -keyout "$e2e_dir/relay.key" \
+            -out "$e2e_dir/relay.crt" \
+            -subj "/CN=freebuff-ci-relay" \
+            -addext "subjectAltName=IP:10.0.2.2,IP:127.0.0.1,DNS:localhost"
+          chmod 600 "$e2e_dir/relay.key"
+          echo "FB_MOBILE_E2E_RELAY_ORIGIN=https://10.0.2.2:18495" >> "$GITHUB_ENV"
+
+      - name: Start ephemeral relay and desktop fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          export FB_MOBILE_E2E_CERTIFICATE="$e2e_dir/relay.crt"
+          export FB_MOBILE_E2E_KEY="$e2e_dir/relay.key"
+          export FB_MOBILE_E2E_PAIRING_FILE="$e2e_dir/pairing.json"
+          export NODE_EXTRA_CA_CERTS="$e2e_dir/relay.crt"
+          nohup node src/mobile-connect-e2e-fixture.js > "$e2e_dir/fixture.log" 2>&1 &
+          echo $! > "$e2e_dir/fixture.pid"
+          for attempt in $(seq 1 100); do
+            if test -s "$e2e_dir/pairing.json"; then
+              cp "$e2e_dir/pairing.json" android/app/src/androidTest/assets/e2e-pairing.json
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null; then
+              cat "$e2e_dir/fixture.log"
+              exit 1
+            fi
+            sleep 0.2
+          done
+          cat "$e2e_dir/fixture.log"
+          echo "Timed out waiting for E2E fixture"
+          exit 1
+
+      - name: Enable KVM for emulator
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Built WITHOUT -PfreebuffPairingOrigin/-PfreebuffWebOrigin and without
+      # any debug network-security-config, so the artifact is exactly what gets
+      # published: generic, pairing against whatever HTTPS origin the QR
+      # carries. The CI relay cert is injected into the emulator's SYSTEM CA
+      # store (writable-system) instead, so the generic APK is smoke-tested as
+      # shipped and stays free of CI-only trust anchors.
+      - name: Smoke-test the generic debug APK on API 35 emulator before publishing
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          force-avd-creation: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -writable-system
+          disable-animations: true
+          working-directory: android
+          script: |
+            set -euo pipefail
+            cert="$RUNNER_TEMP/freebuff-e2e/relay.crt"
+            adb root >/dev/null
+            adb wait-for-device
+            adb remount >/dev/null || {
+              adb shell avbctl disable-verification >/dev/null 2>&1 || true
+              adb reboot
+              adb wait-for-device
+              adb root >/dev/null
+              adb wait-for-device
+              adb remount >/dev/null
+            }
+            hash="$(openssl x509 -inform PEM -subject_hash_old -in "$cert" | head -n1)"
+            adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null
+            adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0"
+            adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" \
+              || { echo "System CA injection failed"; exit 1; }
+            gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
+
+      - name: Stop ephemeral relay fixture and remove generated test inputs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
+          if test -s "$e2e_dir/fixture.pid"; then
+            kill "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null || true
+          fi
+          rm -f android/app/src/androidTest/assets/e2e-pairing.json
+
+      - name: Upload release smoke test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-release-smoke-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/**
+            android/app/build/reports/androidTests/connected/**
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Verify debug APK signature
         shell: bash
@@ -359,7 +469,7 @@ jobs:
           tag="mobile-debug-latest"
           cp "$apk" "$asset"
           sha256sum "$asset" > "$asset.sha256"
-          notes="Debug APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
+          notes="Debug APK rebuilt from ${GITHUB_SHA} and smoke-tested on the API 35 emulator (pairing + gateway UI load) before upload. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$asset" "$asset.sha256" --clobber
           else
