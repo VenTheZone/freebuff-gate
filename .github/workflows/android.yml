@@ -342,46 +342,6 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Generate ephemeral HTTPS relay certificate
-        shell: bash
-        run: |
-          set -euo pipefail
-          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
-          mkdir -p "$e2e_dir" android/app/src/androidTest/assets
-          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
-            -keyout "$e2e_dir/relay.key" \
-            -out "$e2e_dir/relay.crt" \
-            -subj "/CN=freebuff-ci-relay" \
-            -addext "subjectAltName=IP:10.0.2.2,IP:127.0.0.1,DNS:localhost"
-          chmod 600 "$e2e_dir/relay.key"
-          echo "FB_MOBILE_E2E_RELAY_ORIGIN=https://10.0.2.2:18495" >> "$GITHUB_ENV"
-
-      - name: Start ephemeral relay and desktop fixture
-        shell: bash
-        run: |
-          set -euo pipefail
-          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
-          export FB_MOBILE_E2E_CERTIFICATE="$e2e_dir/relay.crt"
-          export FB_MOBILE_E2E_KEY="$e2e_dir/relay.key"
-          export FB_MOBILE_E2E_PAIRING_FILE="$e2e_dir/pairing.json"
-          export NODE_EXTRA_CA_CERTS="$e2e_dir/relay.crt"
-          nohup node src/mobile-connect-e2e-fixture.js > "$e2e_dir/fixture.log" 2>&1 &
-          echo $! > "$e2e_dir/fixture.pid"
-          for attempt in $(seq 1 100); do
-            if test -s "$e2e_dir/pairing.json"; then
-              cp "$e2e_dir/pairing.json" android/app/src/androidTest/assets/e2e-pairing.json
-              exit 0
-            fi
-            if ! kill -0 "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null; then
-              cat "$e2e_dir/fixture.log"
-              exit 1
-            fi
-            sleep 0.2
-          done
-          cat "$e2e_dir/fixture.log"
-          echo "Timed out waiting for E2E fixture"
-          exit 1
-
       - name: Enable KVM for emulator
         shell: bash
         run: |
@@ -389,12 +349,14 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Built WITHOUT -PfreebuffPairingOrigin/-PfreebuffWebOrigin and without
-      # any debug network-security-config, so the artifact is exactly what gets
-      # published: generic, pairing against whatever HTTPS origin the QR
-      # carries. The CI relay cert is injected into the emulator's SYSTEM CA
-      # store (writable-system) instead, so the generic APK is smoke-tested as
-      # shipped and stays free of CI-only trust anchors.
+      # Smoke-test the exact artifact that gets uploaded: the unpinned debug
+      # APK installs, boots, renders the pairing screen, and passes the
+      # offline security tests (origin guard, pairing payload rules,
+      # keystore-backed identity). The full TLS pairing + gateway UI E2E runs
+      # in the debug-apk job against the pinned build, which differs from the
+      # generic one only in baked-in origin constants. The generic build
+      # cannot be TLS-tested on the API 35 emulator: its trust store lives in
+      # the immutable conscrypt APEX, which rejects runtime CA injection.
       - name: Smoke-test the generic debug APK on API 35 emulator before publishing
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -403,69 +365,13 @@ jobs:
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -writable-system
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           working-directory: android
-          # The emulator-runner action runs each line of the script through its
-          # own /usr/bin/sh -c, so the whole flow must be a single folded line
-          # chained with && and ; (no multiline blocks, no bashisms).
-          # The emulator-runner action executes each line of the script through
-          # its own /usr/bin/sh -c (dash), so the flow is one folded line: no
-          # multiline blocks, no bashisms.
-          # Path to a writable /system on API 35 (verity enforcing at boot):
-          # root, disable verification via avbctl, reboot, wait for boot,
-          # root again, then remount and poll until a touch probe on
-          # /system/etc/security/cacerts succeeds. adb root restarts adbd
-          # (device briefly vanishes) so each phase re-checks adbd is ready.
-          # After injection: restorecon the SELinux label and reboot, because
-          # Chromium/WebView caches the platform CA list per browser process
-          # and the first-boot process predates the injection. Confirm the
-          # cert survived in the overlay before running the E2E.
           script: >-
-            set -u &&
-            cert="$RUNNER_TEMP/freebuff-e2e/relay.crt" &&
-            i=0 && while [ $i -lt 10 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
-            adb wait-for-device &&
-            i=0 && while [ $i -lt 10 ]; do adb shell echo adbd-ready >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
-            ( adb shell avbctl disable-verification 2>&1 || adb disable-verity 2>&1 || true ) &&
-            adb reboot &&
-            i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
-            [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
-            i=0 && while [ $i -lt 10 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
-            adb wait-for-device &&
-            i=0 && while [ $i -lt 10 ]; do adb shell echo adbd-ready >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
-            ( adb shell mount -o rw,remount /system >/dev/null 2>&1 || adb remount >/dev/null 2>&1 || { echo "system remount failed"; exit 1; } ) &&
-            i=0 && while [ $i -lt 30 ]; do adb shell touch /system/etc/security/cacerts/.probe >/dev/null 2>&1 && { adb shell rm /system/etc/security/cacerts/.probe >/dev/null 2>&1 || true; break; }; i=$((i+1)); sleep 3; done &&
-            adb shell touch /system/etc/security/cacerts/.probe >/dev/null &&
-            adb shell rm /system/etc/security/cacerts/.probe >/dev/null &&
-            hash="$(openssl x509 -inform PEM -subject_hash_old -in "$cert" | head -n1)" &&
-            adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null &&
-            adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0" &&
-            ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "System CA injection failed"; exit 1; } ) &&
-            echo "cacerts link: $(adb shell readlink /system/etc/security/cacerts 2>&1 || echo not-a-symlink)" &&
-            echo "apex dir: $(adb shell ls -ld /apex/com.android.conscrypt/cacerts 2>&1 || echo absent)" &&
-            echo "selinux: $(adb shell getenforce 2>&1 || true) label: $(adb shell ls -laZ /system/etc/security/cacerts/ 2>&1 | grep "${hash}" || true)" &&
-            echo "local sha1: $(sha1sum "$cert" | cut -d' ' -f1) device sha1: $(adb shell sha1sum /system/etc/security/cacerts/${hash}.0 2>&1 || true)" &&
-            ( adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
-            ( adb shell mount -o rw,remount /apex/com.android.conscrypt >/dev/null 2>&1 && echo "apex remount: ok" || echo "apex remount: failed" ) &&
-            ( adb push "$cert" "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && adb shell chmod 644 "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && echo "apex push: ok" || echo "apex push: failed" ) &&
-            echo "apex files: $(adb shell ls /apex/com.android.conscrypt/cacerts/ 2>/dev/null | wc -l) sha1: $(adb shell sha1sum /apex/com.android.conscrypt/cacerts/${hash}.0 2>&1 || echo missing)" &&
-            adb reboot &&
-            i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
-            [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
-            ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "cert lost after reboot"; exit 1; } ) &&
-            gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
-
-      - name: Stop ephemeral relay fixture and remove generated test inputs
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          e2e_dir="$RUNNER_TEMP/freebuff-e2e"
-          if test -s "$e2e_dir/fixture.pid"; then
-            kill "$(cat "$e2e_dir/fixture.pid")" 2>/dev/null || true
-          fi
-          rm -f android/app/src/androidTest/assets/e2e-pairing.json
+            gradle --no-daemon --stacktrace
+            :app:connectedWebviewDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.freebuff.mobile.ReleaseArtifactSmokeInstrumentedTest,com.freebuff.mobile.PairingSecurityInstrumentedTest,com.freebuff.mobile.RestrictedWebViewInstrumentedTest
 
       - name: Upload release smoke test reports
         if: always()
@@ -499,7 +405,7 @@ jobs:
           tag="mobile-debug-latest"
           cp "$apk" "$asset"
           sha256sum "$asset" > "$asset.sha256"
-          notes="Debug APK rebuilt from ${GITHUB_SHA} and smoke-tested on the API 35 emulator (pairing + gateway UI load) before upload. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
+          notes="Debug APK rebuilt from ${GITHUB_SHA} and smoke-tested on the API 35 emulator (boot + pairing UI + offline security tests) before upload. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$asset" "$asset.sha256" --clobber
           else

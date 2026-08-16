@@ -48,9 +48,15 @@ certificate resource, so production trust settings remain strict. CI builds the
 debug APK for the emulator run, verifies its signature with `apksigner`, and
 uploads APK/test reports for 14 days. Before the debug APK is published to the
 `mobile-debug-latest` release, a separate main-only job smoke-tests the generic
-(unpinned) build on an API 35 emulator: it injects the CI relay cert into the
-emulator's system CA store and runs the pairing + gateway-UI-load
-instrumentation against the exact artifact that ships. Android Studio can import
+(unpinned) build on an API 35 emulator: it installs the exact artifact that
+ships and runs `ReleaseArtifactSmokeInstrumentedTest` (activity boots, pairing
+screen renders, WebView engine attached) plus the offline security tests
+(origin guard, pairing payload rules, keystore identity). The full TLS pairing
++ gateway-UI-load E2E runs only against the pinned build in the `debug-apk`
+job: the generic build cannot be TLS-tested on the API 35 emulator because its
+trust store lives in the immutable conscrypt APEX, which rejects runtime CA
+injection (verified empirically: correct hash name, SELinux label, and sha1 in
+`/system/etc/security/cacerts` are ignored; the apex mount refuses remount). Android Studio can import
 this project locally; do not commit local SDK paths. The same workflow also
 runs Node 22 relay/agent integration tests and uploads TAP output.
 
