@@ -26,6 +26,9 @@ class GeckoGateEngine(context: Context) : GateBrowserEngine {
 
     init {
         geckoView = GeckoView(context)
+        // Dark surface behind the page, same as WebViewGateEngine, so startup
+        // doesn't flash white.
+        geckoView.setBackgroundColor(android.graphics.Color.parseColor("#0B0B0F"))
         session = GeckoSession()
         // Match WebView: no tracking protection, no ad/tracker blocking.
         session.settings.useTrackingProtection = false

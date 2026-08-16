@@ -27,6 +27,27 @@
   --fb-mobile-header-height: calc(48px + var(--fb-mobile-safe-top));
 }
 
+/* Freebuff brand green for mobile chrome. The app's own --accent is a
+   neutral gray in dark mode, so injected controls that use it read as dead
+   buttons; these tokens give interactive mobile chrome the freebuff green
+   (bright like freebuff.com in dark, deep green on light). */
+:root {
+  --fb-m-brand: #45d06e;
+  --fb-m-brand-ink: #06130a;
+  --fb-m-brand-soft: color-mix(in srgb, #45d06e 13%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #45d06e 24%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px
+    color-mix(in srgb, #45d06e 45%, transparent);
+}
+:root[data-theme='light'] {
+  --fb-m-brand: #138a3f;
+  --fb-m-brand-ink: #f2fbf4;
+  --fb-m-brand-soft: color-mix(in srgb, #138a3f 10%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #138a3f 22%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px
+    color-mix(in srgb, #138a3f 40%, transparent);
+}
+
 /* Long user messages collapse to a teaser with a fade; "Show more"
    (injected by mobile-ui.js) expands the bubble back to full height.
    Applied at every viewport — long prompts dominate the transcript on
@@ -42,12 +63,13 @@
   display: block;
   margin-top: 6px;
   padding: 4px 10px;
-  border: 1px solid var(--border, #444);
+  border: 1px solid var(--fb-m-brand-ring, #444);
   border-radius: 8px;
-  background: var(--surface-2, #1a1a1a);
-  color: var(--text, #eee);
+  background: var(--fb-m-brand-soft, #1a1a1a);
+  color: var(--fb-m-brand, #4ade80);
   font: inherit;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 .msg.user .bubble.fb-msg-expanded {
@@ -264,15 +286,16 @@
   .tabbar .tab.active .tab-popout {
     display: none;
   }
-  /* Tappable title hint: the title opens the thread menu (mobile-ui.js). */
+  /* Tappable title hint: the title opens the thread menu (mobile-ui.js).
+     The caret is brand green so it reads as an interactive affordance. */
   .tabbar .tab.active .tab-select::after {
     content: "";
     flex: none;
     width: 7px;
     height: 7px;
     margin-left: 8px;
-    border-right: 1.5px solid var(--muted);
-    border-bottom: 1.5px solid var(--muted);
+    border-right: 1.5px solid var(--fb-m-brand);
+    border-bottom: 1.5px solid var(--fb-m-brand);
     transform: rotate(45deg) translateY(-2px);
   }
   .tab-new {
@@ -503,9 +526,9 @@
     display: block;
     margin: 0 0 6px;
     padding: 10px 12px;
-    border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+    border: 1px solid var(--fb-m-brand-ring);
     border-radius: 10px;
-    background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+    background: var(--fb-m-brand-soft);
     color: var(--text);
     font-size: 12px;
     font-weight: 700;
@@ -712,7 +735,7 @@
 }
 .fb-tab-menu-check {
   margin-left: auto;
-  color: var(--accent);
+  color: var(--fb-m-brand);
   opacity: 0;
   font-weight: 700;
 }
@@ -769,9 +792,9 @@
 .fb-session-close-announcement {
   margin: 0 0 16px;
   padding: 9px 10px;
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid var(--fb-m-brand);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--fb-m-brand-soft);
   color: var(--text);
   font-size: 12.5px;
   font-weight: 600;
@@ -887,12 +910,12 @@
   height: 30px;
   margin: 0 2px;
   padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border: 1px solid var(--fb-m-brand-ring);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
-  color: var(--accent);
+  background: var(--fb-m-brand-soft);
+  color: var(--fb-m-brand);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1;
   white-space: nowrap;
   pointer-events: none;
@@ -905,8 +928,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--fb-m-brand);
+  box-shadow: 0 0 0 3px var(--fb-m-brand-ring);
   animation: fb-streaming-pulse 1.25s ease-in-out infinite;
 }
 .fb-streaming-indicator-label {
@@ -983,6 +1006,7 @@
 }
 .fb-ctx-fab.open .fb-ctx-chev {
   transform: rotate(180deg);
+  color: var(--fb-m-brand);
 }
 @keyframes fb-ctx-in {
   from {
@@ -1033,8 +1057,10 @@
   color: var(--faint);
 }
 .fb-ctx-action.send.ready {
-  background: var(--raised);
-  color: var(--text);
+  background: var(--fb-m-brand);
+  border-color: transparent;
+  color: var(--fb-m-brand-ink);
+  box-shadow: var(--fb-m-brand-glow);
 }
 /* Floating composer settings (mobile-ui.js): model, reasoning effort, and
    current session time/quota stay visible above the message box even though
@@ -1235,7 +1261,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--brand);
+  background: var(--fb-m-brand);
   box-shadow: 0 0 0 2px var(--chrome);
   animation: fb-dot-pulse 2.4s ease-in-out infinite;
 }
@@ -1363,7 +1389,7 @@
   touch-action: manipulation;
 }
 .fb-session-menu-item.active {
-  color: var(--accent);
+  color: var(--fb-m-brand);
 }
 .fb-session-menu-item.active .fb-session-menu-select {
   font-weight: 600;
@@ -1402,7 +1428,7 @@
   font-style: italic;
 }
 .fb-session-menu-item.active .fb-session-menu-model {
-  color: color-mix(in srgb, var(--accent) 72%, var(--faint));
+  color: color-mix(in srgb, var(--fb-m-brand) 72%, var(--faint));
 }
 .fb-session-menu-status {
   display: inline-flex;
@@ -1434,7 +1460,7 @@
 }
 .fb-session-menu-check {
   flex: none;
-  color: var(--accent);
+  color: var(--fb-m-brand);
   font-weight: 700;
 }
 /* Per-session close button: closes the session via the app's .tab-close. */
@@ -1787,21 +1813,27 @@ body {
    the flat surfaces stay flat. All colors mix from the app's own theme
    variables, so dark and light themes both stay coherent. */
 @media (max-width: 1000px) {
-  /* Slim header: translucent glass with a neutral bottom edge and a soft
-     drop shadow — no colored glow line. */
+  /* Slim header: translucent glass with a soft freebuff-green hairline
+     bottom edge and a drop shadow — the green line is the brand accent, not
+     a glow bar. */
   .tabbar {
     background: color-mix(in srgb, var(--chrome) 84%, transparent);
     -webkit-backdrop-filter: blur(18px) saturate(1.25);
     backdrop-filter: blur(18px) saturate(1.25);
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--fb-m-brand) 26%, transparent);
     box-shadow: 0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
   }
 
-  /* User bubbles: flat surface, no glow, no tinted edge — just the rounder
-     chat-app corner treatment. */
+  /* User bubbles: soft freebuff-green glass — the brand tint makes your own
+     messages read as "you" at a glance, like a native chat app. */
   .msg.user .bubble {
-    background: var(--raised);
-    border: 0;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--fb-m-brand) 16%, var(--raised)),
+      color-mix(in srgb, var(--fb-m-brand) 6%, var(--raised))
+    );
+    border: 1px solid var(--fb-m-brand-ring);
     border-radius: 18px 18px 6px 18px;
     box-shadow: none;
   }
@@ -1825,11 +1857,12 @@ body {
   .composer textarea {
     background: color-mix(in srgb, var(--surface-2) 76%, transparent);
     border-color: color-mix(in srgb, var(--border) 80%, transparent);
+    caret-color: var(--fb-m-brand);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   .composer textarea:focus {
-    border-color: color-mix(in srgb, var(--brand) 38%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 9%, transparent);
+    border-color: color-mix(in srgb, var(--fb-m-brand) 55%, transparent);
+    box-shadow: 0 0 0 3px var(--fb-m-brand-ring);
   }
 
   /* Floating model/effort/time pills: gradient glass, brand chevrons, a
@@ -1885,8 +1918,8 @@ body {
     border-radius: 12px;
   }
   .home-thread-search:focus-within {
-    border-color: color-mix(in srgb, var(--brand) 35%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 9%, transparent);
+    border-color: color-mix(in srgb, var(--fb-m-brand) 55%, transparent);
+    box-shadow: 0 0 0 3px var(--fb-m-brand-ring);
   }
   .home-project {
     background: linear-gradient(
@@ -1930,7 +1963,10 @@ body {
     background: var(--raised);
   }
   .fb-history-entry svg {
-    color: var(--faint);
+    color: var(--fb-m-brand);
+  }
+  .fb-history-entry {
+    border-color: var(--fb-m-brand-ring);
   }
   .fb-history-sheet {
     position: fixed;
@@ -1989,7 +2025,7 @@ body {
     outline: none;
   }
   .fb-history-search:focus {
-    border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+    border-color: color-mix(in srgb, var(--fb-m-brand) 55%, transparent);
   }
   .fb-history-list {
     flex: 1;
@@ -2088,9 +2124,9 @@ body {
     flex: 1;
     min-width: 0;
     padding: 7px 9px;
-    border: 1px solid color-mix(in srgb, var(--brand) 45%, transparent);
+    border: 1px solid var(--fb-m-brand-ring);
     border-radius: 9px;
-    background: var(--surface-2);
+    background: var(--fb-m-brand-soft);
     color: var(--text);
     font: inherit;
     font-size: 13.5px;

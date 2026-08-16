@@ -4,7 +4,7 @@
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:colorBackground">
+    android:background="@color/window_background">
 
     <ScrollView
         android:id="@+id/setupPanel"
@@ -16,29 +16,49 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp">
+            android:padding="24dp"
+            android:gravity="center_horizontal">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_marginTop="24dp"
+                android:contentDescription="@string/app_name"
+                android:src="@mipmap/ic_launcher" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
                 android:text="@string/app_name"
                 android:textAppearance="@style/TextAppearance.Material3.HeadlineMedium"
-                android:textColor="?android:textColorPrimary" />
+                android:textColor="#E7E7E8"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/app_subtitle"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="@color/text_secondary"
+                android:gravity="center" />
 
             <TextView
                 android:id="@+id/connectionState"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="20dp"
+                android:gravity="center"
                 android:text="@string/connection_unknown"
                 android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="?android:textColorSecondary" />
+                android:textColor="@color/text_secondary" />
 
             <Button
                 android:id="@+id/scanQrButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
+                android:layout_marginTop="28dp"
                 android:text="@string/scan_qr" />
 
             <com.google.android.material.textfield.TextInputLayout
@@ -46,14 +66,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:hint="@string/pairing_url_hint">
+                android:hint="@string/pairing_url_hint"
+                app:boxStrokeColor="@color/freebuff_brand"
+                app:hintTextColor="@color/freebuff_brand">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/pairingUrlInput"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:inputType="textUri"
-                    android:maxLines="1" />
+                    android:maxLines="1"
+                    android:textColorHint="#6A6A70" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
@@ -61,21 +84,24 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:hint="@string/device_name_hint">
+                android:hint="@string/device_name_hint"
+                app:boxStrokeColor="@color/freebuff_brand"
+                app:hintTextColor="@color/freebuff_brand">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/deviceNameInput"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:inputType="textCapWords"
-                    android:maxLines="1" />
+                    android:maxLines="1"
+                    android:textColorHint="#E2E2E6" />
             </com.google.android.material.textfield.TextInputLayout>
 
             <Button
                 android:id="@+id/pairButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
+                android:layout_marginTop="24dp"
                 android:text="@string/pair_device" />
 
             <Button
@@ -85,6 +111,15 @@
                 android:layout_marginTop="8dp"
                 android:text="@string/disconnect"
                 android:visibility="gone" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:gravity="center"
+                android:text="@string/app_footer"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="#63636B" />
         </LinearLayout>
     </ScrollView>
 

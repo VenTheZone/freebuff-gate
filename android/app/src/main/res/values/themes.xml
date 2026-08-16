@@ -3,7 +3,19 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@color/window_background</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <!-- Match the gateway app's dark chrome so cold start and the pairing
+             screen don't flash white or light gray. -->
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="colorPrimary">@color/freebuff_brand</item>
+        <item name="colorPrimaryDark">@color/freebuff_brand_pressed</item>
+        <item name="colorOnPrimary">@color/freebuff_brand_ink</item>
+        <item name="colorAccent">@color/freebuff_brand</item>
+        <item name="colorSecondary">@color/freebuff_brand</item>
+        <item name="colorSurface">@color/window_background</item>
+        <item name="colorOnSurface">#E7E7E8</item>
+        <item name="colorOnSurfaceVariant">#9A9AA0</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

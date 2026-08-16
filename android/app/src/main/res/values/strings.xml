@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">Freebuff Gate</string>
+    <string name="app_subtitle">Your desktop gateway, on the phone</string>
+    <string name="app_footer">Pair once, then browse your workspace from anywhere.</string>
     <string name="pairing_url_hint">Paste pairing URL or scan QR</string>
     <string name="device_name_hint">Device name</string>
     <string name="scan_qr">Scan QR code</string>

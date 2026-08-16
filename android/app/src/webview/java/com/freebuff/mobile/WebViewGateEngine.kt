@@ -33,6 +33,9 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
             userAgentString = "$userAgentString FreebuffMobile/0.1"
         }
         webView.isVerticalScrollBarEnabled = false
+        // Dark surface behind the page so startup and slow loads don't flash
+        // white between the window background and the gateway's first paint.
+        webView.setBackgroundColor(android.graphics.Color.parseColor("#0B0B0F"))
         CookieManager.getInstance().setAcceptCookie(true)
         webView.setDownloadListener { _, _, _, _, _ -> onBlockedDownload() }
     }
