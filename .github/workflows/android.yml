@@ -315,11 +315,12 @@ jobs:
           asset="freebuff-gate-debug.apk"
           tag="mobile-debug-latest"
           cp "$apk" "$asset"
-          notes="Debug APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine."
+          sha256sum "$asset" > "$asset.sha256"
+          notes="Debug APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$asset" --clobber
+            gh release upload "$tag" "$asset" "$asset.sha256" --clobber
           else
-            gh release create "$tag" "$asset" \
+            gh release create "$tag" "$asset" "$asset.sha256" \
               --title "Freebuff Gate debug APK (latest)" \
               --notes "$notes" \
               --target "$GITHUB_SHA" \
