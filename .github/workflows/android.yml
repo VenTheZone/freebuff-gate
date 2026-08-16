@@ -412,22 +412,26 @@ jobs:
           # The emulator-runner action executes each line of the script through
           # its own /usr/bin/sh -c (dash), so the flow is one folded line: no
           # multiline blocks, no bashisms.
-          # adb root restarts adbd and can transiently fail with 'unable to
-          # connect for root: closed' - retry it. adb remount on modern
-          # platform-tools disables verity, reboots the device, and sets up
-          # overlayfs; it returns before /system is writable, so after it we
-          # wait for boot, re-root, and poll until a touch probe on
-          # /system/etc/security/cacerts actually succeeds.
+          # Path to a writable /system on API 35 (verity enforcing at boot):
+          # root, disable verification via avbctl, reboot, wait for boot,
+          # root again, then remount and poll until a touch probe on
+          # /system/etc/security/cacerts succeeds. adb root restarts adbd
+          # (device briefly vanishes) so each phase re-checks adbd is ready.
           script: >-
             set -u &&
             cert="$RUNNER_TEMP/freebuff-e2e/relay.crt" &&
-            i=0 && while [ $i -lt 6 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
+            i=0 && while [ $i -lt 10 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
             adb wait-for-device &&
-            ( adb remount >/dev/null 2>&1 || { echo "adb remount failed"; exit 1; } ) &&
-            i=0 && while [ $i -lt 40 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
-            i=0 && while [ $i -lt 6 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
+            i=0 && while [ $i -lt 10 ]; do adb shell echo adbd-ready >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
+            ( adb shell avbctl disable-verification 2>&1 || adb disable-verity 2>&1 || true ) &&
+            adb reboot &&
+            i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
+            [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
+            i=0 && while [ $i -lt 10 ]; do adb root >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
             adb wait-for-device &&
-            i=0 && while [ $i -lt 20 ]; do adb shell touch /system/etc/security/cacerts/.probe >/dev/null 2>&1 && { adb shell rm /system/etc/security/cacerts/.probe >/dev/null 2>&1 || true; break; }; i=$((i+1)); sleep 3; done &&
+            i=0 && while [ $i -lt 10 ]; do adb shell echo adbd-ready >/dev/null 2>&1 && break; i=$((i+1)); sleep 3; done &&
+            ( adb shell mount -o rw,remount /system >/dev/null 2>&1 || adb remount >/dev/null 2>&1 || { echo "system remount failed"; exit 1; } ) &&
+            i=0 && while [ $i -lt 30 ]; do adb shell touch /system/etc/security/cacerts/.probe >/dev/null 2>&1 && { adb shell rm /system/etc/security/cacerts/.probe >/dev/null 2>&1 || true; break; }; i=$((i+1)); sleep 3; done &&
             adb shell touch /system/etc/security/cacerts/.probe >/dev/null &&
             adb shell rm /system/etc/security/cacerts/.probe >/dev/null &&
             hash="$(openssl x509 -inform PEM -subject_hash_old -in "$cert" | head -n1)" &&
