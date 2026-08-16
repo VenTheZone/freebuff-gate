@@ -1104,10 +1104,8 @@
   .fb-time-pill,
   .fb-ctx-fab,
   .fb-panel-toggle,
-  .fb-session-switch,
   .fb-mobile-report,
   .fb-tab-menu,
-  .fb-session-menu,
   .fb-panel-scrim,
   .fb-model-sheet-close {
     display: none !important;
@@ -1693,6 +1691,7 @@
   .slash-menu,
   .stash-menu,
   .context-usage-popover,
+  .fb-session-menu,
   .quote-btn,
   .toast,
   .app-tooltip {
@@ -1712,6 +1711,14 @@
      row above it so the menus overlay the working bar and the transcript. */
   .composer-context {
     z-index: 10;
+  }
+
+  /* Session switcher dropdown (shared with mobile): anchor it below the 54px
+     desktop tab bar instead of the mobile header height, and widen it. */
+  .fb-session-menu {
+    top: 54px;
+    min-width: 260px;
+    max-width: 360px;
   }
 }
 

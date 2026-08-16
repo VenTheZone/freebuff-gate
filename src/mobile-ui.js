@@ -2071,7 +2071,6 @@
   function sessionSwitcher() {
     if (sessionBound) return;
     sessionBound = true;
-    if (!window.matchMedia(MOBILE).matches) return;
     waitForEl('.tabbar:not(.threadbar)', function () {
       var tabbar = document.querySelector('.tabbar:not(.threadbar)');
       if (!tabbar) return;
@@ -2463,8 +2462,7 @@
         sessionStatusPollTimer = window.setInterval(function () {
           if (
             !menu ||
-            !document.documentElement.contains(menu) ||
-            !window.matchMedia(MOBILE).matches
+            !document.documentElement.contains(menu)
           ) {
             stopSessionStatusPolling();
             return;
@@ -2822,11 +2820,6 @@
       // identity: streaming status updates make React replace the tab node,
       // and an element-identity check would close the menu on every token.
       new MutationObserver(function () {
-        if (!window.matchMedia(MOBILE).matches) {
-          btn.style.display = 'none';
-          close();
-          return;
-        }
         btn.style.display = sessionTabs().length > 0 ? '' : 'none';
         syncAttention();
         if (menu) renderSessionModelLegend();
@@ -2849,13 +2842,8 @@
       });
       var sessionMq = window.matchMedia(MOBILE);
       watchMedia(sessionMq, function (ev) {
-        if (!ev.matches) {
-          btn.style.display = 'none';
-          close();
-        } else {
-          btn.style.display = sessionTabs().length > 0 ? '' : 'none';
-          syncAttention();
-        }
+        btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+        syncAttention();
       });
     });
   }
@@ -3800,7 +3788,7 @@
       });
     document
       .querySelectorAll(
-        '.fb-streaming-indicator, .fb-ctx-fab, .fb-panel-toggle, .fb-session-switch, .fb-model-pill, .fb-effort-pill, .fb-time-pill, .fb-composer-pills, .fb-mobile-report',
+        '.fb-streaming-indicator, .fb-ctx-fab, .fb-panel-toggle, .fb-model-pill, .fb-effort-pill, .fb-time-pill, .fb-composer-pills, .fb-mobile-report',
       )
       .forEach(function (el) {
         el.style.display = 'none';
@@ -4395,6 +4383,7 @@
   homeCatalogProjectLines();
   homeThreadHistory();
   bindMessageCompact();
+  sessionSwitcher();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();
   watchMedia(mq, function (ev) {

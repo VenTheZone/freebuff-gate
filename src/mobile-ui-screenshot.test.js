@@ -1244,15 +1244,19 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     const desktop = await evaluate(
       cdp,
       `(() => ({
-        controlsHidden: Array.from(document.querySelectorAll(
-          '.fb-session-switch, .fb-ctx-fab, .fb-composer-pills',
+        mobileOnlyHidden: Array.from(document.querySelectorAll(
+          '.fb-ctx-fab, .fb-composer-pills',
         )).every((el) => getComputedStyle(el).display === 'none'),
+        sessionSwitchVisible: getComputedStyle(
+          document.querySelector('.fb-session-switch'),
+        ).display !== 'none',
         taskPosition: getComputedStyle(
           document.querySelector('.thread-bottom .todo-dock'),
         ).position,
       }))()`,
     );
-    assert.equal(desktop.controlsHidden, true);
+    assert.equal(desktop.mobileOnlyHidden, true);
+    assert.equal(desktop.sessionSwitchVisible, true);
     assert.notEqual(desktop.taskPosition, 'fixed');
   } finally {
     await closeChrome(browser);
