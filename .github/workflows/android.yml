@@ -320,44 +320,63 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      # No keystore or passwords in the repo: the release key arrives as a
+      # base64-encoded secret and is decoded to a temp file for this run.
+      - name: Decode release signing keystore
+        shell: bash
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SIGNING_KEYSTORE_B64:-}" ]; then
+            echo "::error::SIGNING_KEYSTORE_B64 secret is not set. Generate a keystore and add SIGNING_KEYSTORE_B64, SIGNING_KEYSTORE_PASSWORD, SIGNING_KEY_ALIAS, and SIGNING_KEY_PASSWORD (see android/README.md)."
+            exit 1
+          fi
+          printf '%s' "${SIGNING_KEYSTORE_B64}" | base64 -d > "${RUNNER_TEMP}/freebuff-release.keystore"
+          chmod 600 "${RUNNER_TEMP}/freebuff-release.keystore"
+
       # Built without -PfreebuffPairingOrigin/-PfreebuffWebOrigin so the APK
       # is generic: it pairs against whatever HTTPS origin the QR carries
       # instead of the ephemeral CI relay pinned into the E2E build above.
-      - name: Build unpinned webview debug APK
+      - name: Build signed webview release APK
         working-directory: android
+        env:
+          SIGNING_KEYSTORE_PATH: ${{ runner.temp }}/freebuff-release.keystore
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          gradle --no-daemon --stacktrace :app:assembleWebviewDebug
+          gradle --no-daemon --stacktrace :app:assembleWebviewRelease
 
-      - name: Verify debug APK signature
+      - name: Verify release APK signature
         shell: bash
         run: |
           set -euo pipefail
-          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
+          apk="android/app/build/outputs/apk/webview/release/app-webview-release.apk"
           apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "${apksigner}"
           test -s "${apk}"
           "${apksigner}" verify --verbose --print-certs "${apk}"
 
-      - name: Publish debug APK as release asset
+      - name: Publish signed release APK
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
-          asset="freebuff-gate-debug.apk"
-          tag="mobile-debug-latest"
+          apk="android/app/build/outputs/apk/webview/release/app-webview-release.apk"
+          asset="freebuff-gate-release.apk"
+          tag="mobile-release-latest"
           cp "$apk" "$asset"
           sha256sum "$asset" > "$asset.sha256"
-          notes="Debug APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
+          notes="Signed release APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-release.apk.sha256"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$asset" "$asset.sha256" --clobber
           else
             gh release create "$tag" "$asset" "$asset.sha256" \
-              --title "Freebuff Gate debug APK (latest)" \
+              --title "Freebuff Gate APK (latest)" \
               --notes "$notes" \
-              --target "$GITHUB_SHA" \
-              --prerelease
+              --target "$GITHUB_SHA"
           fi
 
   release-gecko-apk:

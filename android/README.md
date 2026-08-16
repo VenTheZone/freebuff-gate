@@ -25,6 +25,7 @@ Gradle installation and run:
 ```bash
 gradle :app:assembleWebviewDebug      # system WebView engine (default)
 gradle :app:assembleGeckoDebug        # GeckoView / Firefox engine (spike)
+gradle :app:assembleWebviewRelease    # signed release (needs SIGNING_* env)
 ```
 
 A clean checkout needs Gradle and Android SDK. This workspace uses ignored
@@ -45,8 +46,10 @@ ephemeral HTTPS certificate, starts the local relay/desktop/upstream fixture,
 configures both Gradle relay origins, boots an API 35 Google APIs x86_64 emulator,
 and runs `connectedDebugAndroidTest`. The E2E test trusts only generated debug
 certificate resource, so production trust settings remain strict. CI builds the
-AGP-generated signed debug APK, verifies its signature with `apksigner`, and
-uploads APK/test reports for 14 days. Android Studio can import
+debug APK for the emulator run, verifies its signature with `apksigner`, and
+uploads APK/test reports for 14 days; a separate main-only job builds and
+publishes the signed release APK plus its checksum to the `mobile-release-latest`
+GitHub release. Android Studio can import
 this project locally; do not commit local SDK paths. The same workflow also
 runs Node 22 relay/agent integration tests and uploads TAP output.
 
@@ -67,34 +70,75 @@ GitHub Actions boots API 35 emulator and runs:
 gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
 ```
 
-## Install the debug APK
+## Install the APK
 
-Every push to `main` rebuilds the unpinned WebView debug APK and publishes it
-as `freebuff-gate-debug.apk` on the `mobile-debug-latest` GitHub release, with
-a SHA-256 checksum file (`freebuff-gate-debug.apk.sha256`) next to it. The APK
-is generic: it pairs against the HTTPS origin carried by the QR, not the CI
-relay. The repo is private, so downloads need repo access.
+Every push to `main` builds the unpinned WebView APK, signs it with the
+project's release key, and publishes it as `freebuff-gate-release.apk` on the
+`mobile-release-latest` GitHub release, with a SHA-256 checksum file
+(`freebuff-gate-release.apk.sha256`) next to it. The APK is generic: it pairs
+against the HTTPS origin carried by the QR, not the CI relay. The repo is
+private, so downloads need repo access.
 
 Download both files from the release page (or with
-`gh release download mobile-debug-latest`), then verify the checksum before
+`gh release download mobile-release-latest`), then verify the checksum before
 installing:
 
 ```bash
-sha256sum -c freebuff-gate-debug.apk.sha256
+sha256sum -c freebuff-gate-release.apk.sha256
 ```
 
-It must print `freebuff-gate-debug.apk: OK`. If it reports FAILED or the
+It must print `freebuff-gate-release.apk: OK`. If it reports FAILED or the
 checksum file is missing, do not install the APK: the download was truncated
 or tampered with.
 
 Install the verified APK with adb:
 
 ```bash
-adb install freebuff-gate-debug.apk
+adb install freebuff-gate-release.apk
 ```
 
 or copy it to the phone and open it, allowing "install unknown apps" for your
-file manager or browser when prompted.
+file manager or browser when prompted. A release APK is signed, so it updates
+in place over the same release key; the debug APK (separate signing identity)
+stays available as a CI artifact on the Actions runs.
+
+## Release signing
+
+The release APK is signed with a real keystore that is never committed. CI
+reads it from GitHub Actions secrets and decodes it to a temp file for the
+build; `android/app/build.gradle.kts` wires `release` signing from four
+environment variables:
+
+- `SIGNING_KEYSTORE_PATH` — path to the decoded keystore file
+- `SIGNING_KEYSTORE_PASSWORD` — keystore password
+- `SIGNING_KEY_ALIAS` — key alias inside the keystore
+- `SIGNING_KEY_PASSWORD` — key password
+
+Generate the keystore once and keep it out of the repo:
+
+```bash
+keytool -genkeypair -v \
+  -keystore freebuff-release.keystore \
+  -alias gate \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Freebuff Gate" \
+  -storepass '<store-password>' \
+  -keypass '<key-password>'
+```
+
+Keep the file and both passwords safe; losing them means future releases
+cannot update in place over existing installs. Add these GitHub Actions
+secrets under Settings → Secrets and variables → Actions:
+
+- `SIGNING_KEYSTORE_B64` — `base64 -w0 freebuff-release.keystore`
+- `SIGNING_KEYSTORE_PASSWORD`
+- `SIGNING_KEY_ALIAS` — `gate`
+- `SIGNING_KEY_PASSWORD`
+
+Without `SIGNING_KEYSTORE_B64`, the `release-apk` job fails with a message
+naming the missing secrets. A local release build signs the same way when the
+four `SIGNING_*` environment variables are set; without them it produces
+`app-webview-release-unsigned.apk`.
 
 ## Pairing contract
 
