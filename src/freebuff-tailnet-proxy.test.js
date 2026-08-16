@@ -2,10 +2,15 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
-const { createProxyServer, patchBundle, CREATE_REUSE_V2 } = require('./freebuff_tailnet_proxy');
+process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
+
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, SETSTATE_FIX, SCROLL_FIX, CLOSE_FIX1, CLOSE_FIX2, CLOSE_FIX3, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -111,6 +116,64 @@ test('patchBundle rewrites the home-tab mark and leaves unknown bytes alone', ()
   assert.ok(!patched.includes(mark), 'original create-thread mark is gone');
   assert.ok(patched.includes('fb.homeThread'), 'reuse callback pins the home thread');
   assert.equal(patchBundle('plain javascript'), 'plain javascript');
+});
+
+// Upstream fixture for the UI-patch watchdog: serves a page, a bundle, and
+// the two injected routes. `state` selects healthy vs regressed content.
+function createWatchUpstream(state) {
+  return http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://x').pathname;
+    if (pathname === '/') {
+      const shim = state.healthy ? '<script id="fb-desktop-shim">window.freebuffDesktop={};</script>' : '';
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<html><head>${shim}<script src="assets/index-ABC.js"></script></head></html>`);
+      return;
+    }
+    if (pathname === '/assets/index-ABC.js') {
+      res.writeHead(200, { 'content-type': 'text/javascript' });
+      res.end(state.healthy
+        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}`
+        : 'var x = 1;');
+      return;
+    }
+    if (pathname === '/api/fb/dirlist' || pathname === '/api/fb/perf-report') {
+      res.writeHead(state.healthy ? 200 : 404, { 'content-type': 'application/json' });
+      res.end(state.healthy ? '{}' : '');
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+}
+
+test('ui-patch watchdog reports healthy when all markers and routes are present', async () => {
+  const upstream = createWatchUpstream({ healthy: true });
+  const port = await listen(upstream);
+  try {
+    const report = await checkUiPatches(new URL(`http://127.0.0.1:${port}`), () => {});
+    assert.equal(report.ok, true);
+    assert.deepEqual(report.errors, []);
+    assert.equal(report.bundle, 'assets/index-ABC.js');
+    // Status file recorded.
+    const onDisk = JSON.parse(fs.readFileSync(UI_PATCH_STATUS_FILE, 'utf8'));
+    assert.equal(onDisk.ok, true);
+  } finally {
+    await close(upstream);
+  }
+});
+
+test('ui-patch watchdog flags every missing marker after a simulated update', async () => {
+  const upstream = createWatchUpstream({ healthy: false });
+  const port = await listen(upstream);
+  try {
+    const report = await checkUiPatches(new URL(`http://127.0.0.1:${port}`), () => {});
+    assert.equal(report.ok, false);
+    assert.ok(report.errors.some((e) => e.includes('fb-desktop-shim')), 'shim loss reported');
+    assert.ok(report.errors.some((e) => e.includes('index-ABC.js') && e.includes('CREATE_REUSE')), 'bundle marker loss reported');
+    assert.ok(report.errors.some((e) => e.includes('dirlist')), 'dirlist route loss reported');
+  } finally {
+    await close(upstream);
+  }
 });
 
 test('patchBundle pins the resolved thread id, not the createThread promise', () => {

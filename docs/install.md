@@ -74,6 +74,16 @@ app).
   bundle/shim/orchestrator for the patch markers and exits non-zero with the
   exact file when any are missing, so a regression is caught loudly. Re-run
   the install command to re-apply.
+- The proxy also self-checks automatically, so you do not need to remember
+  to run verify by hand. It re-probes on every bundle identity change (an
+  app update swaps index-*.js) and on a check interval, fetches the raw
+  upstream page + bundle itself (bypassing its own injection), verifies the
+  shim tag, the bundle patch markers, and the dirlist/perf-report routes,
+  then writes ~/.local/share/freebuff/ui-patch-status.json and logs loud
+  [freebuff ui-patch] lines to the journal. Read the latest result anytime:
+  curl -s http://127.0.0.1:58061/api/fb/ui-patch-status
+  Tune it with FB_UI_PATCH_CHECK_INTERVAL_MS (min 30 s, default 10 min) and
+  FB_UI_PATCH_STATUS_FILE (default ~/.local/share/freebuff/ui-patch-status.json).
 - Verify: curl http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
 - Verify the shim on the direct UI: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
 - Verify the dirlist route: curl -s 'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.

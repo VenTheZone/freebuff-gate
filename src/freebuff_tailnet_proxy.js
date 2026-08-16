@@ -374,6 +374,135 @@ function patchBundle(body) {
   return out;
 }
 
+// ---- Auto-verify: detect + surface post-update UI patch regressions ----
+// The proxy is the always-on desktop service that serves the patched UI, so
+// it is the natural watchdog: after a Freebuff Desktop update replaces ui/,
+// the patch markers silently vanish and the mobile layer + file browser
+// stop working. The watcher fetches the raw upstream page and bundle itself
+// (bypassing its own injection) and checks the on-disk patch markers: shim
+// tag in index.html, bundle markers after a server-side patch pass, and the
+// /api/fb/dirlist + /api/fb/perf-report routes. It runs on a timer, reacts
+// to a bundle identity change (an app update), and writes a JSON status file
+// plus loud journal lines so a regression is caught instead of served.
+const UI_PATCH_STATUS_FILE = process.env.FB_UI_PATCH_STATUS_FILE
+  || path.join(os.homedir(), '.local', 'share', 'freebuff', 'ui-patch-status.json');
+const UI_PATCH_CHECK_INTERVAL_MS = Math.max(
+  30_000,
+  Number(process.env.FB_UI_PATCH_CHECK_INTERVAL_MS || 10 * 60 * 1000),
+);
+
+const UI_PATCH_MARKERS = [
+  ['CREATE_REUSE', CREATE_REUSE],
+  ['SETSTATE_FIX', SETSTATE_FIX],
+  ['SCROLL_FIX', SCROLL_FIX],
+  ['CLOSE_FIX1', CLOSE_FIX1],
+  ['CLOSE_FIX2', CLOSE_FIX2],
+  ['CLOSE_FIX3', CLOSE_FIX3],
+];
+
+function fetchUpstream(up, pathname) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: up.hostname, port: up.port || 80, path: pathname }, (res) => {
+      if ((res.statusCode || 0) >= 500) {
+        res.resume();
+        reject(new Error(`upstream ${pathname} returned ${res.statusCode}`));
+        return;
+      }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+  });
+}
+
+function writeUiPatchStatus(report) {
+  try {
+    fs.mkdirSync(path.dirname(UI_PATCH_STATUS_FILE), { recursive: true });
+    const tmp = `${UI_PATCH_STATUS_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(report, null, 2) + '\n');
+    fs.renameSync(tmp, UI_PATCH_STATUS_FILE);
+  } catch (error) {
+    console.error(`[freebuff ui-patch] could not write status file: ${error.message}`);
+  }
+}
+
+// Fetches the raw upstream HTML + bundle, re-applies the patch pass (which is
+// exactly what the proxy serves), and probes the injected routes. Returns a
+// normalized report; never throws.
+async function checkUiPatches(up, log) {
+  const report = {
+    product: 'freebuff-gate',
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    bundle: null,
+    errors: [],
+    warnings: [],
+  };
+  try {
+    const html = await fetchUpstream(up, '/');
+    const shimOk = /<script id="fb-desktop-shim">/.test(html.body);
+    if (!shimOk) report.errors.push('index.html: fb-desktop-shim tag missing (app update replaced index.html; re-run install)');
+    const match = html.body.match(/assets\/index-[A-Za-z0-9_-]+\.js/);
+    const bundleName = match ? match[0] : null;
+    if (!bundleName) {
+      report.warnings.push('could not locate main bundle in upstream index.html');
+    } else {
+      report.bundle = bundleName;
+      const bundle = await fetchUpstream(up, '/' + bundleName);
+      const patched = patchBundle(bundle.body);
+      const missing = UI_PATCH_MARKERS.filter(([name, mark]) => !patched.includes(mark)).map(([name]) => name);
+      // A fresh patched bundle after an update would contain the V3 create
+      // marker; an unpatched rebuilt bundle fails the create marker check.
+      if (missing.length > 0) {
+        report.errors.push(`bundle ${bundleName}: missing patch marker(s): ${missing.join(', ')} (app update likely replaced it; re-run install)`);
+      }
+    }
+    for (const route of ['/api/fb/dirlist?path=/', '/api/fb/perf-report']) {
+      try {
+        const probe = await fetchUpstream(up, route);
+        if (probe.status === 404) report.errors.push(`${route} route missing (app update replaced orchestrator.js; re-run install)`);
+      } catch (error) {
+        report.warnings.push(`${route} probe failed: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    report.warnings.push(`upstream unreachable: ${error.message}`);
+  }
+  report.ok = report.errors.length === 0;
+  writeUiPatchStatus(report);
+  const summary = report.ok ? 'OK' : 'REGRESSED';
+  const lines = [`[freebuff ui-patch] verify ${summary}: ${report.errors.length} error(s), ${report.warnings.length} warning(s)`];
+  for (const error of report.errors) lines.push(`  [error] ${error}`);
+  for (const warning of report.warnings) lines.push(`  [warn] ${warning}`);
+  (log || console.log)(lines.join('\n'));
+  return report;
+}
+
+let lastProbeAt = 0;
+let lastBundleName = null;
+let lastEtag = null;
+let probeInFlight = null;
+let lastProbeReport = null;
+
+function maybeProbeUiPatches(up, force) {
+  // One probe in flight at a time; skip if we just ran one (unless forced).
+  if (probeInFlight) return probeInFlight;
+  if (!force && Date.now() - lastProbeAt < 10_000) return null;
+  lastProbeAt = Date.now();
+  probeInFlight = checkUiPatches(up, null)
+    .then((report) => {
+      probeInFlight = null;
+      lastProbeReport = report;
+      return report;
+    })
+    .catch((error) => {
+      probeInFlight = null;
+      console.error(`[freebuff ui-patch] probe failed: ${error.message}`);
+    });
+  return probeInFlight;
+}
+
 function createProxyServer(options = {}) {
   const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
   const up = new URL(upstream);
@@ -386,6 +515,20 @@ function createProxyServer(options = {}) {
   headers['accept-encoding'] = 'identity';
   let pathname = req.url || '/';
   try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch (e) { /* keep raw */ }
+  if (req.method === 'GET' && pathname === '/api/fb/ui-patch-status') {
+    // Surface the last auto-verify result to any client (browser, agent,
+    // installer) without rerunning the probe.
+    const report = lastProbeReport || (() => {
+      try {
+        return JSON.parse(fs.readFileSync(UI_PATCH_STATUS_FILE, 'utf8'));
+      } catch (e) {
+        return { ok: null, errors: [], warnings: ['no UI patch status recorded yet'] };
+      }
+    })();
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(report));
+    return;
+  }
   const sniffAd = pathname.startsWith('/api/ad/');
   if (sniffAd) adSniff('proxy-request', { path: pathname, method: req.method });
   // Perf probe reports are logged locally (not forwarded upstream): the
@@ -461,16 +604,22 @@ function createProxyServer(options = {}) {
         outHeaders['content-length'] = Buffer.byteLength(out);
         const isMainBundle = /\/assets\/index-[^/]+\.js$/.test(pathname);
         if (isMainBundle) {
-          // The main bundle is patched per request. Cache it but always
-          // revalidate so a patch or upstream update propagates; a 304 skips
-          // re-downloading the ~1.5MB body.
-          const etag = '"' + crypto.createHash('sha1').update(out).digest('hex') + '"';
-          if (req.headers['if-none-match'] === etag) {
-            res.writeHead(304, { etag: etag, 'cache-control': 'public, max-age=0, must-revalidate' });
+          // Detect an upstream bundle replacement (an app update swaps
+          // index-*.js) and re-run the UI-patch probe: a fresh unpatched
+          // bundle after an update is exactly the regression we must surface.
+          const thisEtag = '"' + crypto.createHash('sha1').update(out).digest('hex') + '"';
+          const name = pathname.split('/').pop();
+          if (lastBundleName !== name || lastEtag !== thisEtag) {
+            lastBundleName = name;
+            lastEtag = thisEtag;
+            maybeProbeUiPatches(up, true);
+          }
+          if (req.headers['if-none-match'] === thisEtag) {
+            res.writeHead(304, { etag: thisEtag, 'cache-control': 'public, max-age=0, must-revalidate' });
             res.end();
             return;
           }
-          outHeaders.etag = etag;
+          outHeaders.etag = thisEtag;
           outHeaders['cache-control'] = 'public, max-age=0, must-revalidate';
         } else {
           // Lazy JS chunks are content-hashed and never patched.
@@ -536,6 +685,27 @@ server.on('upgrade', (req, socket, head) => {
   preq.end();
   });
 
+  // Auto-verify watchdog: probe once shortly after startup (the desktop may
+  // start before this service) and then on the check interval. The interval
+  // catches an app update that happens while the phone is idle.
+  server.uiPatches = {
+    probeNow: () => maybeProbeUiPatches(up, true),
+    lastReport: () => lastProbeReport,
+  };
+  // Run the first probe after the server is listening (deferred).
+  server.once('listening', () => {
+    maybeProbeUiPatches(up, false);
+  });
+  const ownProbeTimer = setInterval(() => maybeProbeUiPatches(up, false), UI_PATCH_CHECK_INTERVAL_MS);
+  ownProbeTimer.unref();
+  // Stop the watchdog when the server closes, so tests and restarts do not
+  // leak probes against a dead upstream.
+  const savedClose = server.close.bind(server);
+  server.close = (cb) => {
+    clearInterval(ownProbeTimer);
+    return savedClose(cb);
+  };
+
   return server;
 }
 
@@ -555,6 +725,9 @@ module.exports = {
   SETSTATE_FIX,
   SETSTATE_MARK,
   SHIM,
+  UI_PATCH_MARKERS,
+  UI_PATCH_STATUS_FILE,
+  checkUiPatches,
   createProxyServer,
   patchBundle,
 };
