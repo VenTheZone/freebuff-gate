@@ -142,6 +142,18 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The GeckoView spike build (326MB APK plus GeckoView gradle artifacts)
+      # can leave the runner without the ~7GB the emulator needs for its
+      # default userdata partition, failing boot with "Not enough space".
+      # Drop gecko-only outputs the webview instrumentation run never reads.
+      - name: Free disk space before emulator
+        shell: bash
+        run: |
+          rm -rf \
+            "android/app/build/outputs/apk/gecko" \
+            "$HOME/.gradle/caches/modules-2/files-2.1/org.mozilla.geckoview"
+          df -h / | tail -n 1
+
       - name: Run Android instrumentation and relay pairing E2E on API 35 emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -150,6 +162,8 @@ jobs:
           arch: x86_64
           profile: pixel_2
           force-avd-creation: true
+          disk-size: 2048M
+          sdcard-path-or-size: 512M
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           working-directory: android
