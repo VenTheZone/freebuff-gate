@@ -12,7 +12,7 @@ small reference implementation (`src/folder-select.js`) of that tweak.
 
 | Path | Purpose |
 | --- | --- |
-| `.fb-browser-ui.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs, and the `folderSelection` tweak block). |
+| `.fb-browser-ui.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
 | `src/mobile-ui.css` | Responsive adaptation for the browser UI on phones/tablets (injected by the tailnet proxy). |
@@ -31,8 +31,13 @@ small reference implementation (`src/folder-select.js`) of that tweak.
 | `src/mobile-connect-websocket.js` | Dependency-free relay WebSocket server framing. |
 | `src/mobile-connect-relay.js` | Managed relay HTTP/SSE/WebSocket forwarding and cookie exchange. |
 | `src/mobile-connect-agent.js` | Desktop outbound WSS connector and local UI bridge. |
-| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion. |
-| `src/install-mobile-connect.test.js` | Installer safety, config, launcher, and uninstall tests. |
+| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify). |
+| `src/install-mobile-connect.test.js` | Installer safety, config, launcher, uninstall, UI-stack, and verify tests. |
+| `src/freebuff_tailnet_proxy.js` | Tailnet browser-port proxy: injects the mobile layer + shim, patches the UI bundle, cache headers, ad/perf probes, and auto-verifies UI patches. |
+| `src/freebuff-tailnet-proxy.test.js` | Proxy ETag/cache and UI-patch watchdog tests. |
+| `src/perf-probe.js` | Page-load/perf instrumentation injected by the proxy. |
+| `install-release-apk.sh` | One-command release APK installer (download + SHA-256 verify + reinstall). |
+| `ios/` | Freebuff Gate iOS companion app (XcodeGen project, pairing shell, icon set). |
 | `src/package-mobile-connect-release.js` | Packages versioned agent assets, manifest, checksums, and release archive. |
 | `src/package-mobile-connect-release.test.js` | Release asset, checksum, bootstrap, and archive tests. |
 | `install-mobile-connect.sh` | Node 22-validated one-command release bootstrap. |
@@ -214,7 +219,14 @@ node src/install-mobile-connect.js install \
 
 Installer copies only required Node agent files, creates a launcher named
 `freebuff-mobile-connect`, and writes relay/UI configuration under user
-config/data directories. Preferred one-time provisioning:
+config/data directories. With UI patches enabled (`--ui-patches` is default)
+it also deploys the tailnet proxy + systemd unit and re-applies the on-disk
+bundle/shim/orchestrator patches idempotently, so `curl | bash` builds the
+whole browser port. After a Freebuff Desktop update, run
+`node src/install-mobile-connect.js verify` (or `install-mobile-connect.sh --verify`)
+to check the on-disk markers and exit non-zero on regressions; the proxy also
+auto-verifies itself on a timer and writes `~/.local/share/freebuff/ui-patch-status.json`.
+Preferred one-time provisioning:
 
 ```bash
 node src/install-mobile-connect.js install \
@@ -279,9 +291,11 @@ Run gateway, installer, release-packaging, and relay tests with:
 node --test src/package-mobile-connect-release.test.js src/install-mobile-connect.test.js src/mobile-connect-gateway.test.js src/mobile-connect-qr.test.js src/mobile-connect-relay.test.js src/mobile-connect-agent.test.js
 ```
 
-## Android mobile app scaffold
+## Android + iOS mobile app scaffold
 
-`android/` contains a Kotlin Android shell around the gateway contract:
+`android/` contains a Kotlin Android shell around the gateway contract; `ios/` holds the iOS companion (XcodeGen project). The Android APK is published automatically to the `mobile-debug-latest` GitHub release (debug key, checksum sidecar) on every push to main; `mobile-gecko-latest` carries the GeckoView/Firefox-engine spike build. See `android/README.md` and `docs/install.md`.
+
+The Android shell provides:
 
 - CameraX + ML Kit QR scanner reads pairing URL fragments.
 - Six-digit terminal code completes pairing.
@@ -306,7 +320,8 @@ reachable relay and a private, unexpired pairing URL. `.github/workflows/android
 installs
 Java 17, Android API 35/build tools, Gradle 8.9, runs lint plus debug assembly,
 boots API 35 Google APIs x86_64 emulator for instrumentation tests, verifies the
-AGP-generated debug signature, and uploads APK/test reports for 14 days. Before
+AGP-generated debug signature, smoke-tests the published artifact, and publishes
+the APK + checksum to the `mobile-debug-latest` GitHub release on main. Before
 building, CI creates a one-day self-signed certificate trusted only by the debug
 variant, starts an ephemeral HTTPS relay plus desktop connector and test page,
 then `MobilePairingE2EInstrumentedTest` performs claim, access refresh, cookie
@@ -334,7 +349,7 @@ The deployed picker is now a server-side file browser: the tailnet proxy shim op
 5. **Virtual paths.** Browsers refuse to expose absolute paths, so the UI
    shows a stable synthetic path like `workspace://name`.
 
-Tune every knob in the `folderSelection` block of `.fb-browser-ui.json`:
+The `folderSelection` block in `.fb-browser-ui.json` below is the **legacy** client-side knob set. The live server-side picker ignores it; keep the block only as documentation of the old behavior:
 
 ```json
 "folderSelection": {
@@ -407,7 +422,7 @@ This repo must stay free of secrets. The `.gitignore` excludes `.env*`,
 
 ```
 FB-Browser-UI/
-├── .fb-browser-ui.json      # the dotfile configuration (edit this)
+├── .fb-browser-ui.json      # the dotfile configuration (legacy folder-selection notes)
 ├── .env.example             # template for local .env (never committed)
 ├── .gitignore               # secrets and runtime state stay out
 ├── AGENTS.md                # shared Caveman profile for Freebuff
@@ -417,6 +432,7 @@ FB-Browser-UI/
 │   ├── mobile.md            # phone/tablet adaptation details
 │   └── planning/            # task plan with phase status
 ├── android/                 # Kotlin Android pairing/WebView scaffold
+├── ios/                     # iOS companion app (XcodeGen)
 └── src/
     ├── folder-select.js     # the folder-selection tweak implementation
     ├── check-ads.js         # ad-auction poller (watch for real fill)
@@ -428,9 +444,17 @@ FB-Browser-UI/
     ├── mobile-connect-agent.js     # desktop outbound connector
     ├── install-mobile-connect.js    # Desktop companion installer
     ├── package-mobile-connect-release.js # versioned release artifact packager
-    ├── mobile-connect-e2e-fixture.js # ephemeral HTTPS Android CI fixture
+    ├── mobile-connect-e2e-fixture.js # HTTPS ephemeral relay/desktop Android CI fixture
+    ├── freebuff_tailnet_proxy.js   # browser-port proxy (injection, patches, watch)
+    ├── perf-probe.js               # page-load probe injected by the proxy
     ├── mobile-ui.css        # mobile/tablet responsive layer (proxy-injected)
     ├── mobile-ui.js         # viewport/touch helpers for phones
     ├── mobile-ui-screenshot-fixture.html # deterministic mobile test fixture
-    └── mobile-ui-screenshot.test.js # Chromium screenshot/layout regression
+    ├── mobile-ui-screenshot.test.js # Chromium screenshot/layout regression
+    └── freebuff-tailnet-proxy.test.js # proxy ETag/cache/watchdog tests
 ```
+
+Also in the repository root: `install-mobile-connect.sh` (release bootstrap),
+`install-release-apk.sh` (Android release install), `AGENTS.md`, and the
+`.github/workflows/` CI (`android.yml`, `ios.yml`, `mobile-connect-release.yml`,
+`mobile-ui-screenshot.yml`).

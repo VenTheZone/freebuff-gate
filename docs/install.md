@@ -94,21 +94,22 @@ app).
 
 ### 3. Mobile relay + connector (optional, for the Freebuff Gate Android app)
 If the phone app is used:
-- Copy ~/FB-Browser-UI/src/mobile-connect-relay.js and
-  ~/FB-Browser-UI/src/mobile-connect-agent.js to
-  ~/.local/share/freebuff-desktop/.
-- Install systemd USER units like the existing
-  freebuff-mobile-relay.service / freebuff-mobile-agent.service in this repo's
-  docs or ~/.config/systemd/user/ on the reference machine, with the agent's
-  upstream pointing at http://127.0.0.1:58061 (the proxy, so the mobile UI
-  layer is injected) and the relay exposed on a tailnet HTTPS URL.
+- The installer in step 2 already deploys the agent (mobile-connect-agent.js)
+  and its launcher/unit automatically; it does NOT deploy the relay. Run the
+  relay from ~/FB-Browser-UI/src/mobile-connect-relay.js on the server, with
+  the agent's upstream pointing at http://127.0.0.1:58061 (the proxy, so the
+  mobile UI layer is injected) and the relay exposed on a tailnet HTTPS URL.
+- Install a systemd USER unit like the existing
+  freebuff-mobile-relay.service on the reference machine (see
+  ~/.config/systemd/user/), with the agent unit already managed by the
+  installer (freebuff-mobile-connect.service).
 - Set a strong connector token (relay --connector-token) and store it in a
   root-only file (chmod 600). Never commit it.
 
 ### 4. Exposure
 - The orchestrator already listens on the tailnet IP:58060 (verify with
   `tailscale ip -4`). If not, bind it to 0.0.0.0 or use `tailscale serve`.
-- 58061 (proxy) is loopback-only; the relay (step 5) is the public face for
+- 58061 (proxy) is loopback-only; the relay (step 3) is the public face for
   phones. Do NOT open raw ports to the internet; Tailscale (or the relay's
   HTTPS) is the only exposure.
 
