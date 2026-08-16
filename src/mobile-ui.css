@@ -1621,10 +1621,11 @@
 
 /* ─────────────── Desktop glow removal (≥1001px) ────────────────────────────
    The packaged app ships big halo shadows on the explorer panel and its
-   collapsed rail, plus a glowing brand hairline on the update sheet. On
-   desktop those read as glow bars; the panels already have their own
-   borders, so the halos are pure noise. Scoped to desktop — the mobile
-   rules above already kill the same effects below 1000px. */
+   collapsed rail, a frosted-glass bloom behind the "Working" chip, a glowing
+   brand hairline on the update sheet, and brand-tinted focus/active rings.
+   On desktop those read as glow bars and halos; the panels already have
+   their own borders, so the glows are pure noise. Scoped to desktop — the
+   mobile rules above already kill the same effects below 1000px. */
 @media (min-width: 1001px) {
   .explorer,
   .explorer.fill,
@@ -1634,6 +1635,51 @@
   }
   .update-sheet::before {
     display: none;
+  }
+
+  /* Working chip: drop the frosted-glass backdrop and its drop shadow so it
+     reads as a flat chip instead of a glowing halo over the transcript. */
+  .thread-working {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    background: var(--raised);
+  }
+
+  /* Update sheet: remove the brand radial bloom, accent border, and the
+     glowing progress-bar halo. */
+  .update-card {
+    background: color-mix(in srgb, var(--raised) 94%, var(--bg));
+    border-color: var(--border);
+  }
+  .update-bar span {
+    box-shadow: none;
+  }
+
+  /* Modals: keep depth but cut the 80px ambient bloom. */
+  .modal {
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.05),
+      0 8px 24px color-mix(in srgb, var(--shadow) 45%, transparent);
+  }
+
+  /* Focus rings: replace the brand-tinted glow with a plain outline so the
+     a11y affordance stays without the green bloom. */
+  .composer textarea:focus,
+  .settings-command-input:focus {
+    box-shadow: none;
+    outline: 2px solid color-mix(in srgb, var(--border) 70%, transparent);
+    outline-offset: 1px;
+  }
+
+  /* Active todo mark and hovered ads: neutral ring instead of brand glow. */
+  .todo-dock-item.active .todo-dock-mark {
+    border-color: var(--border);
+    box-shadow: inset 0 0 0 2.5px color-mix(in srgb, var(--border) 45%, transparent);
+  }
+  .sponsored-ad:hover,
+  .sponsored-ad:focus-visible {
+    border-color: var(--border);
+    box-shadow: none;
   }
 }
 
