@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-${{ github.workflow }}-${{ github.ref }}
@@ -256,3 +256,72 @@ jobs:
           path: relay-tests.tap
           if-no-files-found: warn
           retention-days: 14
+
+  release-apk:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # Built without -PfreebuffPairingOrigin/-PfreebuffWebOrigin so the APK
+      # is generic: it pairs against whatever HTTPS origin the QR carries
+      # instead of the ephemeral CI relay pinned into the E2E build above.
+      - name: Build unpinned webview debug APK
+        working-directory: android
+        run: |
+          gradle --no-daemon --stacktrace :app:assembleWebviewDebug
+
+      - name: Verify debug APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "${apksigner}"
+          test -s "${apk}"
+          "${apksigner}" verify --verbose --print-certs "${apk}"
+
+      - name: Publish debug APK as release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
+          asset="freebuff-gate-debug.apk"
+          tag="mobile-debug-latest"
+          cp "$apk" "$asset"
+          notes="Debug APK rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. System Chromium WebView engine."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" --clobber
+          else
+            gh release create "$tag" "$asset" \
+              --title "Freebuff Gate debug APK (latest)" \
+              --notes "$notes" \
+              --target "$GITHUB_SHA" \
+              --prerelease
+          fi
