@@ -156,11 +156,14 @@
         : node && node.parentElement
           ? node.parentElement
           : null;
-    return !!(
-      element &&
-      element.closest &&
-      element.closest('.messages, .thread-transcript')
-    );
+    if (!element || !element.closest) return false;
+    // Transcript mutations are the streaming/rendering hot path; skip them.
+    if (element.closest('.messages, .thread-transcript')) return true;
+    // The composer's textarea mutates on every keystroke (controlled draft
+    // state). The narrow composer observer below already covers the class
+    // changes that matter, so typing must not schedule global layout work.
+    if (element.closest('.composer')) return true;
+    return false;
   }
   function watchMobileBody(fn) {
     if (typeof fn !== 'function') return;
@@ -2801,6 +2804,11 @@
           // Do not close when the user scrolls the menu itself (especially
           // the Recent session list); only external page scrolling dismisses.
           if (menu && menu.contains(ev.target)) return;
+          // Streaming follow-scroll animates the transcript while a session
+          // works; that must not dismiss the open menu.
+          if (ev.target && ev.target.closest && ev.target.closest('.messages, .thread-transcript')) {
+            return;
+          }
           close();
         },
         true,
@@ -2810,6 +2818,9 @@
       // session is open (or the layout widens past mobile). While the menu is
       // open, close it if the active session changed, and refresh it live if
       // sessions opened/closed/reordered (e.g. the per-row close button).
+      // Compare the active session by its stable thread id, not by element
+      // identity: streaming status updates make React replace the tab node,
+      // and an element-identity check would close the menu on every token.
       new MutationObserver(function () {
         if (!window.matchMedia(MOBILE).matches) {
           btn.style.display = 'none';
@@ -2820,10 +2831,14 @@
         syncAttention();
         if (menu) renderSessionModelLegend();
         if (!menu) return;
-        if (activeTab() !== openedActive) {
+        var nowActive = activeTab();
+        if (threadIdOf(nowActive) !== threadIdOf(openedActive)) {
           close();
           return;
         }
+        // Same session is still active; React may have swapped the element
+        // while streaming, so re-anchor to the current node.
+        openedActive = nowActive;
         var now = tabIds().join('\u0000');
         if (openedIds && now !== openedIds.join('\u0000')) open();
       }).observe(tabbar, {
@@ -3055,7 +3070,6 @@
           composerObserver.observe(composer, {
             attributes: true,
             childList: true,
-            characterData: true,
             subtree: true,
             attributeFilter: ['class'],
           });
@@ -3819,6 +3833,55 @@
     if (query.addEventListener) query.addEventListener('change', fn);
     else if (query.addListener) query.addListener(fn);
   }
+  // User messages collapse on mobile so a long prompt does not fill the
+  // whole screen; "Show more" expands the bubble back to full height. Only
+  // applied to overflow bubbles (measured once, then skipped forever).
+  var msgCompactBound = false;
+  var msgCompactProcessed = null;
+  function compactUserMessages() {
+    if (!msgCompactProcessed) return;
+    var bubbles = document.querySelectorAll('.msg.user .bubble');
+    for (var i = 0; i < bubbles.length; i++) {
+      var b = bubbles[i];
+      if (msgCompactProcessed.has(b)) continue;
+      msgCompactProcessed.add(b);
+      if (b.scrollHeight > 240) {
+        b.classList.add('fb-msg-collapsed');
+        if (!b.querySelector('.fb-msg-expand')) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'fb-msg-expand';
+          btn.setAttribute('aria-label', 'Show more');
+          btn.textContent = 'Show more';
+          b.appendChild(btn);
+        }
+      }
+    }
+  }
+  function bindMessageCompact() {
+    if (msgCompactBound) return;
+    msgCompactBound = true;
+    if (typeof WeakSet !== 'function') return;
+    msgCompactProcessed = new WeakSet();
+    document.addEventListener('click', function (ev) {
+      var btn = ev.target && ev.target.closest && ev.target.closest('.fb-msg-expand');
+      if (!btn) return;
+      var bubble = btn.closest && btn.closest('.bubble');
+      if (!bubble) return;
+      bubble.classList.remove('fb-msg-collapsed');
+      bubble.classList.add('fb-msg-expanded');
+    });
+    waitForEl('.messages', function () {
+      compactUserMessages();
+      new MutationObserver(function (records) {
+        if (!records.some(function (r) { return r.addedNodes && r.addedNodes.length; })) {
+          return;
+        }
+        compactUserMessages();
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
   function enterMobile() {
     mobileOverlay.activate();
     scheduleBodySync();
@@ -3826,6 +3889,7 @@
     trackViewportHeight();
     collapseExplorerForTouch();
     bindMobileFeatures();
+    bindMessageCompact();
     restoreMobileChrome();
     bindFloatLayout();
   }

@@ -297,10 +297,38 @@ const SCROLL_MARK =
 const SCROLL_FIX =
   'L.useLayoutEffect(()=>{const v=t.current;if(v){if(n.current){i.current!=="follow"&&(v.scrollTop=v.scrollHeight);const q=()=>{const v2=t.current;if(v2&&n.current&&i.current!=="follow")v2.scrollTop=v2.scrollHeight};requestAnimationFrame(q),setTimeout(q,150);return}u(!0),o(Sv(v)<KT)}},[e]),';
 
+// ---- Bundle patch: closing a phantom "New thread" tab must work ----
+// The boot home-tab logic (hJ) mounts a home tab whose id can collide with
+// the first restored tab, so the tab bar briefly holds two tabs with the
+// same id: the real home tab (home:true) and a phantom duplicate that shows
+// as an unclosable "New thread". closeTab looks the tab up by id and finds
+// the home copy first, then refuses to close it (home tabs are protected),
+// so the phantom never closes and the app's own phantom cleanup clicks the
+// X to no effect. Patch closeTab to prefer a non-home tab with that id,
+// keep the home tab AND its thread in the store when ids collide (the
+// threads map is keyed by the same id, so a plain close would delete the
+// home thread out from under the home tab), and skip the server-side
+// thread delete when the id belongs to a home tab.
+const CLOSE_MARK1 =
+  'async closeTab(n){const i=t().tabs.find(u=>u.id===n);if(!i||i.home)return;';
+const CLOSE_FIX1 =
+  'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i||i.home)return;';
+const CLOSE_MARK2 =
+  'const h=u.tabs.filter(_=>!o.has(_.id)),{[n]:p,...f}=u.threads;';
+const CLOSE_FIX2 =
+  'const h=u.tabs.filter(_=>!o.has(_.id)||(_.home&&_.id===n)),k2=u.tabs.some(_=>_.home&&_.id===n),f=k2?u.threads:(({[n]:p,...f2}=u.threads),f2);';
+const CLOSE_MARK3 =
+  'i.file||await ve.close(n).catch(()=>{})},setActive(n){';
+const CLOSE_FIX3 =
+  'i.file||await Promise.resolve().then(()=>t().tabs.some(u=>u.home&&u.id===n)||ve.close(n)).catch(()=>{})},setActive(n){';
+
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
+  if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
+  if (out.includes(CLOSE_MARK2)) out = out.split(CLOSE_MARK2).join(CLOSE_FIX2);
+  if (out.includes(CLOSE_MARK3)) out = out.split(CLOSE_MARK3).join(CLOSE_FIX3);
   return out;
 }
 

@@ -29,6 +29,40 @@
 
 /* ─────────────── 1000px: mobile layout (phones & small tablets) ────────── */
 @media (max-width: 1000px) {
+  /* Long user messages collapse to a teaser with a fade; "Show more"
+     (injected by mobile-ui.js) expands the bubble back to full height. */
+  .msg.user .bubble.fb-msg-collapsed {
+    max-height: 220px;
+    overflow: hidden;
+    position: relative;
+    -webkit-mask-image: linear-gradient(rgba(0, 0, 0, 1) 55%, transparent);
+    mask-image: linear-gradient(rgba(0, 0, 0, 1) 55%, transparent);
+  }
+  .msg.user .bubble .fb-msg-expand {
+    display: block;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border: 1px solid var(--border, #444);
+    border-radius: 8px;
+    background: var(--surface-2, #1a1a1a);
+    color: var(--text, #eee);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .msg.user .bubble.fb-msg-expanded {
+    max-height: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  /* Cap the composer's auto-growing textarea so typing never reflows the
+     chat above it (the textarea scrolls internally once capped). */
+  .composer textarea,
+  .composer [contenteditable='true'] {
+    max-height: 120px;
+  }
+
   /* Zero every desktop-side reserve so the chat uses the full width. */
   .app,
   .workspace {
