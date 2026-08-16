@@ -13,6 +13,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // GeckoView (Firefox engine) stable channel. Used only by the "gecko"
+        // product flavor; the default "webview" flavor never resolves it.
+        maven("https://maven.mozilla.org/maven2/")
     }
 }
 

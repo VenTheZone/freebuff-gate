@@ -23,7 +23,8 @@ Open `android/` in Android Studio with an Android SDK installed, or provide a
 Gradle installation and run:
 
 ```bash
-gradle :app:assembleDebug
+gradle :app:assembleWebviewDebug      # system WebView engine (default)
+gradle :app:assembleGeckoDebug        # GeckoView / Firefox engine (spike)
 ```
 
 A clean checkout needs Gradle and Android SDK. This workspace uses ignored
@@ -35,7 +36,7 @@ local debug build runs from the repository root with:
 export ANDROID_HOME="$PWD/.tools/android-sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export GRADLE_USER_HOME="$PWD/.tools/gradle-home"
-.tools/gradle-8.9/bin/gradle -p android --no-daemon :app:assembleDebug
+.tools/gradle-8.9/bin/gradle -p android --no-daemon :app:assembleWebviewDebug
 ```
 
 `.github/workflows/android.yml` runs
@@ -92,6 +93,32 @@ needs a real public HTTPS/WSS origin and connector enrollment token. The app
 uses the short-lived access token only for that native request, installs
 returned `Secure; HttpOnly; SameSite=Strict` cookie into WebView CookieManager,
 then loads same-origin UI without an Authorization URL header.
+
+## GeckoView spike (Firefox engine)
+
+The app has two product flavors that share the same activity, pairing flow, and
+origin guard, differing only in the rendering engine behind `GateBrowserEngine`:
+
+- `webview` — system Chromium WebView (`WebViewGateEngine`).
+- `gecko` — GeckoView, the Firefox engine (`GeckoGateEngine` +
+  `RestrictedGeckoNavigationDelegate`), pinned to GeckoView
+  `138.0.20250517143237` because later releases pull androidx.core/kotlin-stdlib
+  versions that need a newer AGP/Kotlin toolchain than this project uses.
+
+The origin restriction is identical: only HTTPS navigations whose exact origin
+matches the paired relay are allowed, top-level and subframe loads alike, and
+new windows are refused. The session cookie is installed differently —
+GeckoView has no `CookieManager.setCookie` equivalent, so the spike attaches
+the relay cookie to the initial top-level load as a `Cookie` request header
+(`HEADER_FILTER_UNRESTRICTED_UNSAFE`). This is the main known gap until a
+Gecko cookie API ships or the session is established inside Gecko itself.
+
+Spike findings:
+
+- WebView debug APK: ~29 MB.
+- GeckoView debug APK: ~326 MB (even with arm64-v8a + armeabi-v7a only;
+  `libxul.so` is ~150 MB per ABI). Engine updates and security patches must be
+  shipped with the app, unlike WebView which updates through Play.
 
 ## WebView boundary
 

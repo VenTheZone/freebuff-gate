@@ -16,6 +16,26 @@ android {
     namespace = "com.freebuff.mobile"
     compileSdk = 35
 
+    // Two rendering engines share the same activity, pairing flow, and origin
+    // guard. "webview" is the default (system Chromium WebView). "gecko" swaps
+    // in GeckoView (Firefox engine) via the flavor-scoped source sets and
+    // dependency, so a drop-in comparison can be built with
+    // `gradle assembleGeckoDebug` without touching the default APK.
+    flavorDimensions += "engine"
+    productFlavors {
+        create("webview") {
+            dimension = "engine"
+        }
+        create("gecko") {
+            dimension = "engine"
+            // GeckoView ships 4 ABIs; keep phone ABIs only so the spike APK
+            // stays usable (arm64-v8a + armeabi-v7a cover real devices).
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.freebuff.mobile"
         minSdk = 26
@@ -69,6 +89,12 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // GeckoView stable channel. Pinned to 138.x: later releases pull
+    // androidx.core 1.17+/1.18+ and kotlin-stdlib 2.2 which require a newer
+    // AGP/Kotlin toolchain than this project uses. Flavor-scoped so the
+    // default webview APK stays lean.
+    "geckoImplementation"("org.mozilla.geckoview:geckoview:138.0.20250517143237")
 
     androidTestImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")

@@ -6,6 +6,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -80,7 +81,9 @@ class MobilePairingE2EInstrumentedTest {
         while (System.currentTimeMillis() < deadline) {
             var ready = false
             scenario.onActivity { activity ->
-                val webView = activity.findViewById<WebView>(R.id.webView)
+                // The engine attaches its view as the browserHost child; the
+                // E2E test runs on the webview flavor, so that child is a WebView.
+                val webView = activity.findViewById<FrameLayout>(R.id.browserHost).getChildAt(0) as WebView
                 val state = activity.findViewById<TextView>(R.id.connectionState).text
                     ?.toString()
                     ?.replace('\n', '|')

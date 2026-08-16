@@ -1,14 +1,10 @@
 package com.freebuff.mobile
 
-import android.annotation.SuppressLint
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Build
 import android.view.View
-import android.webkit.CookieManager
-import android.webkit.WebSettings
-import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -23,7 +19,8 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
     private lateinit var setupPanel: View
     private lateinit var scannerPanel: FrameLayout
-    private lateinit var webView: WebView
+    private lateinit var browserHost: FrameLayout
+    private lateinit var engine: GateBrowserEngine
     private lateinit var stateLabel: TextView
     private lateinit var pairingUrlInput: EditText
     private lateinit var deviceNameInput: EditText
@@ -50,7 +47,7 @@ class MainActivity : AppCompatActivity() {
 
         setupPanel = findViewById(R.id.setupPanel)
         scannerPanel = findViewById(R.id.scannerPanel)
-        webView = findViewById(R.id.webView)
+        browserHost = findViewById(R.id.browserHost)
         stateLabel = findViewById(R.id.connectionState)
         pairingUrlInput = findViewById(R.id.pairingUrlInput)
         deviceNameInput = findViewById(R.id.deviceNameInput)
@@ -58,7 +55,17 @@ class MainActivity : AppCompatActivity() {
         disconnectButton = findViewById(R.id.disconnectButton)
 
         deviceNameInput.setText(Build.MODEL)
-        configureWebView()
+        engine = GateEngineFactory.create(this)
+        engine.configure {
+            showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
+        }
+        browserHost.addView(
+            engine.view,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
 
         sessionStore = SecureSessionStore(this)
         deviceIdentity = DeviceIdentity()
@@ -92,8 +99,8 @@ class MainActivity : AppCompatActivity() {
         pairButton.setOnClickListener { claimPairing() }
         disconnectButton.setOnClickListener {
             reconnectController.disconnect(clearSession = true)
-            webView.stopLoading()
-            webView.visibility = View.GONE
+            engine.stopLoading()
+            browserHost.visibility = View.GONE
             setupPanel.visibility = View.VISIBLE
         }
 
@@ -108,8 +115,8 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         if (scannerPanel.visibility == View.VISIBLE) {
             closeScanner()
-        } else if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
-            webView.goBack()
+        } else if (browserHost.visibility == View.VISIBLE && engine.canGoBack()) {
+            engine.goBack()
         } else {
             super.onBackPressed()
         }
@@ -119,7 +126,7 @@ class MainActivity : AppCompatActivity() {
         if (::qrScanner.isInitialized) qrScanner.close()
         if (::reconnectController.isInitialized) reconnectController.close()
         pairingExecutor.shutdownNow()
-        webView.destroy()
+        engine.destroy()
         super.onDestroy()
     }
 
@@ -184,7 +191,7 @@ class MainActivity : AppCompatActivity() {
             ConnectionState.DISCONNECTED,
             -> {
                 setupPanel.visibility = View.VISIBLE
-                webView.visibility = View.GONE
+                browserHost.visibility = View.GONE
             }
             ConnectionState.RECONNECTING,
             ConnectionState.OFFLINE,
@@ -192,7 +199,7 @@ class MainActivity : AppCompatActivity() {
             ConnectionState.PAIRING,
             ConnectionState.ERROR,
             -> {
-                if (webView.visibility != View.VISIBLE) setupPanel.visibility = View.VISIBLE
+                if (browserHost.visibility != View.VISIBLE) setupPanel.visibility = View.VISIBLE
             }
         }
     }
@@ -205,7 +212,6 @@ class MainActivity : AppCompatActivity() {
         pairButton.visibility = visibility
     }
 
-    @SuppressLint("SetCookie")
     private fun loadRemoteUi(session: PairingSession) {
         val configuredUi = session.uiUrl?.takeIf { isHttpsUrl(it) }
         val candidate = configuredUi ?: session.relayUrl?.let { relayToHttp(it) }
@@ -228,60 +234,36 @@ class MainActivity : AppCompatActivity() {
             showState(ConnectionState.ERROR, "Remote UI origin is not configured for this app")
             return
         }
-        webView.webViewClient = RestrictedWebViewClient(origin) { _ ->
+        engine.setRestriction(origin) { _ ->
             showState(ConnectionState.ERROR, "Blocked navigation outside Freebuff origin")
         }
         val sessionKey = "${session.deviceId}:${session.accessToken}"
-        if (webSessionLoading || (loadedWebSessionKey == sessionKey && webView.visibility == View.VISIBLE)) return
+        if (webSessionLoading || (loadedWebSessionKey == sessionKey && browserHost.visibility == View.VISIBLE)) return
         webSessionLoading = true
-        showState(ConnectionState.CONNECTED, "Establishing secure WebView session")
+        showState(ConnectionState.CONNECTED, "Establishing secure session")
         pairingExecutor.execute {
             try {
                 val cookie = PairingApi(origin).establishWebSession(origin, session.accessToken)
                 runOnUiThread {
-                    CookieManager.getInstance().setCookie(origin, cookie)
-                    CookieManager.getInstance().flush()
                     loadedWebSessionKey = sessionKey
                     webSessionLoading = false
                     setupPanel.visibility = View.GONE
-                    webView.visibility = View.VISIBLE
+                    browserHost.visibility = View.VISIBLE
                     // Relay exchanged access token for Secure/HttpOnly cookie;
                     // token is not passed into page JavaScript or URL headers.
-                    webView.loadUrl(target)
+                    engine.load(target, cookie)
                 }
             } catch (error: GatewayApiException) {
                 runOnUiThread {
                     webSessionLoading = false
-                    showState(ConnectionState.ERROR, "WebView session failed (${error.status}): ${error.message}")
+                    showState(ConnectionState.ERROR, "Browser session failed (${error.status}): ${error.message}")
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     webSessionLoading = false
-                    showState(ConnectionState.ERROR, error.message ?: "WebView session failed")
+                    showState(ConnectionState.ERROR, error.message ?: "Browser session failed")
                 }
             }
-        }
-    }
-
-    private fun configureWebView() {
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = false
-            allowContentAccess = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            setSupportMultipleWindows(false)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
-            // The HTML document is no-store and hashed assets are immutable
-            // (both set by the proxy/orchestrator), so normal HTTP caching is
-            // safe and avoids re-downloading the ~1.5MB bundle every load.
-            cacheMode = WebSettings.LOAD_DEFAULT
-            userAgentString = "$userAgentString FreebuffMobile/0.1"
-        }
-        webView.isVerticalScrollBarEnabled = false
-        CookieManager.getInstance().setAcceptCookie(true)
-        webView.setDownloadListener { _, _, _, _, _ ->
-            showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
         }
     }
 

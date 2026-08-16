@@ -124,13 +124,14 @@ jobs:
           echo "Timed out waiting for E2E fixture"
           exit 1
 
-      - name: Run lint and assemble configured debug APK and test APK
+      - name: Run lint and assemble webview + gecko debug APKs and test APK
         working-directory: android
         run: |
           gradle --no-daemon --stacktrace \
-            :app:lintDebug \
-            :app:assembleDebug \
-            :app:assembleDebugAndroidTest \
+            :app:lintWebviewDebug \
+            :app:assembleWebviewDebug \
+            :app:assembleWebviewDebugAndroidTest \
+            :app:assembleGeckoDebug \
             -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
             -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
@@ -153,7 +154,7 @@ jobs:
           disable-animations: true
           working-directory: android
           script: >-
-            gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
+            gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
             -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
             -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
@@ -188,7 +189,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
           apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -n "${apksigner}"
           test -s "${apk}"
@@ -199,7 +200,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: freebuff-mobile-debug-${{ github.sha }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/webview/debug/app-webview-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload GeckoView spike APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-gecko-${{ github.sha }}
+          path: android/app/build/outputs/apk/gecko/debug/app-gecko-debug.apk
           if-no-files-found: error
           retention-days: 14
 
