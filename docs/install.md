@@ -55,21 +55,29 @@ and patches the UI bundle. It lives at ~/FB-Browser-UI/src/freebuff_tailnet_prox
 - systemctl --user daemon-reload && systemctl --user enable --now freebuff-tailnet-proxy
 - Verify: curl http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
 
-### 3. Patch the packaged UI bundle (stops empty-thread pollution)
-The packaged UI auto-creates an empty "New thread" on every page load through
-openTab(path, threadId, home=true). Patch the served JS so the boot home call
-reuses an existing thread instead:
+### 3. Patch the packaged UI bundle (boot home must not hijack the active thread)
+The packaged UI's boot hook calls openTab(path, threadId, home=true) on every
+page load. Stock code creates an empty "New thread" for the home tab; the
+earlier reuse patch reused an arbitrary restored tab, which wiped its
+messages, duplicated the tab id, and moved the active thread off the last
+chat. The current patch (apply ALL of these to the on-disk bundle, exactly
+as src/freebuff_tailnet_proxy.js does in patchBundle):
 - Bundle: <install>/squashfs-root/resources/orchestrator/ui/assets/index-*.js
-- Find the exact string:
-  lr(t,()=>ve.createThread(n,{inheritFromThreadId:i}),"Could not open tab")
-- Replace it with the CREATE_REUSE constant defined in
-  ~/FB-Browser-UI/src/freebuff_tailnet_proxy.js (the proxy already applies
-  this same patch to what it serves; the on-disk patch is for clients that
-  hit 58060 directly).
+- CREATE: prefer the existing home tab, else the pinned fb.homeThread id;
+  create a fresh home thread only when neither exists (and pin it).
+- SETSTATE: never wipe an existing thread entry, promote the reused tab
+  instead of duplicating it, and keep activeId untouched on the home path.
+- SCROLL + CLOSE patches: same constants as the proxy (thread switch lands
+  at the last message; closing a phantom tab prefers the non-home copy).
+- Easiest: mirror patchBundle() from ~/FB-Browser-UI/src/freebuff_tailnet_proxy.js
+  (CREATE_MARK/CREATE_REUSE_V1 -> CREATE_REUSE, SETSTATE_MARK -> SETSTATE_FIX,
+  SCROLL_MARK -> SCROLL_FIX, CLOSE_MARK1..3 -> CLOSE_FIX1..3).
 - After replacing, run: node --check on the bundle file.
-- Verify the served bundle contains the marker:
+- Verify the served bundle contains the markers:
   curl -s http://127.0.0.1:58060/assets/index-*.js | grep -c fb.homeThread
-  (should be 1)
+  (should be 1) and
+  curl -s http://127.0.0.1:58060/assets/index-*.js | grep -c 'h.id!==s.id'
+  (should be 1).
 
 ### 4. Inject the desktop shim into index.html (server-side folder browser)
 The "Open project" flow needs window.freebuffDesktop.pickDirectory. The shim
@@ -166,9 +174,9 @@ the same /v1/mobile/session cookie exchange as Android.
 ## Why these patches exist
 
 - **Boot-time thread pollution**: the packaged UI created 1 to 3 empty "New
-  thread" rows on every page load. The bundle patch makes the boot home call
-  reuse an existing live thread (with a localStorage pin + hydration retry),
-  so reloads never spawn garbage threads.
+  thread" rows on every page load. The bundle patch pins one dedicated home
+  thread per browser (localStorage `fb.homeThread`), reuses it on reload,
+  and keeps `activeId` on the last chat instead of hijacking it.
 - **Folder browser**: the browser can't see the server's filesystem and has no
   Electron picker, so the shim provides `pickDirectory` as a server-side file
   browser (breadcrumbs, Up/Home, recents) over the orchestrator's

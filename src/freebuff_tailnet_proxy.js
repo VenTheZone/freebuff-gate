@@ -256,32 +256,33 @@ function injectInto(html) {
   return inject + html;
 }
 
-// ---- Bundle patch: stop the boot-time empty-thread auto-create ----
+// ---- Bundle patch: boot home tab must never hijack the active thread ----
 // The packaged UI's boot hook calls wy({pickProject:!1,home:!0}) on every
-// page load to open the home screen. That routes into the store's
-// openTab(path, threadId, home), which ALWAYS calls ve.createThread() even
-// when a home tab already exists — orphaning an empty "New thread" in the
-// DB on every load (and its re-armed guard makes it 2-3 per load). The
-// proxy is the one layer we control that sees every browser-port load, so
-// patch openTab's home branch to reuse an existing tab instead of creating
-// a new thread: prefer the existing home tab, else the first restored tab
-// whose thread is still live, else the thread id pinned in localStorage
-// (fb.homeThread, set the first time a home thread is created), else the
-// leftmost restored tab if it is live. Dead tabs whose threads were
-// deleted are skipped, so a reload never respawns a purged thread. The
-// reused branch must return the FULL thread object from the store (not
-// just its id): openTab wraps whatever the callback returns into the
-// threads map, and a bare {id} stub replaces the real thread and crashes
-// the thread view (e.deliveries.at(-1)). Because thread hydration can lag
-// the boot home call, an unmatched lookup retries once after 800ms and
-// only then creates a thread (pinning its id for future boots). First
-// ever boot (no tabs, nothing pinned) still creates the initial home
-// thread; user-initiated new threads (the .tab-new button / "New session"
-// menu) pass home=false and are untouched.
+// page load. That routes into openTab(path, threadId, home=true), which in
+// the stock bundle ALWAYS calls ve.createThread() — orphaning an empty
+// "New thread" in the DB on every load. The earlier reuse patch fixed the
+// leak but reused the FIRST HYDRATED restored tab as the home tab, which
+// (a) wiped that thread's messages in the store, (b) left a duplicate tab
+// id (home + phantom), and (c) let the phantom cleanup close the real tab
+// and move activeId off the last chat. Fix both halves:
+//   callback: prefer the existing home tab, else the pinned fb.homeThread
+//   id; only create a fresh home thread when neither exists (and pin it).
+//   setState: never wipe an existing thread entry, promote the reused tab
+//   instead of duplicating it, and keep activeId untouched on the home
+//   path (a reload must land on the thread the user was chatting in last).
+// The callback must return the FULL thread object from the store, not a
+// bare id: openTab wraps the result into the threads map, and a {id} stub
+// replaces the real thread and crashes the thread view.
 const CREATE_MARK =
   'lr(t,()=>ve.createThread(n,{inheritFromThreadId:i}),"Could not open tab")';
-const CREATE_REUSE =
+const CREATE_REUSE_V1 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home)||ts.find(x=>lv(x.id)),th=hb&&lv(hb.id)||(()=>{try{const k=localStorage.getItem("fb.homeThread");return k&&lv(k)}catch(e){}})();return th||(ts[0]&&lv(ts[0].id))},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);const nt=ve.createThread(n,{inheritFromThreadId:i});try{localStorage.setItem("fb.homeThread",nt.id)}catch(e){}q(nt)},800))},"Could not open tab")';
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home);if(hb&&lv(hb.id))return lv(hb.id);let k=null;try{k=localStorage.getItem("fb.homeThread")}catch(e){}if(k&&lv(k))return lv(k);return null},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);const nt=ve.createThread(n,{inheritFromThreadId:i});try{localStorage.setItem("fb.homeThread",nt.id)}catch(e){}q(nt)},800))},"Could not open tab")';
+const SETSTATE_MARK =
+  'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
+const SETSTATE_FIX =
+  'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0;let u={...o.threads};if(!r||!u[s.id])u[s.id]={thread:s,messages:[],items:[]};if(c&&c.id!==s.id)delete u[c.id];return{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home&&h.id!==s.id)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r?(o.activeId!=null&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id):s.id}}),mi(),!0):!1}';
 
 // ---- Bundle patch: thread switch always lands at the last message ----
 // The chat scroll hook (VZ) scrolls .messages to the bottom inside a layout
@@ -325,6 +326,8 @@ const CLOSE_FIX3 =
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
+  if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
   if (out.includes(CLOSE_MARK2)) out = out.split(CLOSE_MARK2).join(CLOSE_FIX2);
