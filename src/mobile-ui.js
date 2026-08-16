@@ -3879,6 +3879,25 @@
       !!(key && msgExpandedSet && msgExpandedSet.has(key))
     );
   }
+  // The fold button lives on the message ROW, not inside the bubble: the
+  // bubble itself is clipped (max-height + overflow) while collapsed, so a
+  // button inside it would be cut off on long messages. The row is a flex
+  // column aligned to the message edge, so the button lines up for free.
+  function foldButtonFor(bubble) {
+    var row = bubble.closest && bubble.closest('.msg');
+    if (!row) return null;
+    var btn = row.querySelector('.fb-msg-expand');
+    if (btn) return btn;
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fb-msg-expand';
+    row.appendChild(btn);
+    return btn;
+  }
+  function foldLabelFor(btn, expanded) {
+    btn.textContent = expanded ? 'Show less' : 'Show more';
+    btn.setAttribute('aria-label', expanded ? 'Show less' : 'Show more');
+  }
   function currentThreadId() {
     var ws = document.getElementById('thread-workspace');
     if (!ws) return '';
@@ -3893,16 +3912,10 @@
       msgCompactProcessed.add(b);
       if (b.scrollHeight <= 240) continue;
       var key = msgKeyOf(b);
-      if (key && msgExpandedSet && msgExpandedSet.has(key)) continue;
-      b.classList.add('fb-msg-collapsed');
-      if (!b.querySelector('.fb-msg-expand')) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'fb-msg-expand';
-        btn.setAttribute('aria-label', 'Show more');
-        btn.textContent = 'Show more';
-        b.appendChild(btn);
-      }
+      var expanded = !!(key && msgExpandedSet && msgExpandedSet.has(key));
+      b.classList.add(expanded ? 'fb-msg-expanded' : 'fb-msg-collapsed');
+      var btn = foldButtonFor(b);
+      if (btn) foldLabelFor(btn, expanded);
     }
     syncMsgToggle();
   }
@@ -3948,23 +3961,16 @@
       var b = bubbles[i];
       if (!isLongBubble(b)) continue;
       var key = msgKeyOf(b);
+      var btn = foldButtonFor(b);
       if (expanding) {
         b.classList.remove('fb-msg-collapsed');
         b.classList.add('fb-msg-expanded');
-        var btn = b.querySelector('.fb-msg-expand');
-        if (btn && btn.parentNode === b) btn.parentNode.removeChild(btn);
+        if (btn) foldLabelFor(btn, true);
         if (key && msgExpandedSet) msgExpandedSet.add(key);
       } else {
         b.classList.add('fb-msg-collapsed');
         b.classList.remove('fb-msg-expanded');
-        if (!b.querySelector('.fb-msg-expand')) {
-          var nb = document.createElement('button');
-          nb.type = 'button';
-          nb.className = 'fb-msg-expand';
-          nb.setAttribute('aria-label', 'Show more');
-          nb.textContent = 'Show more';
-          b.appendChild(nb);
-        }
+        if (btn) foldLabelFor(btn, false);
         if (key && msgExpandedSet) msgExpandedSet.delete(key);
       }
     }
@@ -3989,18 +3995,24 @@
     document.addEventListener('click', function (ev) {
       var btn = ev.target && ev.target.closest && ev.target.closest('.fb-msg-expand');
       if (!btn) return;
-      var bubble = btn.closest && btn.closest('.bubble');
+      var row = btn.closest && btn.closest('.msg');
+      var bubble = row && row.querySelector('.bubble');
       if (!bubble) return;
-      bubble.classList.remove('fb-msg-collapsed');
-      bubble.classList.add('fb-msg-expanded');
-      // The button has done its job; drop it so "Show more" does not linger
-      // as a dead control next to an already-expanded message.
-      if (btn.parentNode === bubble) btn.parentNode.removeChild(btn);
+      var expanding = bubble.classList.contains('fb-msg-collapsed');
+      if (expanding) {
+        bubble.classList.remove('fb-msg-collapsed');
+        bubble.classList.add('fb-msg-expanded');
+      } else {
+        bubble.classList.add('fb-msg-collapsed');
+        bubble.classList.remove('fb-msg-expanded');
+      }
       var key = msgKeyOf(bubble);
       if (key && msgExpandedSet) {
-        msgExpandedSet.add(key);
-        saveExpandedMessages();
+        if (expanding) msgExpandedSet.add(key);
+        else msgExpandedSet.delete(key);
       }
+      foldLabelFor(btn, expanding);
+      saveExpandedMessages();
       syncMsgToggle();
     });
     waitForEl('.thread-transcript', function () {

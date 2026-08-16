@@ -38,10 +38,10 @@
   -webkit-mask-image: linear-gradient(rgba(0, 0, 0, 1) 55%, transparent);
   mask-image: linear-gradient(rgba(0, 0, 0, 1) 55%, transparent);
 }
-.msg.user .bubble .fb-msg-expand {
+.msg.user .fb-msg-expand {
   display: block;
-  margin-top: 8px;
-  padding: 6px 12px;
+  margin-top: 6px;
+  padding: 4px 10px;
   border: 1px solid var(--border, #444);
   border-radius: 8px;
   background: var(--surface-2, #1a1a1a);
