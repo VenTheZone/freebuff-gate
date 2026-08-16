@@ -316,7 +316,7 @@ const CLOSE_FIX1 =
 const CLOSE_MARK2 =
   'const h=u.tabs.filter(_=>!o.has(_.id)),{[n]:p,...f}=u.threads;';
 const CLOSE_FIX2 =
-  'const h=u.tabs.filter(_=>!o.has(_.id)||(_.home&&_.id===n)),k2=u.tabs.some(_=>_.home&&_.id===n),f=k2?u.threads:(({[n]:p,...f2}=u.threads),f2);';
+  'const h=u.tabs.filter(_=>!o.has(_.id)||(_.home&&_.id===n)),k2=u.tabs.some(_=>_.home&&_.id===n),f=(()=>{if(k2)return u.threads;const g={...u.threads};delete g[n];return g})();';
 const CLOSE_MARK3 =
   'i.file||await ve.close(n).catch(()=>{})},setActive(n){';
 const CLOSE_FIX3 =
