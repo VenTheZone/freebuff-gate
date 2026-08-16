@@ -442,7 +442,12 @@ jobs:
             adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null &&
             adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0" &&
             ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "System CA injection failed"; exit 1; } ) &&
-            adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true &&
+            echo "cacerts link: $(adb shell readlink /system/etc/security/cacerts 2>&1 || echo not-a-symlink)" &&
+            echo "apex dir: $(adb shell ls -ld /apex/com.android.conscrypt/cacerts 2>&1 || echo absent)" &&
+            echo "selinux: $(adb shell getenforce 2>&1 || true) label: $(adb shell ls -laZ /system/etc/security/cacerts/ 2>&1 | grep "${hash}" || true)" &&
+            echo "local sha1: $(sha1sum "$cert" | cut -d' ' -f1) device sha1: $(adb shell sha1sum /system/etc/security/cacerts/${hash}.0 2>&1 || true)" &&
+            ( adb shell ls -ld /apex/com.android.conscrypt/cacerts >/dev/null 2>&1 && adb push "$cert" "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 && adb shell chmod 644 "/apex/com.android.conscrypt/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
+            ( adb shell restorecon "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || adb shell chcon u:object_r:system_file:s0 "/system/etc/security/cacerts/${hash}.0" >/dev/null 2>&1 || true ) &&
             adb reboot &&
             i=0 && while [ $i -lt 60 ]; do b="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" && [ "$b" = "1" ] && break; i=$((i+1)); sleep 5; done &&
             [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ] &&
