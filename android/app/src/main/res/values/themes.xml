@@ -16,6 +16,5 @@
         <item name="colorSurface">@color/window_background</item>
         <item name="colorOnSurface">#E7E7E8</item>
         <item name="colorOnSurfaceVariant">#9A9AA0</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>
