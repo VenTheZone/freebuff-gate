@@ -1,0 +1,145 @@
+name: iOS build
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - "src/mobile-connect-*.js"
+      - "install-mobile-connect.sh"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - "src/mobile-connect-*.js"
+      - "install-mobile-connect.sh"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build for simulator (no signing)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project FreebuffGate.xcodeproj \
+            -scheme FreebuffGate \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Run unit tests on simulator
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project FreebuffGate.xcodeproj \
+            -scheme FreebuffGate \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Locate built app
+        working-directory: ios
+        id: app-path
+        run: |
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -name 'FreebuffGate.app' -type d | head -1)
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Found: $APP"
+
+      - name: Upload unsigned simulator app
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreebuffGate-simulator-unsigned
+          path: ${{ steps.app-path.outputs.app }}
+          if-no-files-found: error
+          retention-days: 14
+
+  signed-ipa:
+    # Produces a device-installable IPA when signing secrets are configured.
+    # Without an Apple Developer account + certificates, this job stays
+    # skipped; the simulator build above is the default CI path.
+    if: ${{ secrets.IOS_SIGNING_CERT_BASE64 != '' }}
+    runs-on: macos-14
+    timeout-minutes: 40
+    needs: build-test
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Import signing certificate
+        env:
+          IOS_SIGNING_CERT_BASE64: ${{ secrets.IOS_SIGNING_CERT_BASE64 }}
+          IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$IOS_SIGNING_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$RUNNER_TEMP" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$RUNNER_TEMP" build.keychain
+          security import "$RUNNER_TEMP/dist.p12" -k build.keychain -P "$IOS_SIGNING_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$RUNNER_TEMP" build.keychain
+
+      - name: Archive signed app
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project FreebuffGate.xcodeproj \
+            -scheme FreebuffGate \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/FreebuffGate.xcarchive" \
+            -allowProvisioningUpdates \
+            archive
+
+      - name: Export IPA
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/FreebuffGate.xcarchive" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreebuffGate-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+          retention-days: 14

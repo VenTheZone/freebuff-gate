@@ -1,0 +1,46 @@
+name: FreebuffGate
+options:
+  bundleIdPrefix: com.freebuff
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+targets:
+  FreebuffGate:
+    type: application
+    platform: iOS
+    sources:
+      - path: FreebuffGate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.freebuff.gate
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_FILE: FreebuffGate/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG"
+  FreebuffGateTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: FreebuffGateTests
+    dependencies:
+      - target: FreebuffGate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.freebuff.gate.tests
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: true
+schemes:
+  FreebuffGate:
+    build:
+      targets:
+        FreebuffGate: all
+    test:
+      targets:
+        - FreebuffGateTests

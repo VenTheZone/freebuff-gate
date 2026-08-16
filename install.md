@@ -145,6 +145,18 @@ If the phone app is used:
 | Relay | `src/mobile-connect-relay.js` | 8795 | HTTPS/WSS for the Android app |
 | Agent | `src/mobile-connect-agent.js` | n/a | Bridges relay → proxy (58061) |
 | Mobile UI | `src/mobile-ui.css`, `src/mobile-ui.js` | n/a | Mobile adaptation layer |
+| iOS app | `ios/` | n/a | Native iOS companion (QR pairing, restricted WKWebView) |
+
+## iOS companion app
+
+`ios/` is the native iOS port of the Android companion: QR pairing, Keychain
+device identity, AES-GCM session storage, reconnect with jittered backoff,
+and a WKWebView restricted to the relay origin. Build with XcodeGen + Xcode
+(see ios/README.md), or let .github/workflows/ios.yml build it on macOS CI.
+CI produces an unsigned simulator .app by default; a signed IPA requires an
+Apple Developer account (ad-hoc signing secrets), which the signed-ipa job
+uses when present. The app pairs against the same managed relay and consumes
+the same /v1/mobile/session cookie exchange as Android.
 
 ## Why these patches exist
 
