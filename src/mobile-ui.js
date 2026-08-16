@@ -3871,6 +3871,19 @@
       localStorage.setItem(MSG_EXPANDED_KEY, JSON.stringify(arr));
     } catch (e) {}
   }
+  function isLongBubble(b) {
+    var key = msgKeyOf(b);
+    return (
+      b.classList.contains('fb-msg-collapsed') ||
+      b.classList.contains('fb-msg-expanded') ||
+      !!(key && msgExpandedSet && msgExpandedSet.has(key))
+    );
+  }
+  function currentThreadId() {
+    var ws = document.getElementById('thread-workspace');
+    if (!ws) return '';
+    return (ws.getAttribute('aria-labelledby') || '').replace(/^thread-tab-/, '');
+  }
   function compactUserMessages() {
     if (!msgCompactProcessed) return;
     var bubbles = document.querySelectorAll('.msg.user .bubble');
@@ -3891,6 +3904,81 @@
         b.appendChild(btn);
       }
     }
+    syncMsgToggle();
+  }
+  // Transcript-level control that expands or collapses every long user
+  // message at once. It floats at the top-right of the transcript and only
+  // shows while the thread has at least one long message. Bulk actions write
+  // the same per-message expanded set, so they persist like single expands.
+  var msgToggle = null;
+  function syncMsgToggle() {
+    if (!msgToggle) return;
+    // The transcript is virtualizer-managed (foreign children there make
+    // React reconcile in a loop), so the toggle floats inside the static
+    // thread-bottom region instead. Re-anchor only when the old container
+    // was unmounted (thread switch); never re-parent a still-connected node.
+    var tb = document.querySelector('.thread-bottom');
+    if (tb && !msgToggle.isConnected) tb.appendChild(msgToggle);
+    var long = 0;
+    var collapsed = 0;
+    var bubbles = document.querySelectorAll('.msg.user .bubble');
+    for (var i = 0; i < bubbles.length; i++) {
+      if (!isLongBubble(bubbles[i])) continue;
+      long++;
+      if (bubbles[i].classList.contains('fb-msg-collapsed')) collapsed++;
+    }
+    var want = long ? (collapsed ? 'Expand all' : 'Collapse all') : null;
+    if (want !== null) {
+      if (msgToggle.style.display !== '') msgToggle.style.display = '';
+      if (msgToggle.textContent !== want) msgToggle.textContent = want;
+    } else if (msgToggle.style.display !== 'none') {
+      // Setting display/textContent is itself a DOM mutation, and the
+      // observer below reacts to every childList change; only touch the
+      // DOM when the value actually differs or the observer and this scan
+      // ping-pong forever.
+      msgToggle.style.display = 'none';
+    }
+  }
+  function msgToggleClick() {
+    if (!msgToggle) return;
+    var expanding = msgToggle.textContent === 'Expand all';
+    var tid = currentThreadId();
+    var bubbles = document.querySelectorAll('.msg.user .bubble');
+    for (var i = 0; i < bubbles.length; i++) {
+      var b = bubbles[i];
+      if (!isLongBubble(b)) continue;
+      var key = msgKeyOf(b);
+      if (expanding) {
+        b.classList.remove('fb-msg-collapsed');
+        b.classList.add('fb-msg-expanded');
+        var btn = b.querySelector('.fb-msg-expand');
+        if (btn && btn.parentNode === b) btn.parentNode.removeChild(btn);
+        if (key && msgExpandedSet) msgExpandedSet.add(key);
+      } else {
+        b.classList.add('fb-msg-collapsed');
+        b.classList.remove('fb-msg-expanded');
+        if (!b.querySelector('.fb-msg-expand')) {
+          var nb = document.createElement('button');
+          nb.type = 'button';
+          nb.className = 'fb-msg-expand';
+          nb.setAttribute('aria-label', 'Show more');
+          nb.textContent = 'Show more';
+          b.appendChild(nb);
+        }
+        if (key && msgExpandedSet) msgExpandedSet.delete(key);
+      }
+    }
+    if (!expanding && tid && msgExpandedSet) {
+      // Drop every saved expansion for this thread, including messages
+      // currently scrolled out of the virtualized list.
+      var all = Array.from(msgExpandedSet);
+      var prefix = tid + ':';
+      for (var j = 0; j < all.length; j++) {
+        if (String(all[j]).indexOf(prefix) === 0) msgExpandedSet.delete(all[j]);
+      }
+    }
+    saveExpandedMessages();
+    syncMsgToggle();
   }
   function bindMessageCompact() {
     if (msgCompactBound) return;
@@ -3913,14 +4001,25 @@
         msgExpandedSet.add(key);
         saveExpandedMessages();
       }
+      syncMsgToggle();
     });
-    waitForEl('.messages', function () {
+    waitForEl('.thread-transcript', function () {
+      msgToggle = document.createElement('button');
+      msgToggle.type = 'button';
+      msgToggle.className = 'fb-msg-toggle';
+      msgToggle.setAttribute('aria-label', 'Expand or collapse all long messages');
+      msgToggle.style.display = 'none';
+      msgToggle.addEventListener('click', msgToggleClick);
+      var tb = document.querySelector('.thread-bottom');
+      if (tb) tb.appendChild(msgToggle);
       compactUserMessages();
+      syncMsgToggle();
       new MutationObserver(function (records) {
         if (!records.some(function (r) { return r.addedNodes && r.addedNodes.length; })) {
           return;
         }
         compactUserMessages();
+        syncMsgToggle();
       }).observe(document.body, { childList: true, subtree: true });
     });
   }

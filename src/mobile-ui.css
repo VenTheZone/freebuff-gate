@@ -56,6 +56,30 @@
   mask-image: none;
 }
 
+/* Transcript-level bulk control: floats at the top-right of the
+   thread-bottom region (the transcript itself is virtualizer-managed, so
+   injected nodes must live outside it). Only visible while the thread has
+   at least one long user message. */
+.thread-bottom .fb-msg-toggle {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 5;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #444);
+  border-radius: 999px;
+  background: var(--surface-2, #1a1a1a);
+  color: var(--text, #eee);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0.9;
+}
+.thread-bottom .fb-msg-toggle:hover {
+  opacity: 1;
+}
+
 /* ─────────────── 1000px: mobile layout (phones & small tablets) ────────── */
 @media (max-width: 1000px) {
   /* Cap the composer's auto-growing textarea so typing never reflows the
