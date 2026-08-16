@@ -406,26 +406,18 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -writable-system
           disable-animations: true
           working-directory: android
-          script: |
-            # The emulator-runner action executes this with /usr/bin/sh (dash),
-            # so keep it POSIX sh: no pipefail, no bashisms.
-            set -eu
-            cert="$RUNNER_TEMP/freebuff-e2e/relay.crt"
-            adb root >/dev/null
-            adb wait-for-device
-            adb remount >/dev/null || {
-              adb shell avbctl disable-verification >/dev/null 2>&1 || true
-              adb reboot
-              adb wait-for-device
-              adb root >/dev/null
-              adb wait-for-device
-              adb remount >/dev/null
-            }
-            hash="$(openssl x509 -inform PEM -subject_hash_old -in "$cert" | head -n1)"
-            adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null
-            adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0"
-            adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" \
-              || { echo "System CA injection failed"; exit 1; }
+          # The emulator-runner action runs each line of the script through its
+          # own /usr/bin/sh -c, so the whole flow must be a single folded line
+          # chained with && and ; (no multiline blocks, no bashisms).
+          script: >-
+            set -u &&
+            cert="$RUNNER_TEMP/freebuff-e2e/relay.crt" &&
+            adb root >/dev/null && adb wait-for-device &&
+            ( adb remount >/dev/null || { adb shell avbctl disable-verification >/dev/null 2>&1 || true; adb reboot; adb wait-for-device; adb root >/dev/null; adb wait-for-device; adb remount >/dev/null; } ) &&
+            hash="$(openssl x509 -inform PEM -subject_hash_old -in "$cert" | head -n1)" &&
+            adb push "$cert" "/system/etc/security/cacerts/${hash}.0" >/dev/null &&
+            adb shell chmod 644 "/system/etc/security/cacerts/${hash}.0" &&
+            ( adb shell ls /system/etc/security/cacerts/ | grep -q "^${hash}\.0$" || { echo "System CA injection failed"; exit 1; } ) &&
             gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
 
       - name: Stop ephemeral relay fixture and remove generated test inputs
