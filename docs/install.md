@@ -145,6 +145,15 @@ If the phone app is used:
   lines to ~/.config/freebuff-desktop/ad-sniff.log. Re-apply after app
   updates; the proxy-side half lives in the repo (src/freebuff_tailnet_proxy.js)
   and only needs a proxy restart.
+- Perf probe (optional debug tool): src/perf-probe.js collects Navigation +
+  Resource Timing and renders a waterfall when the URL carries ?fbperf=1 (or
+  #fbperf). It POSTs to /api/fb/perf-report, which logs JSON lines to
+  ~/.config/freebuff-desktop/perf-report.log tagged webview|firefox|browser
+  (detected from the user-agent) so a phone WebView run and a Firefox run
+  can be compared side by side. The proxy injects the probe only when the
+  flag is present and logs its own reports; the orchestrator half
+  (injectPerfProbe helper in serveSpa + the /api/fb/perf-report route) is
+  an on-disk patch that must be re-applied after app updates.
 - The proxy reads src/mobile-ui.css and src/mobile-ui.js from the repo on
   every request, so UI changes only need a proxy restart (or nothing).
 - systemd user units keep proxy/relay/agent alive across reboots (loginctl

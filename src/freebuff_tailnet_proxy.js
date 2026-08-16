@@ -24,6 +24,37 @@ const up = new URL(UPSTREAM);
 const REPO = '/home/admin/FB-Browser-UI/src';
 const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
+const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
+
+// ---- perf probe ----
+// In-page Navigation/Resource Timing probe (src/perf-probe.js). Dormant unless
+// the URL carries ?fbperf=1 (or #fbperf). The probe POSTs its waterfall to
+// /api/fb/perf-report, which the proxy logs here (tagged webview|firefox|
+// browser by user-agent) so a phone WebView run and a Firefox run can be
+// compared side by side.
+const PERF_REPORT_LOG = path.join(os.homedir(), '.config', 'freebuff-desktop', 'perf-report.log');
+function perfClient(ua) {
+  ua = String(ua || '');
+  if (/FreebuffMobile\//.test(ua)) return 'webview';
+  if (/Firefox\//.test(ua)) return 'firefox';
+  return 'browser';
+}
+function perfReport(ua, body) {
+  try {
+    let parsed = {};
+    try { parsed = JSON.parse(body || '{}'); } catch (e) { /* keep {} */ }
+    fs.mkdirSync(path.dirname(PERF_REPORT_LOG), { recursive: true });
+    fs.appendFileSync(PERF_REPORT_LOG, JSON.stringify({ ts: new Date().toISOString(), client: perfClient(ua), ...parsed }) + '\n');
+  } catch (e) { /* probe logging must never break the proxy */ }
+}
+function perfTag() {
+  try {
+    const body = fs.readFileSync(PERF_PROBE_PATH, 'utf8');
+    return `<script id="fb-perf-probe">${body}<\/script>`;
+  } catch (e) {
+    return '';
+  }
+}
 
 // ---- ad request sniffer ----
 // Logs every /api/ad/* request and response that flows through the proxy
@@ -251,8 +282,8 @@ function mobileTag(type) {
   }
 }
 
-function injectInto(html) {
-  const inject = mobileTag('css') + mobileTag('js') + `<script id="fb-desktop-shim">${SHIM}<\/script>`;
+function injectInto(html, withPerf) {
+  const inject = mobileTag('css') + mobileTag('js') + (withPerf ? perfTag() : '') + `<script id="fb-desktop-shim">${SHIM}<\/script>`;
   if (html.includes('</head>')) return html.replace('</head>', inject + '</head>');
   return inject + html;
 }
@@ -347,6 +378,18 @@ const server = http.createServer((req, res) => {
   try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch (e) { /* keep raw */ }
   const sniffAd = pathname.startsWith('/api/ad/');
   if (sniffAd) adSniff('proxy-request', { path: pathname, method: req.method });
+  // Perf probe reports are logged locally (not forwarded upstream): the
+  // proxy is the origin the phone WebView sees, so its report must land here.
+  if (req.method === 'POST' && pathname === '/api/fb/perf-report') {
+    const perfChunks = [];
+    req.on('data', (c) => perfChunks.push(c));
+    req.on('end', () => {
+      perfReport(req.headers['user-agent'], Buffer.concat(perfChunks).toString('utf8'));
+      res.writeHead(204, { 'cache-control': 'no-store' });
+      res.end();
+    });
+    return;
+  }
   const reqChunks = [];
   if (sniffAd) req.on('data', (c) => reqChunks.push(c));
   const preq = http.request({
@@ -378,7 +421,7 @@ const server = http.createServer((req, res) => {
       pres.on('data', (c) => chunks.push(c));
       pres.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
-        const out = injectInto(body);
+        const out = injectInto(body, /fbperf/.test(req.url || ''));
         const outHeaders = { ...pres.headers };
         outHeaders['content-length'] = Buffer.byteLength(out);
         // The HTML is rewritten per request (shim + bundle patch + mobile
