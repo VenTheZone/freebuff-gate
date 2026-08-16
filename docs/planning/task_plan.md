@@ -18,7 +18,7 @@ Pairing uses a short-lived one-use QR token plus terminal confirmation. Normal r
 
 ## Phases
 
-### Phase 1 — Protocol and security contract (complete)
+### Phase 1: Protocol and security contract (complete)
 
 - Define pairing, device approval, session, revoke, heartbeat, and reconnect states.
 - Define relay framing and same-origin forwarding for UI, API, SSE, and WebSocket traffic.
@@ -27,11 +27,11 @@ Pairing uses a short-lived one-use QR token plus terminal confirmation. Normal r
 
 Planned files:
 
-- `src/mobile-connect-protocol.js` — shared message/state contract. **Done.**
-- `.env.example` — relay URL and non-secret configuration names only. **Done.**
-- `README.md` — user-facing setup and threat model. **Done.**
+- `src/mobile-connect-protocol.js`: shared message/state contract. **Done.**
+- `.env.example`: relay URL and non-secret configuration names only. **Done.**
+- `README.md`: user-facing setup and threat model. **Done.**
 
-### Phase 2 — Desktop connector and CLI (gateway + connector prototype complete; native CLI integration pending)
+### Phase 2: Desktop connector and CLI (gateway + connector prototype complete; native CLI integration pending)
 
 - Add `freebuff phone connect`, `devices`, `revoke`, and `disconnect` command surface at the actual Freebuff CLI integration boundary.
 - Generate terminal QR/manual code without logging long-lived credentials. **Done with dependency-free ANSI QR renderer; `--no-qr` is available for piped output.**
@@ -40,17 +40,17 @@ Planned files:
 
 Planned files after runtime boundary is confirmed:
 
-- `src/mobile-connect-agent.js` — managed relay data-plane connector. **Done as standalone Node 22 agent.**
-- `src/mobile-connect-cli.js` — gateway CLI is currently in `src/mobile-connect-gateway.js`; native Freebuff CLI integration remains blocked by binary boundary.
+- `src/mobile-connect-agent.js`: managed relay data-plane connector. **Done as standalone Node 22 agent.**
+- `src/mobile-connect-cli.js`: gateway CLI is currently in `src/mobile-connect-gateway.js`; native Freebuff CLI integration remains blocked by binary boundary.
 - protected local device/session state outside Git
 
 Implemented first slice:
 
-- `src/mobile-connect-gateway.js` — pairing control plane, refresh, device list, and revoke.
-- `src/mobile-connect-qr.js` — ANSI QR renderer adapted from MIT-licensed Project Nayuki.
-- `src/mobile-connect-gateway.test.js` — protocol and HTTP tests. **Done: 4 tests.**
+- `src/mobile-connect-gateway.js`: pairing control plane, refresh, device list, and revoke.
+- `src/mobile-connect-qr.js`: ANSI QR renderer adapted from MIT-licensed Project Nayuki.
+- `src/mobile-connect-gateway.test.js`: protocol and HTTP tests. **Done: 4 tests.**
 
-### Phase 3 — Managed relay data plane (prototype complete; deployment pending)
+### Phase 3: Managed relay data plane (prototype complete; deployment pending)
 
 - Implement relay that maps opaque pairing/session IDs to one desktop connector.
 - Support WSS upgrade, SSE without buffering, WebSocket forwarding, bounded connection lifetime, and reconnect. **Prototype done.**
@@ -59,12 +59,12 @@ Implemented first slice:
 
 Planned files or deployment surface:
 
-- `src/mobile-connect-websocket.js` — dependency-free server-side WebSocket framing.
-- `src/mobile-connect-relay.js` — managed relay HTTP/WSS forwarding and cookie exchange.
-- `src/mobile-connect-agent.js` — desktop outbound connector and local upstream proxy client.
+- `src/mobile-connect-websocket.js`: dependency-free server-side WebSocket framing.
+- `src/mobile-connect-relay.js`: managed relay HTTP/WSS forwarding and cookie exchange.
+- `src/mobile-connect-agent.js`: desktop outbound connector and local upstream proxy client.
 - Otherwise deploy these files as a separate relay/agent service with documented `FB_RELAY_URL` contract.
 
-### Phase 4 — Android app (scaffold + cookie exchange complete; real CI E2E added; device validation pending)
+### Phase 4: Android app (scaffold + cookie exchange complete; real CI E2E added; device validation pending)
 
 - Create native Kotlin app with QR scanner, manual code fallback, pairing approval, connection state, and restricted WebView. **Scaffold done.**
 - Store device key in Android Keystore. **Done.**
@@ -78,7 +78,7 @@ Selected project:
 
 - `android/` in this repository for initial scaffold. Move to dedicated repository later if release ownership requires it.
 
-### Phase 5 — Validation and rollout (Android + relay CI configured; remote E2E run pending)
+### Phase 5: Validation and rollout (Android + relay CI configured; remote E2E run pending)
 
 - Test same-origin UI, API, SSE, active streaming, reload, rotation, network changes, relay restart, and duplicate-submit prevention.
 - Run Android instrumentation and real relay pairing E2E on API 35 emulator in GitHub Actions.
@@ -87,7 +87,7 @@ Selected project:
 - Run syntax/type checks and targeted protocol/relay tests. **Gateway/relay/agent/QR checks done; HTTPS relay support, Android E2E fixture, configured debug origins, and emulator test added.**
 - Document normal user flow first; put Tailscale under advanced/private mode only. **Done.**
 
-### Phase 6 — Desktop companion installer (implemented; native integration pending)
+### Phase 6: Desktop companion installer (implemented; native integration pending)
 
 - Install managed copies of Node 22 agent dependencies without patching compiled Freebuff binaries. **Done.**
 - Write non-secret relay/UI configuration and stable connector id under user config/data directories. **Done.**
@@ -95,7 +95,7 @@ Selected project:
 - Provision short-lived connector token plus refresh token; store only in protected local credential file and rotate through relay. **Done and tested.**
 - Document companion-process boundary until native Freebuff CLI exposes supported plugin integration. **Done.**
 
-### Phase 7 — Versioned one-command release artifact (complete; publication pending)
+### Phase 7: Versioned one-command release artifact (complete; publication pending)
 
 - Add a Node 22-validated Unix bootstrap installer suitable for `curl | bash`. **Done.**
 - Download immutable, versioned agent/installer files from a release base URL and verify manifest plus SHA-256 checksums before execution. **Done.**
@@ -103,7 +103,7 @@ Selected project:
 - Add Node 22 CI packaging checks and document release publication plus one-command install. **Done.**
 - Publish a real GitHub release/tag and configure managed relay production URLs. **Pending operator action.**
 
-### Phase 8 — Optional Desktop auto-start (complete; host execution pending)
+### Phase 8: Optional Desktop auto-start (complete; host execution pending)
 
 - Add opt-in `--auto-start` and explicit `--no-auto-start` installer controls; keep default install behavior unchanged. **Done.**
 - Generate and manage a systemd user service on Linux, LaunchAgent plist on macOS, and Task Scheduler task on Windows. **Done.**
@@ -111,7 +111,7 @@ Selected project:
 - Add platform-focused pure tests and document service lifecycle, paths, and limitations. **Done.**
 - Execute registrations on real Linux/macOS/Windows hosts. **Pending host-specific validation.**
 
-### Phase 9 — Android APK build (debug build complete; emulator test pending)
+### Phase 9: Android APK build (debug build complete; emulator test pending)
 
 - Install project-local Gradle 8.9 and Android command-line SDK/API 35 toolchain. **Done; `.tools/` ignored.**
 - Run debug APK, lint, and instrumentation APK compilation locally. **Done.**
@@ -119,14 +119,14 @@ Selected project:
 - Run local emulator instrumentation. **Blocked by missing KVM; software emulator timed out during boot/test run.**
 - Verify APK artifact path and signature. **Done for debug APK.**
 
-### Phase 10 — Mobile todo dock relocation (complete)
+### Phase 10: Mobile todo dock relocation (complete)
 
 - Keep desktop `.todo-dock` behavior unchanged. **Done.**
 - On narrow viewports, move native `.thread-bottom .todo-dock` into a fixed floating card below the safe-area header. **Done.**
 - Keep task rows scrollable and touch-friendly so model/reasoning/time pills above the composer cannot cover them. **Done.**
 - Validate injected CSS/JS and document remaining overlap behavior when other header overlays are intentionally open. **Done.**
 
-### Phase 11 — Mobile floating-card collision layout (complete)
+### Phase 11: Mobile floating-card collision layout (complete)
 
 - Keep native and injected card actions unchanged. **Done.**
 - Add one shared recalculation pass for task card, header menus, context card, model sheet, and composer pills. **Done.**
@@ -134,102 +134,102 @@ Selected project:
 - Recalculate after resize, rotation, React DOM changes, and card resize without watching transcript token mutations. **Done.**
 - Validate desktop scoping, proxy injection, syntax, and existing test suite. **Done.**
 
-### Phase 12 — Mobile screenshot regression coverage (complete)
+### Phase 12: Mobile screenshot regression coverage (complete)
 
 - Add deterministic native-UI fixture that loads the actual injected mobile CSS/JS. **Done.**
 - Capture a 390×844 Chromium screenshot and assert header, composer-pill, and task-card geometry. **Done.**
 - Verify injected controls hide and native task positioning returns after widening to desktop. **Done.**
 - Run locally without Playwright by using Node 22's WebSocket client and Chrome DevTools Protocol; upload CI PNG artifact. **Done.**
 
-### Phase 13 — Mobile session-close confirmation (complete)
+### Phase 13: Mobile session-close confirmation (complete)
 
 - Add confirmation popup before mobile session close actions. **Done.**
 - Use red Yes and green No controls with safe-area, focus, Escape, Back, and backdrop cancellation. **Done.**
 - Preserve parent session/thread menu on No and route Yes through native `.tab-close`. **Done.**
 - Add browser interaction coverage for colors, visible live-region semantics, selected-session title, close outcomes, Escape, browser Back, backdrop cancellation, focus restoration, acceptance, and title-menu close. **Done.**
 
-### Phase 14 — Screen-reader validation (fallback complete; device pass blocked)
+### Phase 14: Screen-reader validation (fallback complete; device pass blocked)
 
 - Check Android/iOS host access and available screen-reader runtimes. **Done: no Android device/AVD/KVM; no macOS VoiceOver tooling.**
 - Avoid repeating known software-emulator failure. **Done.**
 - Query Chrome DevTools accessibility tree for selection and close outcome status announcements. **Done.**
 - Run spoken TalkBack and VoiceOver pass on real device or hardware-accelerated CI/macOS host. **Blocked by host/device availability.**
 
-### Phase 15 — Mobile model session availability (complete)
+### Phase 15: Mobile model session availability (complete)
 
 - Read concurrent slot usage from native model-option badges instead of private state or guessed quotas. **Done.**
 - Show per-model available session counts and a sticky grouped summary in the phone model sheet. **Done.**
 - Preserve desktop picker behavior and provide an explicit unavailable state when native data is absent. **Done.**
 - Cover counts, exhausted models, status semantics, and model-sheet screenshot in Chromium regression. **Done.**
 
-### Phase 16 — GitHub screenshot validation (blocked pending publication)
+### Phase 16: GitHub screenshot validation (blocked pending publication)
 
 - Inspect latest remote screenshot run and artifact state. **Done: run `31881849921` failed before capture; no artifact.**
 - Harden Chrome setup path and startup wait for hosted runners. **Done locally.**
 - Commit/push current model availability and CI fixes, dispatch workflow, and inspect uploaded model-picker PNG. **Pending user authorization to publish; remote dispatch `31883126075` used stale `7c3d251` and produced no artifact.**
 
-### Phase 17 — Live model session-slot refresh (complete locally)
+### Phase 17: Live model session-slot refresh (complete locally)
 
 - Observe native model-slot badge changes while phone picker remains open. **Done.**
 - Refresh counts without reacting to injected summary/count mutations. **Done.**
 - Stop observer, fallback timer, and polling when picker closes. **Done.**
 - Cover live ratio change, refreshed summary, detail tooltip, and accessibility tree in Chromium regression. **Done.**
 
-### Phase 18 — Model quota reset labels (complete locally)
+### Phase 18: Model quota reset labels (complete locally)
 
 - Read reset metadata only from native option/context tooltips. **Done.**
 - Show `Resets …` beside each model count and expose it to screen readers. **Done.**
 - Show `Reset time unavailable` when native metadata is absent. **Done.**
 - Cover per-model reset labels and live reset changes in Chromium regression. **Done.**
 
-### Phase 19 — Model session-name clarity (complete locally)
+### Phase 19: Model session-name clarity (complete locally)
 
 - Keep model availability counts compact and non-alarming on phones. **Done: `N available`/`At capacity`; capacity is neutral, not red.**
 - Resolve open session titles from same-origin thread catalog metadata when available. **Done; active visible composer session is also used as a safe fallback.**
 - Show session names using each model beside its availability/reset details without guessing when native metadata is missing. **Done: `Used by: …` or `Session names unavailable`.**
 - Refresh names while picker stays open and cover mapping, fallback, accessibility, and styling in Chromium regression. **Done: 24-test suite and 390×844 model-picker capture pass.**
 
-### Phase 20 — Direct model-to-session switching (complete locally)
+### Phase 20: Direct model-to-session switching (complete locally)
 
 - Make each resolved `Used by: …` session name keyboard and touch activatable. **Done: focusable role-button controls.**
 - Select matching open tab through native `.tab-select` without changing model accidentally. **Done: propagation blocked; disabled model rows use sibling controls.**
 - Announce selected session, close model sheet safely, and cover pointer/keyboard activation in Chromium regression. **Done: active and exhausted-model holder tests pass.**
 
-### Phase 21 — Session-switcher model legend (complete locally)
+### Phase 21: Session-switcher model legend (complete locally)
 
 - Show compact model label beneath each open session in mobile switcher. **Done.**
 - Use catalog/active-session metadata and current composer fallback; never infer model from slot tier. **Done.**
 - Include model label for Recent rows when available and explicit fallback when unavailable. **Done.**
 - Cover legend rendering and metadata refresh in Chromium regression without changing desktop tabs. **Done: active, exhausted, and Recent rows covered.**
 
-### Phase 22 — Live session status legend (complete locally)
+### Phase 22: Live session status legend (complete locally)
 
 - Resolve each session's running/stopped state from native catalog state and live tab/composer state without guessing model or quota data. **Done.**
 - Show compact status beside model labels for open and Recent mobile session rows, with accessible labels and neutral stopped styling. **Done.**
 - Refresh status while the switcher stays open and react to native tab state changes without disrupting focus or selection. **Done: one-second menu-scoped polling plus tabbar observer.**
 - Cover initial status, live running-to-stopped change, Recent status, accessibility semantics, and desktop scoping in Chromium regression. **Done.**
 
-### Phase 23 — Mobile session model filter (complete locally)
+### Phase 23: Mobile session model filter (complete locally)
 
 - Add accessible `All models`/model select control to mobile session switcher without changing desktop tabs. **Done.**
 - Filter open and Recent rows by resolved visible model label, including explicit `Model unavailable` fallback. **Done.**
 - Keep filter selection stable while catalog/model/status data refreshes and show a clear no-match state. **Done: option DOM is preserved when labels do not change.**
 - Cover model selection, row visibility, Recent filtering, accessibility, reset to All models, and desktop scoping in Chromium regression. **Done.**
 
-### Phase 24 — Android test publication (published; E2E follow-up pending)
+### Phase 24: Android test publication (published; E2E follow-up pending)
 
 - Make generic debug APKs usable with a QR-provided HTTPS relay while retaining pinned-origin CI/production builds. **Done.**
 - Fix Android emulator workflow command folding and always upload verified debug APK after test failure. **Done.**
 - Push release changes, rerun Android CI, and inspect APK/instrumentation artifacts. **Done: run `31885659309` built and signature-verified APK; relay integration passed.**
 - Publish clearly labeled pre-release APK; production relay and release signing remain separate. **Done: `mobile-v0.1.0-test`; real relay WebView-load test remains follow-up.**
 
-### Phase 25 — Android dark theme polish (published test release)
+### Phase 25: Android dark theme polish (published test release)
 
 - Replace hardcoded white/black setup-screen colors with theme-aware surfaces and text. **Done.**
 - Make Android shell dark by default so pairing UI is comfortable in low-light use. **Done.**
 - Build and lint debug APK; publish updated APK after user approval. **Done: published `mobile-v0.1.1-dark-theme-test`; production relay/signing remain separate.**
 
-### Phase 26 — Freebuff Gate live-test preparation (in progress)
+### Phase 26: Freebuff Gate live-test preparation (in progress)
 
 - Rename Android app display label to `Freebuff Gate` without changing package identity. **Done and published.**
 - Preserve device refresh token and immutable device expiry when gateway refresh response omits both fields; add instrumentation regression coverage. **Done and CI-validated.**

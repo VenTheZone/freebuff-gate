@@ -23,7 +23,7 @@ Electron-style app whose orchestrator (a Bun server) serves the browser UI.
 - Tailscale installed, logged in, and the machine on the user's tailnet.
 - The Freebuff Desktop app installed at ~/.local/share/freebuff-desktop/ and
   the FB-Browser-UI repo cloned at ~/FB-Browser-UI (this guide lives at
-  install.md in that repo).
+  docs/install.md in that repo).
 - The app may already be running as a service; do not stop it.
 
 ### Installer can find the stack and check dependencies
