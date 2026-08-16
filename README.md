@@ -415,7 +415,7 @@ FB-Browser-UI/
 ├── docs/
 │   ├── install.md           # full install guide for the stack
 │   ├── mobile.md            # phone/tablet adaptation details
-│   └── planning/            # historical task plans and progress logs
+│   └── planning/            # task plan with phase status
 ├── android/                 # Kotlin Android pairing/WebView scaffold
 └── src/
     ├── folder-select.js     # the folder-selection tweak implementation
