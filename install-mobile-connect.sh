@@ -22,7 +22,8 @@ Freebuff Gate one-command installer
 
 Installs the Freebuff Desktop mobile-connect companion and checks that the
 host is ready for the Freebuff Gate stack (Desktop install present, Node 22+,
-curl, and SHA-256 tooling). Missing dependencies are offered for install.
+curl, and SHA-256 tooling). The script offers to install
+missing dependencies.
 
 Usage:
   curl -fsSL <release-url>/install-mobile-connect.sh | bash -s -- [options]
@@ -41,8 +42,8 @@ All other options are passed to the Node installer, including:
   --upstream-url <url> --connector-id <id> --auto-start --no-auto-start
   --dry-run --force
 
-The bootstrap requires Node 22 or newer, curl, and SHA-256 support. It verifies
-release checksums before executing downloaded installer code.
+The bootstrap requires Node 22 or newer, curl, and SHA-256 support. It
+verifies release checksums before running downloaded code.
 EOF
 }
 
@@ -218,7 +219,7 @@ ask_install() {
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     printf 'Installing %s: %s\n' "$name" "$command"
     if ! eval "$command"; then
-      fail "could not install $name; install it manually and re-run this script"
+      fail "could not install $name. Install it manually, then re-run this script"
     fi
     return 0
   fi
@@ -232,11 +233,11 @@ ask_install() {
   case "$answer" in
     y|Y|yes|YES)
       if ! eval "$command"; then
-        fail "could not install $name; install it manually and re-run this script"
+        fail "could not install $name. Install it manually, then re-run this script"
       fi
       ;;
     *)
-      fail "Freebuff Gate needs $name; install it manually and re-run this script"
+      fail "Freebuff Gate needs $name. Install it manually, then re-run this script"
       ;;
   esac
 }
@@ -281,7 +282,7 @@ install_missing_deps() {
     if command -v apt-get >/dev/null 2>&1; then
       ask_install 'sha256sum (coreutils)' "$(pkg_install coreutils)"
     else
-      ask_install 'sha256sum or shasum' 'install coreutils (Linux) or run the installer in an environment with shasum (macOS)'
+      ask_install 'sha256sum or shasum' 'install coreutils (Linux), or run this script from a Mac terminal (shasum is built in)'
     fi
   fi
 }
@@ -296,7 +297,7 @@ if [[ "${RUN_CHECKS:-1}" -eq 1 ]]; then
     printf 'Freebuff Desktop install: %s\n' "$DESKTOP_DIR"
   else
     DESKTOP_DIR=''
-    printf 'Freebuff Desktop install: NOT FOUND.\n' >&2
+    printf 'Freebuff Desktop install: NOT FOUND\n' >&2
     if [[ "${CHECK_ONLY:-0}" -eq 1 ]]; then
       printf 'Install Freebuff Desktop first, then re-run this script.\n' >&2
       exit 1
