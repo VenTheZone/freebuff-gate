@@ -7,6 +7,8 @@ on:
       - "src/mobile-ui.css"
       - "src/mobile-ui-screenshot-fixture.html"
       - "src/mobile-ui-screenshot.test.js"
+      - "src/freebuff_tailnet_proxy.js"
+      - "src/freebuff-tailnet-proxy.test.js"
       - ".github/workflows/mobile-ui-screenshot.yml"
   pull_request:
     paths:
@@ -14,6 +16,8 @@ on:
       - "src/mobile-ui.css"
       - "src/mobile-ui-screenshot-fixture.html"
       - "src/mobile-ui-screenshot.test.js"
+      - "src/freebuff_tailnet_proxy.js"
+      - "src/freebuff-tailnet-proxy.test.js"
       - ".github/workflows/mobile-ui-screenshot.yml"
   workflow_dispatch:
 
@@ -43,6 +47,13 @@ jobs:
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
+
+      - name: Run proxy cache revalidation tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check src/freebuff_tailnet_proxy.js
+          node --test --test-timeout=10000 src/freebuff-tailnet-proxy.test.js
 
       - name: Capture mobile regression screenshot
         shell: bash

@@ -19,9 +19,8 @@ const crypto = require('crypto');
 
 const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
-const up = new URL(UPSTREAM);
 
-const REPO = '/home/admin/FB-Browser-UI/src';
+const REPO = __dirname;
 const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
@@ -367,7 +366,10 @@ function patchBundle(body) {
   return out;
 }
 
-const server = http.createServer((req, res) => {
+function createProxyServer(options = {}) {
+  const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
+  const up = new URL(upstream);
+  const server = http.createServer((req, res) => {
   const headers = { ...req.headers };
   headers.host = up.host;
   if (headers.origin) {
@@ -423,6 +425,10 @@ const server = http.createServer((req, res) => {
         const body = Buffer.concat(chunks).toString('utf8');
         const out = injectInto(body, /fbperf/.test(req.url || ''));
         const outHeaders = { ...pres.headers };
+        // The body is rewritten, so its byte length changes. Node re-encodes
+        // the body itself once content-length is set; a leftover chunked
+        // transfer-encoding (chunked upstream) would make the response invalid.
+        delete outHeaders['transfer-encoding'];
         outHeaders['content-length'] = Buffer.byteLength(out);
         // The HTML is rewritten per request (shim + bundle patch + mobile
         // layer), so a cached copy can silently serve stale UI (e.g. the old
@@ -443,6 +449,7 @@ const server = http.createServer((req, res) => {
         const body = Buffer.concat(chunks).toString('utf8');
         const out = patchBundle(body);
         const outHeaders = { ...pres.headers };
+        delete outHeaders['transfer-encoding'];
         outHeaders['content-length'] = Buffer.byteLength(out);
         const isMainBundle = /\/assets\/index-[^/]+\.js$/.test(pathname);
         if (isMainBundle) {
@@ -519,8 +526,16 @@ server.on('upgrade', (req, socket, head) => {
   });
   preq.on('error', () => socket.destroy());
   preq.end();
-});
+  });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`freebuff tailnet proxy on 127.0.0.1:${PORT} -> ${UPSTREAM}`);
-});
+  return server;
+}
+
+module.exports = { createProxyServer, patchBundle };
+
+if (require.main === module) {
+  const server = createProxyServer();
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`freebuff tailnet proxy on 127.0.0.1:${PORT} -> ${UPSTREAM}`);
+  });
+}
