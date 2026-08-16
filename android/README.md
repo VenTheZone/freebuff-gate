@@ -69,6 +69,18 @@ gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
 
 ## Install the debug APK
 
+The one-command installer does all of this for you (download, checksum
+verify, uninstall the old build, install with permissions granted):
+
+```bash
+./install-release-apk.sh            # latest WebView build
+./install-release-apk.sh --gecko    # GeckoView spike build
+./install-release-apk.sh --apk /path/to/app.apk --skip-checksum
+./install-release-apk.sh --serial <serial>   # pick a device
+```
+
+It needs `gh` (authenticated, with repo access), `adb`, and `sha256sum`.
+
 Every push to `main` rebuilds the unpinned WebView debug APK and publishes it
 as `freebuff-gate-debug.apk` on the `mobile-debug-latest` GitHub release, with
 a SHA-256 checksum file (`freebuff-gate-debug.apk.sha256`) next to it. The APK
