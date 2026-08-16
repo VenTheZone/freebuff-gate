@@ -283,9 +283,25 @@ const CREATE_MARK =
 const CREATE_REUSE =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home)||ts.find(x=>lv(x.id)),th=hb&&lv(hb.id)||(()=>{try{const k=localStorage.getItem("fb.homeThread");return k&&lv(k)}catch(e){}})();return th||(ts[0]&&lv(ts[0].id))},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);const nt=ve.createThread(n,{inheritFromThreadId:i});try{localStorage.setItem("fb.homeThread",nt.id)}catch(e){}q(nt)},800))},"Could not open tab")';
 
+// ---- Bundle patch: thread switch always lands at the last message ----
+// The chat scroll hook (VZ) scrolls .messages to the bottom inside a layout
+// effect that only re-runs when the messages array identity changes. On a
+// slow client (phone WebView, huge thread) layout can still be settling when
+// that effect runs, so scrollTop ends up at 0 and nothing re-asserts it:
+// switching threads then starts at the very first message. Patch the pinned
+// branch to re-assert the bottom scroll one frame and 150ms later. Both
+// guards re-check pinBottom (n.current) and the follow flag, so a user who
+// scrolled up (or used "Scroll to latest") is never yanked back down.
+const SCROLL_MARK =
+  'L.useLayoutEffect(()=>{const v=t.current;if(v){if(n.current){i.current!=="follow"&&(v.scrollTop=v.scrollHeight);return}u(!0),o(Sv(v)<KT)}},[e]),';
+const SCROLL_FIX =
+  'L.useLayoutEffect(()=>{const v=t.current;if(v){if(n.current){i.current!=="follow"&&(v.scrollTop=v.scrollHeight);const q=()=>{const v2=t.current;if(v2&&n.current&&i.current!=="follow")v2.scrollTop=v2.scrollHeight};requestAnimationFrame(q),setTimeout(q,150);return}u(!0),o(Sv(v)<KT)}},[e]),';
+
 function patchBundle(body) {
-  if (!body.includes(CREATE_MARK)) return body;
-  return body.split(CREATE_MARK).join(CREATE_REUSE);
+  let out = body;
+  if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
+  if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
+  return out;
 }
 
 const server = http.createServer((req, res) => {
