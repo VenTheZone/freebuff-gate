@@ -38,6 +38,15 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      - name: Downgrade project format for Xcode 15
+        working-directory: ios
+        run: |
+          # Latest xcodegen emits objectVersion 77, which needs Xcode 16.
+          # The macos-14 image ships Xcode 15.4, so pin the object version
+          # back to 56 (Xcode 14/15) before building.
+          sed -i '' 's/objectVersion = [0-9]*;/objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
+          grep objectVersion FreebuffGate.xcodeproj/project.pbxproj
+
       - name: Build for simulator (no signing)
         working-directory: ios
         run: |
@@ -73,7 +82,7 @@ jobs:
           echo "Found: $APP"
 
       - name: Upload unsigned simulator app
-        if: always()
+        if: always() && steps.app-path.outputs.app != ''
         uses: actions/upload-artifact@v4
         with:
           name: FreebuffGate-simulator-unsigned
@@ -118,6 +127,13 @@ jobs:
         if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: xcodegen generate
+
+      - name: Downgrade project format for Xcode 15
+        if: steps.signing.outputs.enabled == 'true'
+        working-directory: ios
+        run: |
+          sed -i '' 's/objectVersion = [0-9]*;/objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
+          grep objectVersion FreebuffGate.xcodeproj/project.pbxproj
 
       - name: Import signing certificate
         if: steps.signing.outputs.enabled == 'true'
