@@ -405,15 +405,22 @@ jobs:
           tag="mobile-debug-latest"
           cp "$apk" "$asset"
           sha256sum "$asset" > "$asset.sha256"
-          notes="Debug APK rebuilt from ${GITHUB_SHA} and smoke-tested on the API 35 emulator (boot + pairing UI + offline security tests) before upload. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
+          # Surface the app version in the release title so releases are
+          # identifiable, and keep the rolling tag stable for the installer.
+          version_name="$(grep -oP '(?<=versionName = ")[^"]+' android/app/build.gradle.kts | head -1)"
+          version_label="${version_name:-dev}"
+          title="Freebuff Gate ${version_label} — debug APK (latest)"
+          notes="Debug APK ${version_label} rebuilt from ${GITHUB_SHA} and smoke-tested on the API 35 emulator (boot + pairing UI + offline security tests) before upload. Pairs via QR; no baked-in relay origin. System Chromium WebView engine. Verify with: sha256sum -c freebuff-gate-debug.apk.sha256"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$asset" "$asset.sha256" --clobber
+            # Keep the APK release pinned as GitHub's "Latest": an unrelated
+            # newer tag previously hijacked the Latest badge and hid the app.
+            gh release edit "$tag" --title "$title" --draft=false --prerelease=false --latest
           else
             gh release create "$tag" "$asset" "$asset.sha256" \
-              --title "Freebuff Gate debug APK (latest)" \
+              --title "$title" \
               --notes "$notes" \
-              --target "$GITHUB_SHA" \
-              --prerelease
+              --target "$GITHUB_SHA"
           fi
 
   release-gecko-apk:
