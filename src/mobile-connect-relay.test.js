@@ -430,8 +430,11 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     }));
     const finishFrame = (threadId) =>
       `data: ${JSON.stringify({ type: 'agent', threadId, event: { type: 'finish' } })}\n\n`;
+    const threadFrame = (lastPromptAt) =>
+      `data: ${JSON.stringify({ type: 'thread', threadId: 't-1', thread: { lastPromptAt } })}\n\n`;
 
-    // Device idle for 3 minutes -> finish must push.
+    // No thread events yet (unknown desktop state -> treated as idle): device
+    // idle for 3 minutes -> finish must push.
     current += 180_000;
     desktop.send(JSON.stringify({
       type: 'http.response.chunk',
@@ -447,8 +450,9 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     assert.equal(sent[0].fields.threadId, 't-42');
     assert.equal(sent[0].fields.title, 'Buffy finished working');
 
-    // Touch the device (a proxied request renews lastSeenAt), then a finish
-    // within 2 minutes must NOT push (the app is active).
+    // Desktop active (a fresh thread event says the user just prompted) AND
+    // the device was touched (app live) -> finish must NOT push.
+    current += 60_000;
     const session = await fetch(`${relayWithUrls.baseUrl}/v1/mobile/session`, {
       headers: { authorization: `Bearer ${claim.accessToken}` },
     });
@@ -461,17 +465,31 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     desktop.send(JSON.stringify({ type: 'http.response.start', id: touchRequest.id, status: 200, headers: {} }));
     desktop.send(JSON.stringify({ type: 'http.response.end', id: touchRequest.id }));
     await touchPromise;
-    current += 60_000; // 1 minute after activity: still active
+    desktop.send(JSON.stringify({
+      type: 'http.response.chunk',
+      id: watchRequest.id,
+      dataBase64: Buffer.from(threadFrame(current)).toString('base64'),
+    }));
     desktop.send(JSON.stringify({
       type: 'http.response.chunk',
       id: watchRequest.id,
       dataBase64: Buffer.from(finishFrame('t-43')).toString('base64'),
     }));
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(sent.length, 1, 'active device is not pushed');
+    assert.equal(sent.length, 1, 'active desktop + active device is not pushed');
 
-    // 2+ minutes later it is idle again -> push.
+    // Desktop goes idle (2+ minutes pass without a new prompt) while the
+    // device is touched right now (app live): the user left the desktop UI
+    // open and walked away -> finish MUST push even though the phone looks
+    // active.
     current += 120_000;
+    const touchPromise2 = fetch(`${relayWithUrls.baseUrl}/chat`, {
+      headers: { cookie },
+    });
+    const touchRequest2 = await desktopMessages.waitFor((message) => message.type === 'http.request');
+    desktop.send(JSON.stringify({ type: 'http.response.start', id: touchRequest2.id, status: 200, headers: {} }));
+    desktop.send(JSON.stringify({ type: 'http.response.end', id: touchRequest2.id }));
+    await touchPromise2;
     desktop.send(JSON.stringify({
       type: 'http.response.chunk',
       id: watchRequest.id,
@@ -481,7 +499,7 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     while (sent.length < 2 && Date.now() < deadline2) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    assert.equal(sent.length, 2, 'idle again -> pushed');
+    assert.equal(sent.length, 2, 'idle desktop pushed despite active device');
     assert.equal(sent[1].fields.threadId, 't-44');
 
     // Clearing the token stops pushes for the device.

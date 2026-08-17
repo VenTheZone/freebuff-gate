@@ -106,6 +106,31 @@ If the phone app is used:
   installer (freebuff-mobile-connect.service).
 - Set a strong connector token (relay --connector-token) and store it in a
   root-only file (chmod 600). Never commit it.
+- **APNs push (iOS turn notifications, optional).** The relay reads the
+  provider config from its environment file (the `EnvironmentFile=` path in
+  the unit). The shipped file already carries documented placeholders; to
+  activate, uncomment and fill:
+  ```
+  #FB_APNS_KEY=/path/to/AuthKey_XXXXXXXXXX.p8
+  #FB_APNS_KEY_ID=XXXXXXXXXX
+  #FB_APNS_TEAM_ID=XXXXXXXXXX
+  #FB_APNS_TOPIC=com.freebuff.gate
+  #FB_APNS_SANDBOX=1
+  ```
+  - `FB_APNS_KEY` — path to an Apple APNs auth key (`.p8`) downloaded from
+    Apple Developer → Certificates, Identifiers & Profiles → Keys; the file
+    itself stays on the server (mode 600).
+  - `FB_APNS_KEY_ID` — the 10-char Key ID shown next to that key.
+  - `FB_APNS_TEAM_ID` — Team ID from Apple Developer → Membership.
+  - `FB_APNS_TOPIC` — default `com.freebuff.gate` (the iOS bundle id); only
+    set to override.
+  - `FB_APNS_SANDBOX` — `1` for development builds
+    (`api.sandbox.push.apple.com`), unset for production.
+  After editing: `systemctl --user daemon-reload && systemctl --user restart
+  freebuff-mobile-relay`. Empty/unset values keep the provider a no-op — the
+  relay runs unchanged and only the turn-finished push path stays off. The
+  iOS `aps-environment` entitlement must match: `development` for sandbox
+  builds, `production` for TestFlight/App Store (see docs/mobile.md).
 
 ### 4. Exposure
 - The orchestrator already listens on the tailnet IP:58060 (verify with

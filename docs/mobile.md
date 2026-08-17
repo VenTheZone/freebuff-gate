@@ -197,6 +197,15 @@ The relay route requires a valid access token (`Bearer`), returns 401
 otherwise, and streams with no fixed timeout (the app's service reconnects
 on drop; the connector-disconnect path destroys the stream).
 
+**Desktop-idle push rule.** The watcher tracks the user's last prompt per
+connector from the thread events on the same `/api/events` stream
+(`thread.lastPromptAt`). When a turn finishes and the desktop has been idle
+for more than `FB_PUSH_DESKTOP_IDLE_MS` (default 120000 ms = 2 min) — the
+user left the desktop UI open and walked away — the push fires to every
+paired device even if that device's app was used moments ago. When the
+desktop is active, the per-device 2-minute recency skip still applies so a
+live phone screen is not double-notified.
+
 ## Regression coverage
 
 Automated mobile regression coverage runs the injected CSS and JavaScript in a

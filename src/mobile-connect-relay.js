@@ -313,6 +313,18 @@ class RelayHub {
     // plus the per-connector /api/events watcher that drives it.
     this.apns = options.apnsProvider || createApnsProvider({ env: process.env });
     this.eventWatchers = new Map();
+    // Per-connector "desktop last interacted" timestamps, fed by the thread
+    // events on the /api/events stream (thread.lastPromptAt = when the user
+    // last sent a message on the desktop). The turn-finished watcher uses
+    // this to detect a user who walked away leaving the desktop UI open and
+    // push to the phone even when the phone app itself looks active.
+    this.desktopPromptAt = new Map();
+    // A connector is "desktop idle" when no prompt has been sent through it
+    // for this long; pushes then fire to every paired device regardless of
+    // that device's own recency (the user is away from the desktop).
+    this.desktopIdleMs = options.desktopIdleMs
+      || Number(process.env.FB_PUSH_DESKTOP_IDLE_MS)
+      || 120_000;
     this.store = options.store || new PairingStore({
       stateFile: options.stateFile === undefined ? DEFAULT_STATE_FILE : options.stateFile,
       appUrl: options.appUrl || `${this.publicHttpUrl}/pair`,
@@ -543,6 +555,18 @@ class RelayHub {
       } catch {
         continue;
       }
+      if (event && event.type === 'thread' && event.thread && event.thread.lastPromptAt) {
+        // The user just interacted with the desktop (sent a message on this
+        // thread). Keep the freshest prompt timestamp across all threads of
+        // the connector.
+        const lastPrompt = Number(event.thread.lastPromptAt) || 0;
+        if (lastPrompt > 0) {
+          this.desktopPromptAt.set(
+            connectorId,
+            Math.max(this.desktopPromptAt.get(connectorId) || 0, lastPrompt),
+          );
+        }
+      }
       if (event && event.type === 'agent' && event.event && event.event.type === 'finish') {
         this.onTurnFinished(connectorId, String(event.threadId || ''));
       }
@@ -552,11 +576,17 @@ class RelayHub {
   onTurnFinished(connectorId, threadId) {
     if (!this.apns.configured) return;
     const now = this.now();
+    // Desktop idle = the user has not sent a message through this connector
+    // for a while. If they left the desktop UI open and walked away, the
+    // finish must reach the phone even when a phone app was recently used
+    // (its screen may be live but the user is not watching it). When the
+    // desktop is active, keep the per-device recency skip so a live app is
+    // not double-notified.
+    const lastPrompt = this.desktopPromptAt.get(connectorId) || 0;
+    const desktopIdle = now - lastPrompt >= this.desktopIdleMs;
     for (const device of this.store.devicesForConnector(connectorId)) {
       if (!device.pushToken) continue;
-      // The user actively used this device within the last 2 minutes: its UI
-      // is live, so a push would just duplicate what is on screen.
-      if (now - (device.lastSeenAt || 0) < 120_000) continue;
+      if (!desktopIdle && now - (device.lastSeenAt || 0) < 120_000) continue;
       this.apns
         .send(device.pushToken, {
           title: 'Buffy finished working',
