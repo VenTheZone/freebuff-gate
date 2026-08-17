@@ -33,7 +33,11 @@ for narrow viewports:
   header next to the title: it opens a dropdown of the open sessions
   (active one checked), switches by clicking the app's own `.tab-select`
   (native tab activation → thread load), and offers **New session** (the
-  app's `.tab-new`) and **All sessions** (the home tab) shortcuts.  Each
+  app's `.tab-new`) and **All sessions** (the home tab) shortcuts. A separate
+  **`+` new-session button** sits beside the switcher (hidden on desktop,
+  where the tab strip already shows the app's own `.tab-new`) so a new
+  thread is always one tap away on a phone even when the home thread already
+  holds a conversation. Each
   session row has a **close button** that closes it via the app's own
   `.tab-close` (which stopPropagates, so it won't also switch to it). Each
   open and Recent row also shows a compact model label beneath its session
@@ -60,17 +64,21 @@ for narrow viewports:
   from different projects are easy to tell apart), and its header has a
   **refresh** button that re-fetches the catalog in place (with a spinner)
   so the list updates without reopening the menu. Picking one reopens it as a
-  tab through the app's native
-  path: go home, select its project, and click the matching catalog row (a
-  time-based tiebreak disambiguates duplicate titles). The session button
+  tab through the app's own open-thread action, which the tailnet proxy
+  exposes on `window.__fbOpenThread` (a bundle patch); the older
+  catalog-click fallback (go home, select the project, click the matching
+  row) still runs when the patch is absent, with a time-based tiebreak for
+  duplicate titles. The session button
   shows a small pulsing **attention dot** (same `--brand` color as the app's
   own tab unseen-dot) whenever any open session needs attention. It mirrors
   the app's native `unseen` tab class (not active, not running, attention
   revision unacknowledged), kept in sync by the tabbar observer's live class
-  updates. The button appears only while a session is open, the menu animates
+  updates. The button stays visible whenever any tab exists — including the
+  boot-home thread, so the dropdown (Recent sessions + New session) is never
+  the dead end it was when the home thread was the only open tab — and the
+  menu animates
   like the thread menu and supports swipe-down-to-close without closing when
-  its Recent list is scrolled, and it hides on the home screen (which has its
-  own catalog).
+  its Recent list is scrolled.
   The thread-window (popout) header gets a
   JS-injected back button too (the browser port has no tabs or window controls
   there), which closes the popout and returns focus to the opener.

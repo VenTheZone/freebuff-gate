@@ -12,7 +12,7 @@ process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status
 // Ad sniffing must never write to the production ~/.config log during tests.
 process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}.log`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -120,6 +120,15 @@ test('patchBundle rewrites the home-tab mark and leaves unknown bytes alone', ()
   assert.equal(patchBundle('plain javascript'), 'plain javascript');
 });
 
+test('patchBundle exposes the native open-thread action to the mobile layer', () => {
+  const patched = patchBundle(`head;${OPEN_THREAD_MARK};tail;`);
+  assert.ok(
+    patched.includes('window.__fbOpenThread=Rq;'),
+    'bundle must expose window.__fbOpenThread after the render statement',
+  );
+  assert.ok(!patched.includes(`${OPEN_THREAD_MARK};tail;`), 'render statement is not duplicated');
+});
+
 // Upstream fixture for the UI-patch watchdog: serves a page, a bundle, and
 // the two injected routes. `state` selects healthy vs regressed content.
 function createWatchUpstream(state) {
@@ -134,7 +143,7 @@ function createWatchUpstream(state) {
     if (pathname === '/assets/index-ABC.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       res.end(state.healthy
-        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}${CLOSE_BTN_FIX}`
+        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}${CLOSE_BTN_FIX}${OPEN_THREAD_FIX}`
         : 'var x = 1;');
       return;
     }

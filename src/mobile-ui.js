@@ -1098,6 +1098,23 @@
     }
   }
 
+  // Re-resolve a session tab by its thread id from the CURRENT tabbar.
+  // React can replace tab nodes while the session menu is open (streaming
+  // status updates), leaving the row's captured element detached — clicking
+  // a detached .tab-select no-ops because it never reaches the app's root
+  // event delegation. Always click the live node when it exists.
+  function liveTabById(id) {
+    if (!id) return null;
+    var tabs = document.querySelectorAll(
+      '.tabbar:not(.threadbar) .tab:not(.home)',
+    );
+    for (var i = 0; i < tabs.length; i++) {
+      var s = tabs[i].querySelector('.tab-select');
+      if (s && (s.id === id || s.id === 'thread-tab-' + id)) return tabs[i];
+    }
+    return null;
+  }
+
   function isCloseConfirmTarget(target) {
     return !!(
       target &&
@@ -2077,6 +2094,27 @@
   // action → new tab + loadThread). Shared by the session menu's Recent
   // section and the home-page Thread history sheet.
   function openThreadViaHomeCatalog(th) {
+    // Fast native path: the tailnet proxy patches the bundle to expose the
+    // app's own open-thread action (Rq) on window.__fbOpenThread, so a
+    // closed session opens as a tab directly. Prefer it: the catalog
+    // fallback below only renders when the home thread is still empty, and
+    // the home thread usually holds a conversation.
+    if (
+      window.__fbOpenThread &&
+      typeof window.__fbOpenThread === 'function' &&
+      th &&
+      th.id
+    ) {
+      try {
+        window.__fbOpenThread({
+          id: th.id,
+          projectPath: th.projectPath || '',
+        });
+        return;
+      } catch (e) {
+        // fall through to the catalog path
+      }
+    }
     var home = document.querySelector('.tab.home');
     if (home) home.click();
     var attempts = 0;
@@ -2184,6 +2222,13 @@
         return Array.prototype.slice.call(
           tabbar.querySelectorAll('.tab:not(.home)'),
         );
+      }
+      // The switcher must stay reachable even when the only open tab is the
+      // home thread (boot-home): the dropdown is the mobile path to Recent
+      // sessions and New session. Show it whenever any tab exists, including
+      // the home tab.
+      function hasAnyTab() {
+        return tabbar.querySelectorAll('.tab').length > 0;
       }
       function activeTab() {
         return tabbar.querySelector('.tab.active');
@@ -2661,7 +2706,8 @@
           }
           sel.addEventListener('click', function () {
             var selectedTitle = titleOf(tab);
-            clickNativeTabSelect(tab); // the app's native tab activation
+            var liveTab = liveTabById(sessionId) || tab;
+            clickNativeTabSelect(liveTab); // the app's native tab activation
             mobileLiveRegion.announce(
               'Selected session: “' + selectedTitle + '”.',
               'polite',
@@ -2687,10 +2733,11 @@
             'aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>';
           closeBtn.addEventListener('click', function (ev) {
             ev.stopPropagation();
+            var liveTab = liveTabById(sessionId) || tab;
             closeSessionConfirm.request(
-              tab,
+              liveTab,
               function () {
-                var closed = clickNativeTabClose(tab);
+                var closed = clickNativeTabClose(liveTab);
                 close();
                 return closed;
               },
@@ -2869,7 +2916,26 @@
         tabbar.querySelector('.tabbar-account') ||
         null;
       tabbar.insertBefore(btn, anchor);
-      btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+      // New-session button: the tab strip (and its .tab-new) is collapsed on
+      // mobile, so a header "+" is the direct new-thread affordance. It
+      // clicks the app's own .tab-new (native new thread in the current
+      // project); the CSS hides it on desktop where the tab strip shows it.
+      var newBtn = document.createElement('button');
+      newBtn.type = 'button';
+      newBtn.className = 'fb-new-session';
+      newBtn.setAttribute('aria-label', 'New session');
+      newBtn.setAttribute('title', 'New session');
+      newBtn.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+        'aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>';
+      newBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var n = tabbar.querySelector('.tab-new');
+        if (n) n.click();
+      });
+      tabbar.insertBefore(newBtn, anchor);
+      btn.style.display = hasAnyTab() ? '' : 'none';
       // Attention dot: the app marks a session tab as needing attention with
       // the "unseen" class (not active, not running, and its attention
       // revision is ahead of what was acknowledged — see the app's sl()
@@ -2922,7 +2988,7 @@
       // identity: streaming status updates make React replace the tab node,
       // and an element-identity check would close the menu on every token.
       new MutationObserver(function () {
-        btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+        btn.style.display = hasAnyTab() ? '' : 'none';
         syncAttention();
         if (menu) renderSessionModelLegend();
         if (!menu) return;
@@ -2944,7 +3010,7 @@
       });
       var sessionMq = window.matchMedia(MOBILE);
       watchMedia(sessionMq, function (ev) {
-        btn.style.display = sessionTabs().length > 0 ? '' : 'none';
+        btn.style.display = hasAnyTab() ? '' : 'none';
         syncAttention();
       });
     });
@@ -3900,8 +3966,10 @@
     if (!window.matchMedia(MOBILE).matches) return;
     var composer = !!document.querySelector('.composer');
     var explorer = document.querySelector('.explorer');
+    // Any tab (including the boot-home tab) keeps the switcher reachable; it
+    // is the mobile path to Recent sessions and New session.
     var sessions = document.querySelectorAll(
-      '.tabbar:not(.threadbar) .tab:not(.home)',
+      '.tabbar:not(.threadbar) .tab',
     ).length;
     document.querySelectorAll('.fb-ctx-fab, .fb-composer-pills').forEach(function (el) {
       el.style.display = composer ? '' : 'none';

@@ -1181,6 +1181,7 @@
   .fb-time-pill,
   .fb-ctx-fab,
   .fb-panel-toggle,
+  .fb-new-session,
   .fb-mobile-report,
   .fb-tab-menu,
   .fb-panel-scrim,
@@ -1308,6 +1309,38 @@
   color: var(--text);
 }
 .fb-session-switch:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* New-session button (mobile-ui.js): the tab strip's .tab-new is collapsed
+   on phones, so a header "+" is the direct new-thread affordance. Same
+   size/hover as the session switcher it sits beside. Hidden on desktop via
+   the min-width:1001px group below (the tab strip already shows .tab-new). */
+.fb-new-session {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fb-m-brand);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-new-session:hover,
+.fb-new-session:active {
+  background: var(--raised);
+  color: var(--fb-m-brand);
+}
+.fb-new-session:focus-visible {
   outline: 1px solid var(--focus-ring);
   outline-offset: 1px;
 }

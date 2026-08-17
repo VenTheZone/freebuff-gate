@@ -508,6 +508,21 @@ const CLOSE_BTN_MARK =
 const CLOSE_BTN_FIX =
   '(!i||(G.getState().threads[e]&&G.getState().threads[e].messages||[]).length===0)&&g.jsx("button",{className:"tab-close"';
 
+// ---- Bundle patch: expose the native open-thread action to the mobile layer ----
+// The app's store is module-private, so the mobile UI can only reopen a
+// closed session by clicking a row in the home catalog. That catalog only
+// renders inside the welcome section of an EMPTY home thread, so once the
+// home thread holds a conversation (the normal case) Recent sessions and the
+// Thread history sheet can never be opened. Rq is the app's own open-thread
+// action (what every catalog row click calls); expose it on window.__fbOpenThread
+// at module load so the mobile layer can open a closed session as a tab
+// directly. The anchor is the bundle's final render statement, which runs
+// after all module-scope declarations are hoisted.
+const OPEN_THREAD_MARK =
+  'T5.createRoot(document.getElementById("root")).render(g.jsx(L.StrictMode,{children:g.jsx(eu,{children:g.jsx(L5,{children:g.jsx(cJ,{})})})}));';
+const OPEN_THREAD_FIX =
+  OPEN_THREAD_MARK + 'window.__fbOpenThread=Rq;';
+
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
@@ -529,6 +544,7 @@ function patchBundle(body) {
   else if (out.includes(CLOSE_FIX3_V1)) out = out.split(CLOSE_FIX3_V1).join(CLOSE_FIX3);
   else if (out.includes(CLOSE_FIX3_V2)) out = out.split(CLOSE_FIX3_V2).join(CLOSE_FIX3);
   if (out.includes(CLOSE_BTN_MARK)) out = out.split(CLOSE_BTN_MARK).join(CLOSE_BTN_FIX);
+  if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
   return out;
 }
 
@@ -557,6 +573,7 @@ const UI_PATCH_MARKERS = [
   ['CLOSE_FIX2', CLOSE_FIX2],
   ['CLOSE_FIX3', CLOSE_FIX3],
   ['CLOSE_BTN', CLOSE_BTN_FIX],
+  ['OPEN_THREAD', OPEN_THREAD_FIX],
 ];
 
 function fetchUpstream(up, pathname) {
@@ -936,6 +953,8 @@ module.exports = {
   CLOSE_FIX3_V2,
   CLOSE_BTN_FIX,
   CLOSE_BTN_MARK,
+  OPEN_THREAD_FIX,
+  OPEN_THREAD_MARK,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,
