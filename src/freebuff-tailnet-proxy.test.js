@@ -12,7 +12,7 @@ process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status
 // Ad sniffing must never write to the production ~/.config log during tests.
 process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}.log`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -189,41 +189,54 @@ test('patchBundle pins the resolved thread id, not the createThread promise', ()
   assert.notEqual(patched, CREATE_REUSE_V2, 'V2 bundle is upgraded in place');
 });
 
-test('patchBundle upgrades V3 home-thread reuse to V6 (wait while pin lives, never double-create)', () => {
+test('patchBundle upgrades V3 home-thread reuse to V7 (wait for hydration, never double-create)', () => {
   const patched = patchBundle(CREATE_REUSE_V3);
   assert.notEqual(patched, CREATE_REUSE_V3, 'V3 bundle is upgraded in place');
-  // V6 keeps waiting while a pin exists and the store is still hydrating
-  // (slow relay path on the phone), and only creates when no pin exists or
-  // the store has hydrated without the pinned thread (stale pin).
+  // V7 treats "nothing reusable yet" as "still hydrating": an empty store
+  // (no tabs, no threads) and a store with tabs but no loaded threads both
+  // poll up to the cap instead of creating, so a slow relay path never
+  // stacks an empty thread while the last-message thread is hydrating.
   assert.ok(patched.includes('G.getState().tabs.length||Object.keys(G.getState().threads).length?null:0'), 'unhydrated store signals "wait", hydrated-without-pin signals "create"');
   assert.ok(patched.includes('lastPromptAt'), 'ranks threads by last-message activity');
-  assert.ok(patched.includes('tries<24'), 'bounded no-pin hydration wait, never a give-up that re-creates');
+  assert.ok(patched.includes('Object.keys(G.getState().threads).length)return create'), 'creates only when the store is settled (thread entries loaded, none reusable)');
+  assert.ok(patched.includes('tries<60'), 'bounded hydration wait (15s cap), never a give-up that re-creates');
   assert.ok(patched.includes('setTimeout(step,250)'), 'polls for hydration');
   assert.ok(!patched.includes('tries>30'), 'no old bounded give-up that re-creates on a slow phone');
+  assert.ok(!patched.includes('tries<24'), '6s no-pin cap removed');
   assert.ok(patched.includes('inflight'), 'serializes concurrent boot-hook creates');
 });
 
-test('patchBundle upgrades an already-V4-patched bundle to V6 (slow-phone stacking fix)', () => {
+test('patchBundle upgrades an already-V4-patched bundle to V7 (slow-phone stacking fix)', () => {
   // V4 shipped with a 6s give-up that re-created + re-pinned on slow phone
   // connects, stacking empties. On-disk bundles still carry it; patchBundle
   // must upgrade it in place rather than leaving it as-is.
   const patched = patchBundle(CREATE_REUSE_V4);
   assert.notEqual(patched, CREATE_REUSE_V4, 'V4 bundle is upgraded in place');
-  assert.ok(patched.includes(CREATE_REUSE), 'V6 present');
+  assert.ok(patched.includes(CREATE_REUSE), 'V7 present');
   assert.ok(!patched.includes('tries>30'), '6s give-up removed');
 });
 
-test('patchBundle upgrades an already-V5-patched bundle to V6 (join last-message thread across surfaces)', () => {
+test('patchBundle upgrades an already-V5-patched bundle to V7 (join last-message thread across surfaces)', () => {
   const patched = patchBundle(CREATE_REUSE_V5);
   assert.notEqual(patched, CREATE_REUSE_V5, 'V5 bundle is upgraded in place');
-  assert.ok(patched.includes(CREATE_REUSE), 'V6 present');
+  assert.ok(patched.includes(CREATE_REUSE), 'V7 present');
   assert.ok(!patched.includes(CREATE_REUSE_V5), 'V5 gone');
-  // V6 core: open the thread where the user last sent a message so Gate
+  // V7 core: open the thread where the user last sent a message so Gate
   // Desktop and Gate Mobile converge instead of each pinning their own.
   assert.ok(patched.includes('lastPromptAt'), 'activity ranking present');
   assert.ok(patched.includes('projectPath===n'), 'candidates restricted to this project');
   assert.ok(patched.includes('t.archivedAt'), 'archived threads excluded');
   assert.ok(patched.includes('newest()'), 'no-activity surfaces converge on the newest thread');
+});
+
+test('patchBundle upgrades an already-V6-patched bundle to V7 (wait for hydration to settle instead of 6s give-up)', () => {
+  const patched = patchBundle(CREATE_REUSE_V6);
+  assert.notEqual(patched, CREATE_REUSE_V6, 'V6 bundle is upgraded in place');
+  assert.ok(patched.includes(CREATE_REUSE), 'V7 present');
+  assert.ok(!patched.includes(CREATE_REUSE_V6), 'V6 gone');
+  assert.ok(!patched.includes('tries<24'), '6s no-pin give-up removed');
+  assert.ok(patched.includes('Object.keys(G.getState().threads).length)return create'), 'creates once the store is settled with loaded threads and nothing reusable');
+  assert.ok(patched.includes('tries<60'), 'bounded 15s hydration cap');
 });
 
 test('patchBundle upgrades close patches so empty threads close and DELETE server-side', () => {

@@ -395,21 +395,28 @@ const CREATE_REUSE_V4 =
 // already carry V5 can be upgraded to V6 in place.
 const CREATE_REUSE_V5 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const k=pin();if(home())return lv(G.getState().tabs.find(h=>h.home).id);if(k&&lv(k))return lv(k);if(!k)return null;return G.getState().tabs.length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};if(!pin())return create().then(v=>q(v));const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st===null)return create().then(v=>q(v));setTimeout(step,250)};step()})},"Could not open tab")';
-// V6: join the thread the user last sent a message on, not a fresh one.
-// V5 reused the pinned thread per browser context, so Gate Desktop and Gate
-// Mobile each kept their OWN home thread and every connect of a second
-// surface stacked another empty "New thread". V6 ranks hydrated threads by
-// last activity (lastPromptAt ?? lastTurnFinishedAt — the same signal the
-// sidebar uses) and opens the most recent one, so Desktop and Mobile both
-// land on the thread where the user last chatted. Priority: existing home
-// tab -> last-message thread -> pinned thread -> newest thread (converge on
-// a single thread when nothing has activity yet, so surfaces never split) ->
-// create fresh. Candidates are restricted to this project and exclude
-// archived/closed threads. No pin: wait up to 6s for the store to hydrate so
-// the last-message thread can be found before creating; pin exists: wait
-// forever (V5 semantics). Creates stay serialized through a shared promise.
-const CREATE_REUSE =
+// V6 (superseded): join the thread the user last sent a message on, not a
+// fresh one, ranking hydrated threads by last activity — but its no-pin
+// hydration wait was capped at 24x250ms (6s). On a slow relay path (DERP
+// relay, e.g. a tablet connected through hkg with 500ms+ latency) the store
+// can still be empty when the cap expires, so boot gave up and created a
+// fresh empty "New thread" — the stacking bug again. Keep the exact string
+// so bundles that already carry V6 can be upgraded to V7 in place.
+const CREATE_REUSE_V6 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,cand=x=>{const t=lv(x);return t&&!t.archivedAt&&t.status!=="closed"&&t.projectPath===n?t:null},act=x=>{const t=cand(x);return t?Math.max(t.lastPromptAt??0,t.lastTurnFinishedAt??0):0},best=()=>{let id=null,bt=0;for(const k in G.getState().threads){const a=act(k);if(a>bt){bt=a;id=k}}return id},newest=()=>{let id=null,bt=-1;for(const k in G.getState().threads){const t=cand(k);if(t&&t.createdAt>bt){bt=t.createdAt;id=k}}return id},home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const h=home();if(h)return h;const la=best();if(la)return lv(la);const k=pin();if(k&&lv(k))return lv(k);const c=newest();if(c)return lv(c);return G.getState().tabs.length||Object.keys(G.getState().threads).length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null,tries=0;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st===null)return create().then(v=>q(v));if(pin()||++tries<24)setTimeout(step,250);else create().then(v=>q(v))};step()})},"Could not open tab")';
+// V7: same last-message ranking as V6, but boot no longer races hydration.
+// V6 created whenever the store looked settled: an empty store (no tabs, no
+// threads) created after just 6s — shorter than a slow-relay cold connect —
+// and a store with tabs but no loaded threads (st===null) created
+// immediately. Both stacked empty "New thread" rows on slow-relay devices.
+// V7 treats "nothing to reuse yet" as "still hydrating": it keeps waiting
+// (up to a 60x250ms = 15s cap) while the store is empty OR while tabs exist
+// but no thread objects have loaded, and only creates once the store is
+// settled — threads loaded and nothing reusable (st===null with thread
+// entries), or the cap expired. A brand-new user (genuinely no threads)
+// creates after the cap. Creates stay serialized through a shared promise.
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,cand=x=>{const t=lv(x);return t&&!t.archivedAt&&t.status!=="closed"&&t.projectPath===n?t:null},act=x=>{const t=cand(x);return t?Math.max(t.lastPromptAt??0,t.lastTurnFinishedAt??0):0},best=()=>{let id=null,bt=0;for(const k in G.getState().threads){const a=act(k);if(a>bt){bt=a;id=k}}return id},newest=()=>{let id=null,bt=-1;for(const k in G.getState().threads){const t=cand(k);if(t&&t.createdAt>bt){bt=t.createdAt;id=k}}return id},home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const h=home();if(h)return h;const la=best();if(la)return lv(la);const k=pin();if(k&&lv(k))return lv(k);const c=newest();if(c)return lv(c);return G.getState().tabs.length||Object.keys(G.getState().threads).length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null,tries=0;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st!==null){if(++tries<60)return setTimeout(step,250);return create().then(v=>q(v));}if(Object.keys(G.getState().threads).length)return create().then(v=>q(v));if(++tries<60)return setTimeout(step,250);return create().then(v=>q(v))};step()})},"Could not open tab")';
 const SETSTATE_MARK =
   'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
 const SETSTATE_FIX =
@@ -509,6 +516,7 @@ function patchBundle(body) {
   else if (out.includes(CREATE_REUSE_V3)) out = out.split(CREATE_REUSE_V3).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V4)) out = out.split(CREATE_REUSE_V4).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V5)) out = out.split(CREATE_REUSE_V5).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V6)) out = out.split(CREATE_REUSE_V6).join(CREATE_REUSE);
   if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
@@ -930,6 +938,7 @@ module.exports = {
   CLOSE_MARK3,
   CREATE_REUSE,
   CREATE_REUSE_V1,
+  CREATE_REUSE_V6,
   CREATE_REUSE_V2,
   CREATE_REUSE_V3,
   CREATE_REUSE_V4,

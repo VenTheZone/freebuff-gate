@@ -487,8 +487,8 @@ console.log(JSON.stringify(db.query('SELECT id, project_path FROM threads').all(
     const served = await (
       await fetch(`http://127.0.0.1:${proxyPort}/assets/index-BC09OLJz.js`)
     ).text();
-    assert.ok(served.includes('lastPromptAt'), 'served bundle carries the V6 last-message ranking');
-    assert.ok(served.includes('tries<24'), 'served bundle carries the V6 hydration wait');
+    assert.ok(served.includes('lastPromptAt'), 'served bundle carries the V7 last-message ranking');
+    assert.ok(served.includes('Object.keys(G.getState().threads).length)return create'), 'served bundle carries the V7 settle-then-create hydration wait');
 
     // Context 1 = Gate Desktop, context 2 = Gate Mobile: fresh user-data dirs
     // (separate localStorage) so no pin is shared between them.
@@ -508,11 +508,22 @@ console.log(JSON.stringify(db.query('SELECT id, project_path FROM threads').all(
       // is thread-tab-<threadId>. A freshly created "New thread" would carry
       // a different id and fail this wait.
       const expectedTabId = `thread-tab-${threadA.id}`;
-      await waitFor(
-        cdp,
-        `document.readyState === 'complete' && (${activeTabIdExpression()}) === ${JSON.stringify(expectedTabId)}`,
-        30000,
-      );
+      try {
+        await waitFor(
+          cdp,
+          `document.readyState === 'complete' && (${activeTabIdExpression()}) === ${JSON.stringify(expectedTabId)}`,
+          30000,
+        );
+      } catch (error) {
+        const dump = await evaluate(
+          cdp,
+          `(() => { const act = document.querySelector('.tab-select[aria-selected="true"]') || document.querySelector('.tab-select'); return JSON.stringify({ readyState: document.readyState, activeTabId: act ? act.id : null, tabCount: document.querySelectorAll('.tab-select').length, bodyText: (document.body ? document.body.innerText : '').slice(0, 150) }); })()`,
+        );
+        const dbRows = readThreads(bunPath, dbPath);
+        console.error(`[converge-e2e] ${name} page dump: ${dump}`);
+        console.error(`[converge-e2e] ${name} db rows: ${JSON.stringify(dbRows)}`);
+        throw error;
+      }
       const actualTabId = await evaluate(cdp, activeTabIdExpression());
       assert.equal(
         actualTabId,
