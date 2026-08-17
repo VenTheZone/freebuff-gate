@@ -324,8 +324,24 @@ const CREATE_REUSE_V3 =
 // polling for the pinned thread while it exists, and only creates a fresh
 // one when no pin exists at all (a genuinely new browser) or the pinned
 // thread was deleted server-side.
-const CREATE_REUSE =
+// V4 (superseded): polled for the pinned thread with a 30x200ms (6s) cap,
+// then gave up, created a fresh thread and re-pinned. On the phone's slow
+// relay path 6s was shorter than a cold connect, so every connect stacked
+// another empty "New thread". Keep the exact string so bundles that
+// already carry V4 can be upgraded to V5 in place.
+const CREATE_REUSE_V4 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const k=pin();if(home())return lv(G.getState().tabs.find(h=>h.home).id);if(k&&lv(k))return lv(k);return k?0:null},th=s();if(th&&th!==0)return th;return new Promise(q=>{const create=()=>ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}q(nt||id)},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}});if(!pin())return create();let tries=0;const step=()=>{const st=s();if(st&&st!==0)return q(st);tries++;if(tries>30)return create();setTimeout(step,200)};step()})},"Could not open tab")';
+// V5: never give up while a pin exists and the store is still hydrating.
+// The phone's relay path hydrates slowly, and the V4 30x200ms (6s) cap was
+// shorter than a cold phone connect, so it gave up, created a fresh thread
+// and re-pinned — every connect stacked another empty "New thread".
+// Distinguish "not hydrated yet" from "pin is stale": once the store has
+// restored its tabs and the pinned thread is not among them, the thread was
+// deleted (or the pin belongs to another browser) — create fresh. Serialize
+// creates through a shared promise so concurrent boot-hook calls (mount +
+// re-render) can never both create.
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const k=pin();if(home())return lv(G.getState().tabs.find(h=>h.home).id);if(k&&lv(k))return lv(k);if(!k)return null;return G.getState().tabs.length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};if(!pin())return create().then(v=>q(v));const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st===null)return create().then(v=>q(v));setTimeout(step,250)};step()})},"Could not open tab")';
 const SETSTATE_MARK =
   'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
 const SETSTATE_FIX =
@@ -365,7 +381,7 @@ const CLOSE_FIX1_V1 =
 // "New thread" home tab (pinned by an older bug) could never be closed.
 // Allow it when the thread has no messages; only protect home tabs that
 // still hold a real conversation.
-const CLOSE_FIX1 =
+const CLOSE_FIX1_V2 =
   'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i)return;if(i.home){const g=G.getState(),th=g.threads[n],empty=!th||!th.messages||!th.messages.length;if(!empty)return}';
 // V2 buggy: an early draft of CLOSE_FIX1 ended the home guard with a
 // double brace, closing the whole closeTab body right there and making
@@ -373,6 +389,12 @@ const CLOSE_FIX1 =
 // already carrying that string must be repaired, not left as-is.
 const CLOSE_FIX1_V2_BUGGY =
   'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i)return;if(i.home){const g=G.getState(),th=g.threads[n],empty=!th||!th.messages||!th.messages.length;if(!empty)return}}';
+// V3: compute emptiness once for EVERY closed tab, then let CLOSE_FIX3
+// delete the thread server-side when it is empty instead of merely marking
+// it closed. Empty "New thread" rows must not survive closing; threads with
+// messages still close (and can be reopened) as before.
+const CLOSE_FIX1 =
+  'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i)return;const fbEmpty=(()=>{const th=G.getState().threads[n];return !th||!th.messages||!th.messages.length})();if(i.home&&!fbEmpty)return;';
 const CLOSE_MARK2 =
   'const h=u.tabs.filter(_=>!o.has(_.id)),{[n]:p,...f}=u.threads;';
 const CLOSE_FIX2_V1 =
@@ -390,8 +412,13 @@ const CLOSE_FIX3_V1 =
 // messages, so "home tab still present" already means "keep it". Delete
 // server-side otherwise and drop the pin when it pointed at the closed
 // thread, so empty home threads do not pile up.
-const CLOSE_FIX3 =
+const CLOSE_FIX3_V2 =
   'i.file||await Promise.resolve().then(()=>{const g=G.getState();return g.tabs.some(u=>u.home&&u.id===n)?null:ve.close(n)}).then(()=>{try{if(localStorage.getItem("fb.homeThread")===n)localStorage.removeItem("fb.homeThread")}catch(e){}}).catch(()=>{})},setActive(n){';
+// V3: empty threads are deleted server-side (ve.deleteThread) instead of
+// merely marked closed, so closing an empty "New thread" removes the row
+// from the history. Non-empty threads still close normally.
+const CLOSE_FIX3 =
+  'i.file||await Promise.resolve().then(()=>{const g=G.getState();if(g.tabs.some(u=>u.home&&u.id===n))return null;return fbEmpty?ve.deleteThread(n):ve.close(n)}).then(()=>{try{if(localStorage.getItem("fb.homeThread")===n)localStorage.removeItem("fb.homeThread")}catch(e){}}).catch(()=>{})},setActive(n){';
 
 function patchBundle(body) {
   let out = body;
@@ -399,15 +426,18 @@ function patchBundle(body) {
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V3)) out = out.split(CREATE_REUSE_V3).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V4)) out = out.split(CREATE_REUSE_V4).join(CREATE_REUSE);
   if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
   else if (out.includes(CLOSE_FIX1_V1)) out = out.split(CLOSE_FIX1_V1).join(CLOSE_FIX1);
   else if (out.includes(CLOSE_FIX1_V2_BUGGY)) out = out.split(CLOSE_FIX1_V2_BUGGY).join(CLOSE_FIX1);
+  else if (out.includes(CLOSE_FIX1_V2)) out = out.split(CLOSE_FIX1_V2).join(CLOSE_FIX1);
   if (out.includes(CLOSE_MARK2)) out = out.split(CLOSE_MARK2).join(CLOSE_FIX2);
   else if (out.includes(CLOSE_FIX2_V1)) out = out.split(CLOSE_FIX2_V1).join(CLOSE_FIX2);
   if (out.includes(CLOSE_MARK3)) out = out.split(CLOSE_MARK3).join(CLOSE_FIX3);
   else if (out.includes(CLOSE_FIX3_V1)) out = out.split(CLOSE_FIX3_V1).join(CLOSE_FIX3);
+  else if (out.includes(CLOSE_FIX3_V2)) out = out.split(CLOSE_FIX3_V2).join(CLOSE_FIX3);
   return out;
 }
 
@@ -751,10 +781,12 @@ module.exports = {
   CLOSE_FIX1,
   CLOSE_FIX1_V1,
   CLOSE_FIX1_V2_BUGGY,
+  CLOSE_FIX1_V2,
   CLOSE_FIX2,
   CLOSE_FIX2_V1,
   CLOSE_FIX3,
   CLOSE_FIX3_V1,
+  CLOSE_FIX3_V2,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,
@@ -762,6 +794,7 @@ module.exports = {
   CREATE_REUSE_V1,
   CREATE_REUSE_V2,
   CREATE_REUSE_V3,
+  CREATE_REUSE_V4,
   SCROLL_FIX,
   SCROLL_MARK,
   SETSTATE_FIX,
