@@ -317,6 +317,57 @@ test('proxy re-broadcasts the last known ad when the slot auction comes back emp
   }
 });
 
+test('proxy re-broadcasts a real waiting_room ad (url empty, clickUrl set)', async () => {
+  // Live waiting_room fills carry url:"" with a populated clickUrl (Google
+  // Cloud via BuySellAds). The broadcast cache must accept those as a real
+  // fill so the ad is re-broadcast to every surface (Gate Mobile included)
+  // when a later auction comes back empty.
+  const FILL = {
+    ad: {
+      adText: 'Sub-second maintenance. 2x read/write performance.',
+      title: 'Google Cloud',
+      cta: 'Start Free',
+      url: '',
+      clickUrl: 'https://srv.buysellads.com/ads/click/x/GTND427YCYAICKQYCES4YKQUFTSIV5QUCKSIKZ3JCAAD5K77CTADCK7KC6SDCK7WC6BI65QJCTBDP2JWCEYDP5Q7HEYI553NF6BIC2JECTNCYBZ52K',
+      impUrl: 'https://srv.buysellads.com/ads/imp/x/GTND427YCYAICKQYCES4YKQUFTSIV5QUCKSIKZ3JCAAD5K77CTADCK7KC6SDCK7WC6BI65QJCTBDP2JWCEYDP5Q7HEYI553NF6BIC2JECTNCLSZE5QLUCASQ2RUT',
+    },
+  };
+  const EMPTY = { ad: null };
+  let responses = [FILL, EMPTY, EMPTY];
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(JSON.stringify(responses[0])) });
+    res.end(JSON.stringify(responses.shift()));
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+
+  try {
+    const slot = (body) =>
+      fetch(`http://127.0.0.1:${proxyPort}/api/ad/slot`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+
+    const first = await slot({ placementId: 'Desktop-Below-Chat' });
+    assert.deepEqual(first, FILL, 'first call passes through the live clickUrl-only fill');
+
+    const second = await slot({ placementId: 'Desktop-Below-Chat' });
+    assert.equal(second.ad.title, FILL.ad.title, 'clickUrl-only fill is cached and re-broadcast on empty');
+    assert.equal(second.stale, true, 'substitute is flagged stale');
+    assert.equal(second.ad.url, '', 'url stays empty');
+    assert.equal(second.ad.clickUrl, FILL.ad.clickUrl, 'clickUrl survives the broadcast');
+
+    // A different placement is not cross-contaminated.
+    const third = await slot({ placementId: 'Desktop-Inline-Chat' });
+    assert.equal(third.ad, null, 'unknown placement stays empty until it fills');
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
 test('proxy fills empty slots with a dev placeholder when FB_AD_DEV_BROADCAST is set', async () => {
   // Dev-only render-path testing: with the env flag on, every empty
   // /api/ad/slot response carries a clearly-marked placeholder so the ad

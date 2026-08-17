@@ -747,9 +747,12 @@ function createProxyServer(options = {}) {
         // substitute is flagged `stale` so callers can tell it from a live
         // fill, and a content-length mismatch is avoided by letting Node
         // re-encode the (possibly different-length) body.
+        // A real fill counts when it has a destination to open: the live
+        // waiting_room ads carry url:"" with a populated clickUrl, so accept
+        // either (the UI renderer reads href = clickUrl || url).
         if (pathname === '/api/ad/slot' && parsed && typeof parsed === 'object') {
           const key = adPlacementId || 'default';
-          const live = parsed.ad && typeof parsed.ad === 'object' && parsed.ad.title && parsed.ad.url;
+          const live = parsed.ad && typeof parsed.ad === 'object' && parsed.ad.title && (parsed.ad.url || parsed.ad.clickUrl);
           if (live) {
             lastAds.set(key, { ad: parsed.ad, at: Date.now() });
           } else if (devAdBroadcastEnabled()) {
