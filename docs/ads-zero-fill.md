@@ -75,6 +75,10 @@ cached one for re-broadcast. The UI renderer already handles `href = clickUrl ||
    - `inlineAd()` → `surface: "waiting_room"` (was `cli_chat`).
    - `slotAd()` → `surface: "waiting_room"` (was none).
    - keep-filter → `title && (url || clickUrl)`.
+   - **Inline ads disabled** — the mid-stream `emit({type:"ad"})` path now
+     short-circuits, so the ad stays in one fixed below-chat slot and never
+     appears at random points in the chat feed (the feed-bloat fix). The
+     `/api/ad/slot` placement is unaffected.
    - Re-apply with the same string replacements used in `docs/ads-zero-fill.md`; the
      patch is not yet a script — roll it by hand or script it when the anchors move.
 2. **Proxy broadcast fix** (this repo, committed): cache check → `title && (url || clickUrl)`

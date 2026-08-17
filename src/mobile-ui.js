@@ -4557,6 +4557,115 @@
     );
   }
 
+  // Ad popup: tapping the sponsored-ad card opens an in-app detail overlay
+  // (full copy, destination, CTA) instead of navigating the WebView. Open
+  // launches the device's external browser via window.FreebuffNative
+  // (Android WebView bridge) or window.open (browser/desktop); Close dismisses.
+  function bindAdOverlay() {
+    // Ad-network redirect hosts (e.g. srv.buysellads.com) are not the real
+    // destination and just look like junk in the popup. Hide the destination
+    // line when the click target is one of them; the title already names the
+    // advertiser.
+    var AD_NETWORK_HOSTS = /(^|\.)(buysellads\.com|srv\.buysellads\.com|adzerk\.net|doubleclick\.net|googlesyndication\.com|amazon-adsystem\.com)$/;
+    function displayHostOf(url) {
+      var host = '';
+      try {
+        host = new URL(url).hostname.replace(/^www\./, '');
+      } catch (e) {
+        return '';
+      }
+      return AD_NETWORK_HOSTS.test(host) ? '' : host;
+    }
+    function openExternal(url) {
+      if (window.FreebuffNative && window.FreebuffNative.openExternal) {
+        try {
+          window.FreebuffNative.openExternal(url);
+          return;
+        } catch (e) {
+          // fall through to window.open
+        }
+      }
+      window.open(url, '_blank', 'noopener');
+    }
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+    function build(ad) {
+      var wrap = document.createElement('div');
+      wrap.className = 'fb-ad-overlay';
+      var card = document.createElement('div');
+      card.className = 'fb-ad-card';
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-label', 'Ad');
+      card.innerHTML =
+        '<div class="fb-ad-card-head">' +
+        '<span class="fb-ad-title">' + esc(ad.title || 'Ad') + '</span>' +
+        '<button type="button" class="fb-ad-close" aria-label="Close ad">✕</button>' +
+        '</div>' +
+        '<div class="fb-ad-copy">' + esc(ad.copy || '') + '</div>' +
+        (ad.host
+          ? '<div class="fb-ad-dest">' + esc(ad.host) + '</div>'
+          : '') +
+        '<div class="fb-ad-actions">' +
+        '<button type="button" class="fb-ad-btn fb-ad-open">Open</button>' +
+        '<button type="button" class="fb-ad-btn fb-ad-cancel">Close</button>' +
+        '</div>';
+      function close() {
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        document.removeEventListener('keydown', onKey);
+      }
+      function onKey(ev) {
+        if (ev.key === 'Escape') close();
+      }
+      card.querySelector('.fb-ad-close').addEventListener('click', close);
+      card.querySelector('.fb-ad-cancel').addEventListener('click', close);
+      card.querySelector('.fb-ad-open').addEventListener('click', function () {
+        openExternal(ad.href);
+        close();
+      });
+      wrap.addEventListener('click', function (ev) {
+        if (ev.target === wrap) close();
+      });
+      document.addEventListener('keydown', onKey);
+      wrap.appendChild(card);
+      return wrap;
+    }
+    function open(ad) {
+      var existing = document.querySelector('.fb-ad-overlay');
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      var wrap = build(ad);
+      document.body.appendChild(wrap);
+    }
+    document.addEventListener('click', function (ev) {
+      var anchor =
+        ev.target && ev.target.closest
+          ? ev.target.closest('.sponsored-ad.ad-banner, .sponsored-ad')
+          : null;
+      if (!anchor) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      var title = '';
+      var titleEl = anchor.querySelector('.ad-title');
+      if (titleEl) title = titleEl.textContent;
+      var copy = '';
+      var copyEl = anchor.querySelector('.ad-copy');
+      if (copyEl) copy = copyEl.textContent;
+      var href = anchor.getAttribute('href') || '';
+      open({
+        title: title,
+        copy: copy,
+        host: displayHostOf(href),
+        href: href,
+      });
+    });
+  }
+  bindAdOverlay();
+
   threadWindowBack();
   browserReloadCleanup();
   homeCatalogProjectLines();

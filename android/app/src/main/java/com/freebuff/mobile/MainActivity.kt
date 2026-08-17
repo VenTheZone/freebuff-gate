@@ -3,6 +3,7 @@ package com.freebuff.mobile
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.view.View
@@ -11,6 +12,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -276,8 +278,8 @@ class MainActivity : AppCompatActivity() {
             showState(ConnectionState.ERROR, "Remote UI origin is not configured for this app")
             return
         }
-        engine.setRestriction(origin) { _ ->
-            showState(ConnectionState.ERROR, "Blocked navigation outside Freebuff origin")
+        engine.setRestriction(origin) { blockedUrl ->
+            confirmOpenExternal(blockedUrl)
         }
         val sessionKey = "${session.deviceId}:${session.accessToken}"
         if (webSessionLoading || (loadedWebSessionKey == sessionKey && browserHost.visibility == View.VISIBLE)) return
@@ -328,6 +330,25 @@ class MainActivity : AppCompatActivity() {
             normalized.startsWith("https://", ignoreCase = true) -> normalized.trimEnd('/')
             else -> null
         }
+    }
+
+    // Ad clicks and other off-origin links are refused by the WebView guard.
+    // Instead of an error banner, ask: show the destination and let the user
+    // open it in the device's external browser, or close the prompt.
+    private fun confirmOpenExternal(rawUrl: String) {
+        val uri = runCatching { Uri.parse(rawUrl) }.getOrNull()
+        if (uri == null || (uri.scheme != "http" && uri.scheme != "https")) return
+        val host = uri.host?.removePrefix("www.") ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Open in browser?")
+            .setMessage("Open \"$host\" in your external browser?")
+            .setPositiveButton("Open") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Intent.ACTION_VIEW, uri))
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun openScanner() {

@@ -12,6 +12,7 @@ struct MainView: View {
     @State private var webTarget: URL?
     @State private var pairing = false
     @State private var hasSession = false
+    @State private var blockedExternalUrl: URL?
 
     @StateObject private var controller = SessionController()
 
@@ -20,8 +21,10 @@ struct MainView: View {
             Color(.systemBackground).ignoresSafeArea()
 
             if showWebView, let webTarget {
-                RestrictedWebViewHost(url: webTarget, controller: controller)
-                    .transition(.opacity)
+                RestrictedWebViewHost(url: webTarget, controller: controller, onBlockedNavigation: { raw in
+                    blockedExternalUrl = URL(string: raw)
+                })
+                .transition(.opacity)
             } else if showScanner {
                 scannerView
             } else {
@@ -52,6 +55,27 @@ struct MainView: View {
             controller.start()
         }
         .onDisappear { controller.close() }
+        .alert(
+            "Open in browser?",
+            isPresented: Binding(
+                get: { blockedExternalUrl != nil },
+                set: { if !$0 { blockedExternalUrl = nil } }
+            )
+        ) {
+            Button("Open") {
+                if let url = blockedExternalUrl {
+                    UIApplication.shared.open(url)
+                }
+                blockedExternalUrl = nil
+            }
+            Button("Close", role: .cancel) {
+                blockedExternalUrl = nil
+            }
+        } message: {
+            if let url = blockedExternalUrl {
+                Text("Open \"\(url.host?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString)\" in your external browser?")
+            }
+        }
     }
 
     private var setupView: some View {
@@ -197,11 +221,12 @@ struct MainView: View {
 struct RestrictedWebViewHost: UIViewControllerRepresentable {
     let url: URL
     let controller: SessionController
+    var onBlockedNavigation: (String) -> Void = { _ in }
 
     func makeUIViewController(context: Context) -> RestrictedWebViewController {
         let vc = RestrictedWebViewController(
             allowedOrigin: RestrictedWebViewController.originOf(url.absoluteString) ?? "",
-            onBlockedNavigation: { _ in }
+            onBlockedNavigation: onBlockedNavigation
         )
         return vc
     }

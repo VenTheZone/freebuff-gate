@@ -1,9 +1,12 @@
 package com.freebuff.mobile
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.view.View
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 
@@ -13,6 +16,7 @@ import android.webkit.WebView
  * same user-agent marker, downloads disabled, SSL errors never bypassed.
  */
 class WebViewGateEngine(context: Context) : GateBrowserEngine {
+    private val appContext = context.applicationContext
     private val webView = WebView(context)
     private var allowedOrigin: String? = null
 
@@ -38,6 +42,26 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
         webView.setBackgroundColor(android.graphics.Color.parseColor("#0B0B0F"))
         CookieManager.getInstance().setAcceptCookie(true)
         webView.setDownloadListener { _, _, _, _, _ -> onBlockedDownload() }
+        // Bridge the injected mobile layer (mobile-ui.js) to the native
+        // external browser: the ad popup's Open button calls
+        // window.FreebuffNative.openExternal(url) to leave the WebView
+        // instead of navigating inside it.
+        webView.addJavascriptInterface(
+            object {
+                @JavascriptInterface
+                fun openExternal(url: String) {
+                    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+                    if (uri.scheme != "http" && uri.scheme != "https") return
+                    runCatching {
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_VIEW, uri)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                }
+            },
+            "FreebuffNative",
+        )
     }
 
     override fun setRestriction(allowedOrigin: String, onBlocked: (String) -> Unit) {
