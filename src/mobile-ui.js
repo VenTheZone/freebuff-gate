@@ -327,9 +327,31 @@
 
     if (typeof window.MutationObserver === 'function') {
       if (!floatLayoutMutationObserver) {
-        floatLayoutMutationObserver = new window.MutationObserver(
-          scheduleFloatLayout,
-        );
+        floatLayoutMutationObserver = new window.MutationObserver(function (records) {
+          // Typing in the composer re-renders its subtree on every keystroke
+          // (controlled draft state), firing childList mutations here. Text
+          // edits never move the task card: the composer's size is tracked by
+          // the ResizeObserver above and its class/style by the attribute
+          // filter. Running syncFloatLayout per keystroke forces a full
+          // layout (getBoundingClientRect + CSS var writes) and stutters
+          // typing on phones. Skip childList changes inside the composer;
+          // attribute changes (class/style) still pass through.
+          var meaningful = records.some(function (record) {
+            if (record.type === 'childList') {
+              var target =
+                record.target && record.target.nodeType === 1
+                  ? record.target
+                  : record.target && record.target.parentElement
+                    ? record.target.parentElement
+                    : null;
+              if (target && target.closest && target.closest('.composer')) {
+                return false;
+              }
+            }
+            return true;
+          });
+          if (meaningful) scheduleFloatLayout();
+        });
       }
       floatLayoutMutationObserver.disconnect();
       unique.forEach(function (element) {
