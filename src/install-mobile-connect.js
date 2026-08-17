@@ -1316,11 +1316,17 @@ function uninstall(options) {
   // harmless, and reverting them would require trusting app-update anchors);
   // tell the user instead.
   let proxyChanged = false;
+  let proxyLeftRunning = false;
   const proxyRegistration = proxyAutoStartPaths({ ...options, platform });
   if (proxyRegistration.type === 'systemd-user') {
     const proxyUnit = proxyRegistration.file;
-    if (fs.existsSync(proxyUnit) && isManagedFile(proxyUnit)) {
-      const execute = options.runPlatformCommand || runPlatformCommand;
+    const execute = options.runPlatformCommand || runPlatformCommand;
+    const proxyActive = execute('systemctl', ['--user', 'is-active', PROXY_SERVICE_NAME], { ignoreFailure: true });
+    if (proxyActive) {
+      // Leave a live proxy alone: it is serving the tailnet UI right now.
+      // Removing its unit/files would take the port down mid-session.
+      proxyLeftRunning = true;
+    } else if (fs.existsSync(proxyUnit) && isManagedFile(proxyUnit)) {
       execute('systemctl', ['--user', 'stop', PROXY_SERVICE_NAME], { ignoreFailure: true });
       execute('systemctl', ['--user', 'disable', PROXY_SERVICE_NAME], { ignoreFailure: true });
       fs.unlinkSync(proxyUnit);
@@ -1333,8 +1339,12 @@ function uninstall(options) {
     env: options.env || process.env,
     home: options.home || os.homedir(),
   }).proxyDir)();
-  try { fs.rmdirSync(proxyDir); } catch (error) {
-    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+  if (proxyLeftRunning) {
+    console.log(`Tailnet proxy ${PROXY_SERVICE_NAME} is still running; left unit and files in place.`);
+  } else {
+    try { fs.rmdirSync(proxyDir); } catch (error) {
+      if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
+    }
   }
   if (options.purge) {
     for (const file of [paths.configFile, paths.stateFile, paths.connectorCredentialFile]) {

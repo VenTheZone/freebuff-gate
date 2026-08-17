@@ -387,11 +387,36 @@ test('ui: desktop discovery finds the squashfs layout and uninstall keeps on-dis
     const { runPlatformCommand } = recordingCommands();
     installUiStack(options, {}, { runPlatformCommand });
     const orchBefore = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
-    uninstall({ ...options, command: 'uninstall' });
+    uninstall({ ...options, command: 'uninstall', runPlatformCommand });
     // Proxy unit + dir removed; on-disk patches intentionally preserved.
     assert.equal(fs.existsSync(path.join(root, '.config', 'systemd', 'user', PROXY_SERVICE_NAME)), false);
     const orchAfter = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
     assert.equal(orchAfter, orchBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ui: uninstall leaves a running tailnet proxy unit and files in place', () => {
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    const options = uiOptions(root, fake.root);
+    const { calls, runPlatformCommand } = recordingCommands();
+    const activeCommands = (command, args, opts) => {
+      calls.push({ command, args, opts });
+      // Only the proxy unit is "active"; everything else reports stopped.
+      return args.includes('is-active') ? true : undefined;
+    };
+    installUiStack(options, {}, { runPlatformCommand: activeCommands });
+    const proxyUnit = path.join(root, '.config', 'systemd', 'user', PROXY_SERVICE_NAME);
+    assert.equal(fs.existsSync(proxyUnit), true);
+    uninstall({ ...options, command: 'uninstall', runPlatformCommand: activeCommands });
+    // Live proxy survives uninstall: unit kept, no stop/disable calls.
+    assert.equal(fs.existsSync(proxyUnit), true);
+    const proxyCalls = calls.filter((c) => c.args.includes(PROXY_SERVICE_NAME));
+    assert.equal(proxyCalls.some((c) => c.args.includes('stop')), false);
+    assert.equal(proxyCalls.some((c) => c.args.includes('disable')), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
