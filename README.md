@@ -52,7 +52,6 @@ re-implemented with web APIs. This repo ships the configuration
 | `android/` | Native Android pairing/WebView scaffold. |
 | `android/app/src/androidTest/java/com/freebuff/mobile/MobilePairingE2EInstrumentedTest.kt` | Emulator test for real claim, refresh, cookie exchange, and relay WebView load. |
 | `.github/workflows/android.yml` | Builds/tests Android emulator, runs managed relay integration, and uploads artifacts. |
-| `.github/workflows/mobile-connect-release.yml` | Packages tagged, versioned Desktop installer artifacts on Node 22. |
 | `.github/workflows/mobile-ui-screenshot.yml` | Runs mobile screenshot/layout regression and uploads the phone capture. |
 | `docs/` | User-facing guides: install guide, mobile adaptation, and historical planning notes. |
 
@@ -212,9 +211,9 @@ gh release create v0.1.0 \\
   --generate-notes
 ```
 
-Tag pushes also run `.github/workflows/mobile-connect-release.yml`, which
-packages and uploads the same artifact to GitHub Actions for review. The
-workflow does not publish a release automatically.
+Tag pushes do not run a separate packaging workflow; the release assets are
+built and uploaded locally (the command above) or from any CI that publishes
+the release.
 
 ```bash
 node src/install-mobile-connect.js install \
@@ -475,5 +474,4 @@ FB-Browser-UI/
 
 Also in the repository root: `install-mobile-connect.sh` (release bootstrap),
 `install-release-apk.sh` (Android release install), `AGENTS.md`, and the
-`.github/workflows/` CI (`android.yml`, `ios.yml`, `mobile-connect-release.yml`,
-`mobile-ui-screenshot.yml`).
+`.github/workflows/` CI (`android.yml`, `ios.yml`, `mobile-ui-screenshot.yml`).
