@@ -1,12 +1,17 @@
 # Freebuff Gate
 
-Dotfile configuration for a browser port of the **Freebuff Desktop** UI,
-including the **folder-selection tweak**.
+Turns the **Freebuff Desktop** UI into two products:
 
-Desktop Freebuff runs as a native app and can open a real folder dialog. A
-browser port cannot, so folder selection must be re-implemented with web APIs.
-This repo ships the configuration (`FB-Browser-UI/.fb-browser-ui.json`) plus a
-small reference implementation (`src/folder-select.js`) of that tweak.
+- **Gate Desktop**: the full desktop UI in a plain web browser (the server
+  serves it on 127.0.0.1:58060, or through the tailnet proxy on 58061).
+- **Gate Mobile**: the same UI adapted for phones and tablets (injected by the
+  tailnet proxy, backed by the Freebuff Gate Android/iOS apps).
+
+Includes the **folder-selection tweak**. Desktop Freebuff runs as a native app
+and can open a real folder dialog; a browser cannot, so folder selection is
+re-implemented with web APIs. This repo ships the configuration
+(`FB-Browser-UI/.fb-browser-ui.json`) plus a small reference implementation
+(`src/folder-select.js`) of that tweak.
 
 ## What's inside
 
@@ -15,10 +20,10 @@ small reference implementation (`src/folder-select.js`) of that tweak.
 | `.fb-browser-ui.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
-| `src/mobile-ui.css` | Responsive adaptation for the browser UI on phones/tablets (injected by the tailnet proxy). |
-| `src/mobile-ui.js` | Tiny mobile helpers: viewport meta patch + dynamic viewport height. |
-| `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for mobile screenshot regression. |
-| `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for mobile chrome. |
+| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets (injected by the tailnet proxy). |
+| `src/mobile-ui.js` | Tiny Gate Mobile helpers: viewport meta patch + dynamic viewport height. |
+| `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for Gate Mobile screenshot regression. |
+| `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for Gate Mobile. |
 | `.env.example` | Non-secret env template. Real values go in a git-ignored `.env`. |
 | `.gitignore` | Excludes every secret and piece of runtime state from the repo. |
 | `AGENTS.md` | Project-scoped Caveman profile shared by Freebuff Desktop and CLI. |
@@ -381,25 +386,39 @@ document.querySelector("#pick-folder").addEventListener("click", async () => {
 const handle = await restoreLastFolder(cfg);
 ```
 
-## Serving ads to the browser UI
+## Serving ads to Gate Desktop and Gate Mobile
 
-The browser port shows the same sponsored ads as the native desktop window.
-There is no forwarding toggle. The UI fetches a banner ad from the desktop
-orchestrator (`POST /api/ad/slot`) and renders inline ad cards inside long
-assistant responses; the orchestrator auctions both placements server-side
-against `https://www.codebuff.com/api/v1/ads` using the auth token in
-`~/.config/freebuff-desktop/state.json`. If the network returns an empty
-`ads` array (no fill), nothing renders. That is expected, not a config
-issue. `src/check-ads.js` polls that auction so you can watch for real fill:
+Gate Desktop and Gate Mobile show the same sponsored ads as the native
+desktop window. There is no forwarding toggle. The UI fetches a banner ad
+from the orchestrator (`POST /api/ad/slot`) and renders inline ad cards
+inside long assistant responses; the orchestrator auctions both placements
+server-side against `https://www.codebuff.com/api/v1/ads` using the auth
+token in `~/.config/freebuff-desktop/state.json`. If the network returns an
+empty `ads` array (no fill), nothing renders. That is expected, not a config
+issue.
+
+The tailnet proxy is the one interception point every surface shares (Gate
+Desktop direct, CLI, and Gate Mobile via relay → agent → proxy). It caches
+the last non-empty ad fill per placement and re-broadcasts it to any surface
+whose next auction comes back empty (substitutes flagged `stale`), so a
+fill seen once shows everywhere. Inspect the cache with:
+
+```bash
+curl -s http://127.0.0.1:58061/api/fb/last-ad
+```
+
+`src/check-ads.js` polls the auction directly so you can watch for real
+fill:
 
 ```bash
 node src/check-ads.js            # poll every 60s until an ad fills
 node src/check-ads.js --once     # single auction check
 ```
 
-## Mobile adaptation
+## Gate Mobile
 
-The desktop UI targets a mouse and a wide window; on a phone it falls apart.
+Gate Mobile adapts Gate Desktop to a phone or tablet. The desktop layout
+targets a mouse and a wide window; on a phone it falls apart.
 `src/mobile-ui.css` + `src/mobile-ui.js` fix that for narrow viewports: the
 chat goes full-bleed, the composer stays docked, the tab strip collapses into
 a slim header with a session switcher, the model picker becomes a full-screen

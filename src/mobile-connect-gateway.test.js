@@ -135,6 +135,57 @@ test('PairingStore expires pending requests and supports refresh/revoke', () => 
   );
 });
 
+test('PairingStore keeps the rotated-away access token valid until its original expiry (refresh/establish race)', () => {
+  let current = 1_700_000_000_000;
+  const store = new PairingStore({
+    stateFile: null,
+    now: () => current,
+    appUrl: 'https://mobile.example.test/pair',
+  });
+  const pairing = store.startPairing();
+  const qr = new URLSearchParams(new URL(pairing.pairingUrl).hash.slice(1));
+  const claimed = store.claim({
+    pairingId: qr.get('pairingId'),
+    token: qr.get('token'),
+    devicePublicKey: 'ed25519:race',
+  });
+
+  // A refresh rotates the access token (the launch-time double-refresh race
+  // that left the web-session establish holding the pre-rotation token).
+  const refreshed = store.refresh({
+    deviceId: claimed.deviceId,
+    deviceToken: claimed.deviceToken,
+  });
+  assert.notEqual(refreshed.accessToken, claimed.accessToken, 'refresh rotates the token');
+
+  // The NEW token authenticates…
+  assert.equal(store.authenticateAccess({ accessToken: refreshed.accessToken }).id, claimed.deviceId);
+  // …and the OLD token still does within its grace window: an establish that
+  // raced this refresh must not get a spurious 401 "Access token is invalid
+  // or expired".
+  assert.equal(store.authenticateAccess({ accessToken: claimed.accessToken }).id, claimed.deviceId);
+  assert.throws(
+    () => store.authenticateAccess({ accessToken: 'not-a-real-token' }),
+    (error) => error.code === 'access_not_authorized' && error.status === 401,
+  );
+
+  // A second refresh keeps the newest rotated-away token as the grace
+  // candidate: the token from the FIRST refresh still authenticates.
+  const refreshed2 = store.refresh({
+    deviceId: claimed.deviceId,
+    deviceToken: claimed.deviceToken,
+  });
+  assert.equal(store.authenticateAccess({ accessToken: refreshed.accessToken }).id, claimed.deviceId);
+  assert.equal(store.authenticateAccess({ accessToken: refreshed2.accessToken }).id, claimed.deviceId);
+
+  // Once the original expiry passes, the first token is rejected.
+  current += 15 * 60 * 1000 + 1;
+  assert.throws(
+    () => store.authenticateAccess({ accessToken: claimed.accessToken }),
+    (error) => error.code === 'access_not_authorized' && error.status === 401,
+  );
+});
+
 test('HTTP gateway exposes pairing, refresh, list, and revoke flows', async () => {
   await withServer(async ({ baseUrl }) => {
     const headers = { authorization: 'Bearer admin-secret' };

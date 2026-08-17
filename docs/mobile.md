@@ -1,6 +1,7 @@
-# Mobile adaptation
+# Gate Mobile
 
-The desktop UI targets a mouse and a wide window; on a phone it falls apart
+Gate Mobile is the phone/tablet adaptation of Gate Desktop. The desktop
+layout targets a mouse and a wide window; on a phone it falls apart
 (the explorer panel and side reserves eat the viewport, menus are hover-first,
 and inputs zoom on focus). `src/mobile-ui.css` + `src/mobile-ui.js` fix that
 for narrow viewports:

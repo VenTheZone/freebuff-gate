@@ -14,7 +14,8 @@ relay + connector so the Freebuff Gate Android app can pair.
 ```text
 You are setting up the Freebuff Gate stack on this machine. Follow these
 steps in order and verify each one. The app is Freebuff Desktop, a packaged
-Electron-style app whose orchestrator (a Bun server) serves the browser UI.
+Electron-style app whose orchestrator (a Bun server) serves Gate Desktop
+(the browser UI); Gate Mobile is the same UI adapted for phones and tablets.
 
 ### Prerequisites
 - Node.js 22+ and Bun (Bun ships inside the app at
@@ -40,7 +41,7 @@ installer. Useful flags:
                                                # are missing (e.g. right after an app update)
 
 ### 1. Verify the orchestrator
-The orchestrator serves the browser UI on 127.0.0.1:58060 (and tailnet IP).
+The orchestrator serves Gate Desktop on 127.0.0.1:58060 (and tailnet IP).
 - Confirm it answers: curl http://127.0.0.1:58060/api/projects
 - If it is not running, start it from
   ~/.local/share/freebuff-desktop/squashfs-root/resources/orchestrator with
@@ -141,9 +142,14 @@ If the phone app is used:
   not stable across app builds; see the commit history for the strings).
 - The ad sniffer (optional debug tool) patches orchestrator.js the same
   way: it wraps the Ads class `post`/`auction` methods and appends JSON
-  lines to ~/.config/freebuff-desktop/ad-sniff.log. Re-apply after app
-  updates; the proxy-side half lives in the repo (src/freebuff_tailnet_proxy.js)
-  and only needs a proxy restart.
+  lines to ~/.config/freebuff-desktop/ad-sniff.log. Both halves now record
+  the full HTTP exchange: the orchestrator side logs the outbound request
+  headers (Authorization value redacted) and all response headers, the
+  proxy side (src/freebuff_tailnet_proxy.js) logs browser->orchestrator
+  request/response headers, so a complete dump needs no replay. Re-apply
+  after app updates with `node src/patch-ad-sniffer.js` (idempotent,
+  fails loudly if anchors moved); the proxy-side half only needs a proxy
+  restart.
 - Perf probe (optional debug tool): src/perf-probe.js collects Navigation +
   Resource Timing and renders a waterfall when the URL carries ?fbperf=1 (or
   #fbperf). It POSTs to /api/fb/perf-report, which logs JSON lines to
@@ -163,11 +169,11 @@ If the phone app is used:
 
 | Layer | File | Port | Purpose |
 |-------|------|------|---------|
-| Orchestrator | `orchestrator.js` (packaged) | 58060 | Browser UI server, projects, threads |
-| Tailnet proxy | `src/freebuff_tailnet_proxy.js` | 58061 | Mobile UI injection, desktop shim, bundle patch |
+| Orchestrator | `orchestrator.js` (packaged) | 58060 | Gate Desktop server, projects, threads |
+| Tailnet proxy | `src/freebuff_tailnet_proxy.js` | 58061 | Gate Mobile injection, Gate Desktop shim, bundle patch, ad broadcast |
 | Relay | `src/mobile-connect-relay.js` | 8795 | HTTPS/WSS for the Android app |
 | Agent | `src/mobile-connect-agent.js` | n/a | Bridges relay → proxy (58061) |
-| Mobile UI | `src/mobile-ui.css`, `src/mobile-ui.js` | n/a | Mobile adaptation layer |
+| Gate Mobile | `src/mobile-ui.css`, `src/mobile-ui.js` | n/a | Mobile adaptation layer |
 | iOS app | `ios/` | n/a | Native iOS companion (QR pairing, restricted WKWebView) |
 
 ## iOS companion app

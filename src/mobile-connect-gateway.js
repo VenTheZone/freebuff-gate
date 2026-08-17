@@ -229,6 +229,8 @@ class PairingStore {
       deviceExpiresAt,
       accessTokenHash: hashSecret(accessToken),
       accessExpiresAt,
+      prevAccessTokenHash: null,
+      prevAccessExpiresAt: null,
       createdAt,
       lastSeenAt: createdAt,
       revokedAt: null,
@@ -269,6 +271,14 @@ class PairingStore {
 
     const accessToken = randomToken();
     const accessExpiresAt = current + ACCESS_TOKEN_TTL_MS;
+    // Grace window: keep the rotated-away token valid until its original
+    // expiry so a client that minted it microseconds earlier (e.g. a web
+    // session establish racing a refresh) still authenticates instead of
+    // getting a spurious 401 "Access token is invalid or expired".
+    if (device.accessTokenHash) {
+      device.prevAccessTokenHash = device.accessTokenHash;
+      device.prevAccessExpiresAt = device.accessExpiresAt || current;
+    }
     device.accessTokenHash = hashSecret(accessToken);
     device.accessExpiresAt = accessExpiresAt;
     device.lastSeenAt = current;
@@ -293,10 +303,22 @@ class PairingStore {
     const accessToken = requireString(options.accessToken, 'accessToken');
     const current = this.now();
     for (const device of Object.values(this.state.devices)) {
+      if (device.revokedAt) continue;
       if (
-        !device.revokedAt &&
         device.accessExpiresAt > current &&
         verifySecret(accessToken, device.accessTokenHash)
+      ) {
+        device.lastSeenAt = current;
+        this.persist();
+        return device;
+      }
+      // A refresh that rotated the access token while an establish was in
+      // flight must not invalidate the token the client is presenting: accept
+      // the previous token until its original expiry.
+      if (
+        device.prevAccessTokenHash &&
+        device.prevAccessExpiresAt > current &&
+        verifySecret(accessToken, device.prevAccessTokenHash)
       ) {
         device.lastSeenAt = current;
         this.persist();

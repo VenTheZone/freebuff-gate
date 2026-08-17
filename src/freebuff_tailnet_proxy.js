@@ -22,6 +22,38 @@ const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
 
 const REPO = __dirname;
 const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
+
+// ---- ad broadcast cache ----
+// Last known non-empty ad fill per placement, captured from /api/ad/slot
+// responses that pass through the proxy. When a later auction returns empty
+// (gravity no-fill), the proxy substitutes the cached ad so a fill seen on
+// one surface is re-broadcast to all of them (Gate Desktop direct, CLI, and
+// Gate Mobile via relay -> agent -> proxy all share this one interception
+// point). In-memory: a fresh proxy process starts with no cache, and the
+// next real fill repopulates it.
+const lastAds = new Map();
+
+// ---- dev ad broadcaster ----
+// FB_AD_DEV_BROADCAST=1 makes the proxy substitute this clearly-marked
+// placeholder into every EMPTY /api/ad/slot response, so the ad card render
+// path can be exercised end-to-end on Gate Desktop and Gate Mobile before
+// the gravity auction ever fills. Shape matches what the UI renderer reads
+// (title, url, clickUrl||url, impUrl, favicon, adText||cta) plus the
+// orchestrator's keep filter (title && url). Responses carry `dev: true` so
+// a placeholder can never be mistaken for a real fill. Off by default.
+const DEV_AD = {
+  title: 'Freebuff Gate dev ad',
+  brandName: 'Freebuff Gate',
+  adText: 'Placeholder ad for testing the Gate Desktop and Gate Mobile ad card. Enable with FB_AD_DEV_BROADCAST=1 on the tailnet proxy.',
+  cta: 'Learn more',
+  url: 'https://github.com/VenTheZone/freebuff-gate',
+  clickUrl: 'https://github.com/VenTheZone/freebuff-gate',
+  impUrl: 'https://dev.local/freebuff-gate/ad-impression',
+  favicon: '',
+};
+function devAdBroadcastEnabled() {
+  return process.env.FB_AD_DEV_BROADCAST === '1';
+}
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
 
@@ -60,7 +92,27 @@ function perfTag() {
 // (browser -> orchestrator) so ad payloads can be cross-checked against the
 // orchestrator's outbound auction sniffer. Same log file as the orchestrator
 // side (kind prefix distinguishes the source).
-const AD_SNIFF_LOG = path.join(os.homedir(), '.config', 'freebuff-desktop', 'ad-sniff.log');
+const AD_SNIFF_LOG = process.env.FB_AD_SNIFF_LOG || path.join(os.homedir(), '.config', 'freebuff-desktop', 'ad-sniff.log');
+// Header values that must never land in the debug log verbatim. The header
+// NAME is kept (so the shape of the exchange stays visible) but the value is
+// replaced, matching the existing behavior of logging `auth: present` rather
+// than the token itself.
+const SNIFF_REDACT_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  'proxy-authorization',
+  'x-api-key',
+  'set-cookie',
+]);
+function sniffHeaders(headers) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers || {})) {
+    out[key] = SNIFF_REDACT_HEADERS.has(String(key).toLowerCase())
+      ? '<redacted>'
+      : String(value);
+  }
+  return out;
+}
 function adSniff(kind, data) {
   try {
     fs.appendFileSync(AD_SNIFF_LOG, JSON.stringify({ ts: new Date().toISOString(), kind: kind, ...data }) + '\n');
@@ -339,9 +391,25 @@ const CREATE_REUSE_V4 =
 // restored its tabs and the pinned thread is not among them, the thread was
 // deleted (or the pin belongs to another browser) — create fresh. Serialize
 // creates through a shared promise so concurrent boot-hook calls (mount +
-// re-render) can never both create.
-const CREATE_REUSE =
+// re-render) can never both create. Keep the exact string so bundles that
+// already carry V5 can be upgraded to V6 in place.
+const CREATE_REUSE_V5 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const k=pin();if(home())return lv(G.getState().tabs.find(h=>h.home).id);if(k&&lv(k))return lv(k);if(!k)return null;return G.getState().tabs.length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};if(!pin())return create().then(v=>q(v));const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st===null)return create().then(v=>q(v));setTimeout(step,250)};step()})},"Could not open tab")';
+// V6: join the thread the user last sent a message on, not a fresh one.
+// V5 reused the pinned thread per browser context, so Gate Desktop and Gate
+// Mobile each kept their OWN home thread and every connect of a second
+// surface stacked another empty "New thread". V6 ranks hydrated threads by
+// last activity (lastPromptAt ?? lastTurnFinishedAt — the same signal the
+// sidebar uses) and opens the most recent one, so Desktop and Mobile both
+// land on the thread where the user last chatted. Priority: existing home
+// tab -> last-message thread -> pinned thread -> newest thread (converge on
+// a single thread when nothing has activity yet, so surfaces never split) ->
+// create fresh. Candidates are restricted to this project and exclude
+// archived/closed threads. No pin: wait up to 6s for the store to hydrate so
+// the last-message thread can be found before creating; pin exists: wait
+// forever (V5 semantics). Creates stay serialized through a shared promise.
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,cand=x=>{const t=lv(x);return t&&!t.archivedAt&&t.status!=="closed"&&t.projectPath===n?t:null},act=x=>{const t=cand(x);return t?Math.max(t.lastPromptAt??0,t.lastTurnFinishedAt??0):0},best=()=>{let id=null,bt=0;for(const k in G.getState().threads){const a=act(k);if(a>bt){bt=a;id=k}}return id},newest=()=>{let id=null,bt=-1;for(const k in G.getState().threads){const t=cand(k);if(t&&t.createdAt>bt){bt=t.createdAt;id=k}}return id},home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const h=home();if(h)return h;const la=best();if(la)return lv(la);const k=pin();if(k&&lv(k))return lv(k);const c=newest();if(c)return lv(c);return G.getState().tabs.length||Object.keys(G.getState().threads).length?null:0},th=s();if(th&&th!==0)return th;return new Promise(q=>{let inflight=null,tries=0;const create=()=>{if(!inflight)inflight=ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}return nt||id},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}return null}).finally(()=>{inflight=null});return inflight};const step=()=>{const st=s();if(st&&st!==0)return q(st);if(st===null)return create().then(v=>q(v));if(pin()||++tries<24)setTimeout(step,250);else create().then(v=>q(v))};step()})},"Could not open tab")';
 const SETSTATE_MARK =
   'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
 const SETSTATE_FIX =
@@ -440,6 +508,7 @@ function patchBundle(body) {
   else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V3)) out = out.split(CREATE_REUSE_V3).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V4)) out = out.split(CREATE_REUSE_V4).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V5)) out = out.split(CREATE_REUSE_V5).join(CREATE_REUSE);
   if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
@@ -612,7 +681,19 @@ function createProxyServer(options = {}) {
     return;
   }
   const sniffAd = pathname.startsWith('/api/ad/');
-  if (sniffAd) adSniff('proxy-request', { path: pathname, method: req.method });
+  if (sniffAd) adSniff('proxy-request', { path: pathname, method: req.method, headers: sniffHeaders(req.headers) });
+  if (req.method === 'GET' && pathname === '/api/fb/last-ad') {
+    // Broadcast inspection: every placement's last known ad (desktop, CLI,
+    // or mobile — whichever surface filled last), so any client can see what
+    // the proxy would substitute when the upstream auction comes back empty.
+    const snapshot = {};
+    for (const [placementId, entry] of lastAds) {
+      snapshot[placementId] = { ad: entry.ad, at: entry.at };
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ placements: snapshot }));
+    return;
+  }
   // Perf probe reports are logged locally (not forwarded upstream): the
   // proxy is the origin the phone WebView sees, so its report must land here.
   if (req.method === 'POST' && pathname === '/api/fb/perf-report') {
@@ -627,6 +708,15 @@ function createProxyServer(options = {}) {
   }
   const reqChunks = [];
   if (sniffAd) req.on('data', (c) => reqChunks.push(c));
+  let adPlacementId = null;
+  if (sniffAd && pathname === '/api/ad/slot') {
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(Buffer.concat(reqChunks).toString('utf8'));
+        if (typeof parsed.placementId === 'string') adPlacementId = parsed.placementId;
+      } catch (e) { /* keep null */ }
+    });
+  }
   const preq = http.request({
     host: up.hostname,
     port: up.port || 80,
@@ -639,10 +729,41 @@ function createProxyServer(options = {}) {
       const chunks = [];
       pres.on('data', (c) => chunks.push(c));
       pres.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf8');
+        let body = Buffer.concat(chunks).toString('utf8');
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch (e) { /* keep raw */ }
+        // Ad broadcast: remember the last non-empty slot fill per placement,
+        // and when the auction comes back empty, serve the cached ad so a
+        // fill seen on any surface (Gate Desktop, CLI, Gate Mobile) is
+        // re-broadcast to every surface until a fresher one arrives. The
+        // substitute is flagged `stale` so callers can tell it from a live
+        // fill, and a content-length mismatch is avoided by letting Node
+        // re-encode the (possibly different-length) body.
+        if (pathname === '/api/ad/slot' && parsed && typeof parsed === 'object') {
+          const key = adPlacementId || 'default';
+          const live = parsed.ad && typeof parsed.ad === 'object' && parsed.ad.title && parsed.ad.url;
+          if (live) {
+            lastAds.set(key, { ad: parsed.ad, at: Date.now() });
+          } else if (devAdBroadcastEnabled()) {
+            // Dev mode: fill every empty slot with the placeholder so the
+            // render path is always exercised. Takes precedence over the
+            // cached-broadcast substitute below.
+            parsed = { ad: DEV_AD, dev: true };
+            body = JSON.stringify(parsed);
+            delete pres.headers['content-length'];
+            adSniff('dev-broadcast', { placementId: key });
+          } else if (lastAds.has(key)) {
+            const entry = lastAds.get(key);
+            parsed = { ad: entry.ad, stale: true };
+            body = JSON.stringify(parsed);
+            delete pres.headers['content-length'];
+            adSniff('broadcast-fill', { placementId: key, at: entry.at, ageMs: Date.now() - entry.at });
+          }
+        }
         adSniff('proxy-response', {
           path: pathname,
           status: pres.statusCode || 200,
+          headers: sniffHeaders(pres.headers),
           body: (() => { try { return JSON.parse(body); } catch (e) { return body.slice(0, 2000); } })(),
         });
         res.writeHead(pres.statusCode || 200, pres.headers);
@@ -812,6 +933,7 @@ module.exports = {
   CREATE_REUSE_V2,
   CREATE_REUSE_V3,
   CREATE_REUSE_V4,
+  CREATE_REUSE_V5,
   SCROLL_FIX,
   SCROLL_MARK,
   SETSTATE_FIX,

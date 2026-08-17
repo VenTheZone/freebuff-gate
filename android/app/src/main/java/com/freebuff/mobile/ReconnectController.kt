@@ -32,6 +32,8 @@ class ReconnectController(
 
     @Volatile
     private var manualDisconnect = false
+    @Volatile
+    private var connectInFlight = false
     private var retryAttempt = 0
     private var scheduled: ScheduledFuture<*>? = null
     private var refreshTimer: ScheduledFuture<*>? = null
@@ -46,7 +48,23 @@ class ReconnectController(
     }
 
     fun onResume() {
-        if (!started) start() else if (!manualDisconnect) scheduleConnect(immediate = true)
+        if (!started) {
+            start()
+        } else if (!manualDisconnect && !connectInFlight) {
+            // Skip the immediate re-refresh when the stored access token is
+            // still valid for a while: launch-time double refresh (start() +
+            // onResume()) rotated the token between refresh and web-session
+            // establish, which surfaced as a spurious 401 "Access token is
+            // invalid or expired". Only refresh when it is actually due.
+            val stored = sessionStore.load()
+            val stillFresh = stored?.let { session ->
+                runCatching {
+                    java.time.Instant.parse(session.accessTokenExpiresAt).toEpochMilli() >
+                        System.currentTimeMillis() + 120_000L
+                }.getOrDefault(false)
+            } ?: false
+            if (!stillFresh) scheduleConnect(immediate = true)
+        }
     }
 
     fun disconnect(clearSession: Boolean) {
@@ -65,7 +83,7 @@ class ReconnectController(
     fun reconnect() {
         manualDisconnect = false
         retryAttempt = 0
-        scheduleConnect(immediate = true)
+        scheduleConnect(immediate = true, force = true)
     }
 
     fun close() {
@@ -76,15 +94,21 @@ class ReconnectController(
         started = false
     }
 
-    private fun scheduleConnect(immediate: Boolean) {
+    private fun scheduleConnect(immediate: Boolean, force: Boolean = false) {
         if (manualDisconnect || !started) return
+        // One connect at a time: a second connect while the first is in flight
+        // would rotate the access token a second time and race the web-session
+        // establish the first one triggered.
+        if (!force && connectInFlight) return
         scheduled?.cancel(false)
         val delay = if (immediate) 0L else retryDelayMs()
         scheduled = executor.schedule({ connectOnce() }, delay, TimeUnit.MILLISECONDS)
     }
 
     private fun connectOnce() {
-        if (manualDisconnect) return
+        if (manualDisconnect || connectInFlight) return
+        connectInFlight = true
+        try {
         val stored = sessionStore.load()
         if (stored == null) {
             emit(ConnectionState.UNPAIRED, "Scan a pairing QR code", null)
@@ -118,6 +142,9 @@ class ReconnectController(
         } catch (error: Exception) {
             scheduleRetry(stored, error.message ?: "Connection failed")
         }
+        } finally {
+            connectInFlight = false
+        }
     }
 
     private fun scheduleSessionRefresh(session: PairingSession) {
@@ -135,7 +162,9 @@ class ReconnectController(
     private fun scheduleRetry(session: PairingSession, detail: String) {
         retryAttempt += 1
         emit(ConnectionState.RECONNECTING, detail, session)
-        scheduleConnect(immediate = false)
+        // Force: called from inside connectOnce while connectInFlight is still
+        // set; the enqueued retry runs after the in-flight connect finishes.
+        scheduleConnect(immediate = false, force = true)
     }
 
     private fun retryDelayMs(): Long {

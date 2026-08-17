@@ -9,8 +9,10 @@ const path = require('node:path');
 const test = require('node:test');
 
 process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
+// Ad sniffing must never write to the production ~/.config log during tests.
+process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}.log`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -187,27 +189,41 @@ test('patchBundle pins the resolved thread id, not the createThread promise', ()
   assert.notEqual(patched, CREATE_REUSE_V2, 'V2 bundle is upgraded in place');
 });
 
-test('patchBundle upgrades V3 home-thread reuse to V5 (wait while pin lives, never double-create)', () => {
+test('patchBundle upgrades V3 home-thread reuse to V6 (wait while pin lives, never double-create)', () => {
   const patched = patchBundle(CREATE_REUSE_V3);
   assert.notEqual(patched, CREATE_REUSE_V3, 'V3 bundle is upgraded in place');
-  // V5 keeps waiting while a pin exists and the store is still hydrating
+  // V6 keeps waiting while a pin exists and the store is still hydrating
   // (slow relay path on the phone), and only creates when no pin exists or
   // the store has hydrated without the pinned thread (stale pin).
-  assert.ok(patched.includes('G.getState().tabs.length?null:0'), 'unhydrated store signals "wait", hydrated-without-pin signals "create"');
-  assert.ok(patched.includes('if(!pin())return create()'), 'creates only when no pin exists');
+  assert.ok(patched.includes('G.getState().tabs.length||Object.keys(G.getState().threads).length?null:0'), 'unhydrated store signals "wait", hydrated-without-pin signals "create"');
+  assert.ok(patched.includes('lastPromptAt'), 'ranks threads by last-message activity');
+  assert.ok(patched.includes('tries<24'), 'bounded no-pin hydration wait, never a give-up that re-creates');
   assert.ok(patched.includes('setTimeout(step,250)'), 'polls for hydration');
-  assert.ok(!patched.includes('tries>30'), 'no bounded give-up that re-creates on a slow phone');
+  assert.ok(!patched.includes('tries>30'), 'no old bounded give-up that re-creates on a slow phone');
   assert.ok(patched.includes('inflight'), 'serializes concurrent boot-hook creates');
 });
 
-test('patchBundle upgrades an already-V4-patched bundle to V5 (slow-phone stacking fix)', () => {
+test('patchBundle upgrades an already-V4-patched bundle to V6 (slow-phone stacking fix)', () => {
   // V4 shipped with a 6s give-up that re-created + re-pinned on slow phone
   // connects, stacking empties. On-disk bundles still carry it; patchBundle
   // must upgrade it in place rather than leaving it as-is.
   const patched = patchBundle(CREATE_REUSE_V4);
   assert.notEqual(patched, CREATE_REUSE_V4, 'V4 bundle is upgraded in place');
-  assert.ok(patched.includes(CREATE_REUSE), 'V5 present');
+  assert.ok(patched.includes(CREATE_REUSE), 'V6 present');
   assert.ok(!patched.includes('tries>30'), '6s give-up removed');
+});
+
+test('patchBundle upgrades an already-V5-patched bundle to V6 (join last-message thread across surfaces)', () => {
+  const patched = patchBundle(CREATE_REUSE_V5);
+  assert.notEqual(patched, CREATE_REUSE_V5, 'V5 bundle is upgraded in place');
+  assert.ok(patched.includes(CREATE_REUSE), 'V6 present');
+  assert.ok(!patched.includes(CREATE_REUSE_V5), 'V5 gone');
+  // V6 core: open the thread where the user last sent a message so Gate
+  // Desktop and Gate Mobile converge instead of each pinning their own.
+  assert.ok(patched.includes('lastPromptAt'), 'activity ranking present');
+  assert.ok(patched.includes('projectPath===n'), 'candidates restricted to this project');
+  assert.ok(patched.includes('t.archivedAt'), 'archived threads excluded');
+  assert.ok(patched.includes('newest()'), 'no-activity surfaces converge on the newest thread');
 });
 
 test('patchBundle upgrades close patches so empty threads close and DELETE server-side', () => {
@@ -244,6 +260,85 @@ test('patchBundle adds a close button to empty home tabs (CLOSE_BTN)', () => {
   );
   // Idempotent: re-patching the fixed string does not double-wrap it.
   assert.equal(patchBundle(patched), patched);
+});
+
+test('proxy re-broadcasts the last known ad when the slot auction comes back empty', async () => {
+  // Gravity often returns no fill. Once ANY surface gets a real ad through
+  // the proxy, the proxy caches it per placement and serves it back to
+  // every surface (Gate Desktop, CLI, Gate Mobile all share this proxy)
+  // until a fresher fill arrives.
+  const FILL = {
+    ad: { title: 'Gravity fill', url: 'https://trygravity.test/c', impUrl: 'https://trygravity.test/i' },
+  };
+  const EMPTY = { ad: null };
+  let responses = [FILL, EMPTY, EMPTY];
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(JSON.stringify(responses[0])) });
+    res.end(JSON.stringify(responses.shift()));
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+
+  try {
+    const slot = (body) =>
+      fetch(`http://127.0.0.1:${proxyPort}/api/ad/slot`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+
+    const first = await slot({ placementId: 'Desktop-Below-Chat' });
+    assert.deepEqual(first, FILL, 'first call passes through the live fill');
+
+    const second = await slot({ placementId: 'Desktop-Below-Chat' });
+    assert.equal(second.ad.title, FILL.ad.title, 'empty auction is filled from cache');
+    assert.equal(second.stale, true, 'substitute is flagged stale');
+
+    // A different placement has its own slot and is not cross-contaminated.
+    const third = await slot({ placementId: 'Desktop-Inline-Chat' });
+    assert.equal(third.ad, null, 'unknown placement stays empty until it fills');
+  } finally {
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test('proxy fills empty slots with a dev placeholder when FB_AD_DEV_BROADCAST is set', async () => {
+  // Dev-only render-path testing: with the env flag on, every empty
+  // /api/ad/slot response carries a clearly-marked placeholder so the ad
+  // card can be seen end-to-end before gravity ever fills.
+  const EMPTY_BODY = '{"ad":null}';
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(EMPTY_BODY) });
+    res.end(EMPTY_BODY);
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+  const slot = () =>
+    fetch(`http://127.0.0.1:${proxyPort}/api/ad/slot`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ placementId: 'Dev-Test-Slot' }),
+    }).then((r) => r.json());
+
+  process.env.FB_AD_DEV_BROADCAST = '1';
+  try {
+    const dev = await slot();
+    assert.equal(dev.dev, true, 'placeholder response is flagged dev');
+    assert.equal(dev.ad.title, 'Freebuff Gate dev ad', 'placeholder title');
+    assert.ok(dev.ad.url && dev.ad.impUrl && dev.ad.clickUrl, 'placeholder carries url + impression/click URLs');
+    assert.ok(dev.ad.adText, 'placeholder carries ad copy (adText||cta fallback)');
+  } finally {
+    delete process.env.FB_AD_DEV_BROADCAST;
+  }
+
+  // Flag off: empty auction passes through untouched.
+  const off = await slot();
+  assert.equal(off.ad, null, 'without the flag the empty auction is passed through');
+  await close(proxy);
+  await close(upstream);
 });
 
 test('patchBundle repairs the buggy V2 closeTab whose double brace closed the body early', () => {
