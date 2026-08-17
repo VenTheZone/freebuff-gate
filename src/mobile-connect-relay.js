@@ -23,6 +23,7 @@ const {
   parseSubprotocols,
   rejectUpgrade,
 } = require('./mobile-connect-websocket');
+const { createApnsProvider } = require('./mobile-push-apns');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8795;
@@ -42,7 +43,13 @@ const DEFAULT_CONNECTOR_STATE_FILE = path.join(
 );
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const HTTP_TIMEOUT_MS = 15 * 60 * 1000;
-const WEB_SESSION_TTL_MS = 15 * 60 * 1000;
+// Web-session cookie TTL for the mobile WebView. Long-lived (7 days) and
+// renewed on use (getWebSession extends it), so an active app never hits
+// "Could not load skills: web_session_expired" mid-session: the app
+// re-establishes every access-token refresh, and any request with a still-
+// valid cookie extends the session further. Revocation is still enforced on
+// every request via the device lookup.
+const WEB_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONNECTOR_TOKEN_TTL_MS = 15 * 60 * 1000;
 const CONNECTOR_REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const COOKIE_NAME = '__Host-freebuff_session';
@@ -302,6 +309,10 @@ class RelayHub {
     this.httpRequests = new Map();
     this.webSockets = new Map();
     this.webSessions = new Map();
+    // APNs turn-notification provider (no-op until FB_APNS_* is configured)
+    // plus the per-connector /api/events watcher that drives it.
+    this.apns = options.apnsProvider || createApnsProvider({ env: process.env });
+    this.eventWatchers = new Map();
     this.store = options.store || new PairingStore({
       stateFile: options.stateFile === undefined ? DEFAULT_STATE_FILE : options.stateFile,
       appUrl: options.appUrl || `${this.publicHttpUrl}/pair`,
@@ -450,8 +461,110 @@ class RelayHub {
         this.connectors.delete(id);
         this.failConnectorRequests(id, 'Desktop connector disconnected');
         this.failConnectorSockets(id);
+        this.stopEventWatcher(id);
       }
     });
+    this.startEventWatcher(id);
+  }
+
+  // ---- Turn-finished push watcher (APNs) ----
+  // Holds one SSE stream per connector to the desktop orchestrator's
+  // /api/events (through the connector, same path the WebView uses) and, on
+  // agent finish events, pushes to every paired device of that connector that
+  // has uploaded an APNs token and was not actively used within the last 2
+  // minutes (an active app's UI is already live; idle/background apps need
+  // the push). Only runs when APNs is configured.
+  eventWatcherFor(connectorId, requestId) {
+    const watcher = this.eventWatchers.get(connectorId);
+    return watcher && watcher.id === requestId ? watcher : null;
+  }
+
+  startEventWatcher(connectorId) {
+    if (!this.apns.configured || this.eventWatchers.has(connectorId)) return;
+    const connector = this.connectors.get(connectorId);
+    if (!connector) return;
+    const watcher = { id: randomId('w_'), connectorId, buffer: '', retry: null };
+    this.eventWatchers.set(connectorId, watcher);
+    connector.sendJson({
+      type: 'http.request',
+      id: watcher.id,
+      method: 'GET',
+      path: '/api/events',
+      headers: { accept: 'text/event-stream', 'cache-control': 'no-cache' },
+      bodyBase64: null,
+    });
+  }
+
+  stopEventWatcher(connectorId) {
+    const watcher = this.eventWatchers.get(connectorId);
+    if (!watcher) return;
+    this.eventWatchers.delete(connectorId);
+    clearTimeout(watcher.retry);
+    const connector = this.connectors.get(connectorId);
+    if (connector) connector.sendJson({ type: 'http.cancel', id: watcher.id });
+  }
+
+  scheduleEventWatcherRetry(connectorId) {
+    const watcher = this.eventWatchers.get(connectorId);
+    if (!watcher || watcher.retry) return;
+    watcher.retry = setTimeout(() => {
+      watcher.retry = null;
+      if (this.eventWatchers.get(connectorId) !== watcher) return;
+      const connector = this.connectors.get(connectorId);
+      if (!connector) {
+        this.eventWatchers.delete(connectorId);
+        return;
+      }
+      connector.sendJson({
+        type: 'http.request',
+        id: watcher.id,
+        method: 'GET',
+        path: '/api/events',
+        headers: { accept: 'text/event-stream', 'cache-control': 'no-cache' },
+        bodyBase64: null,
+      });
+    }, 3000);
+  }
+
+  handleEventWatcherChunk(connectorId, dataBase64) {
+    const watcher = this.eventWatchers.get(connectorId);
+    if (!watcher) return;
+    watcher.buffer += Buffer.from(String(dataBase64 || ''), 'base64').toString('utf8');
+    if (watcher.buffer.length > 65536) watcher.buffer = watcher.buffer.slice(-65536);
+    let index;
+    while ((index = watcher.buffer.indexOf('\n\n')) !== -1) {
+      const frame = watcher.buffer.slice(0, index);
+      watcher.buffer = watcher.buffer.slice(index + 2);
+      const data = frame.split('\n').find((line) => line.startsWith('data: '));
+      if (!data) continue;
+      let event;
+      try {
+        event = JSON.parse(data.slice(6));
+      } catch {
+        continue;
+      }
+      if (event && event.type === 'agent' && event.event && event.event.type === 'finish') {
+        this.onTurnFinished(connectorId, String(event.threadId || ''));
+      }
+    }
+  }
+
+  onTurnFinished(connectorId, threadId) {
+    if (!this.apns.configured) return;
+    const now = this.now();
+    for (const device of this.store.devicesForConnector(connectorId)) {
+      if (!device.pushToken) continue;
+      // The user actively used this device within the last 2 minutes: its UI
+      // is live, so a push would just duplicate what is on screen.
+      if (now - (device.lastSeenAt || 0) < 120_000) continue;
+      this.apns
+        .send(device.pushToken, {
+          title: 'Buffy finished working',
+          body: 'Tap to open Freebuff Gate',
+          threadId,
+        })
+        .catch(() => {});
+    }
   }
 
   failConnectorRequests(connectorId, message) {
@@ -481,9 +594,17 @@ class RelayHub {
     if (!raw) throw new RelayError(401, 'web_session_required', 'Mobile session cookie is required');
     const tokenHash = hashSecret(raw);
     const session = this.webSessions.get(tokenHash);
-    if (!session || session.expiresAt <= this.now()) {
+    const current = this.now();
+    if (!session || session.expiresAt <= current) {
       this.webSessions.delete(tokenHash);
       throw new RelayError(401, 'web_session_expired', 'Mobile session cookie expired');
+    }
+    // Sliding renewal: a session that is more than half consumed gets
+    // extended, so actively-used sessions never expire out from under a
+    // user mid-conversation (the mobile UI surfaces the 401 as "Could not
+    // load skills: web_session_expired").
+    if (session.expiresAt - current < this.webSessionTtlMs / 2) {
+      session.expiresAt = current + this.webSessionTtlMs;
     }
     let device;
     try {
@@ -492,10 +613,13 @@ class RelayHub {
       this.webSessions.delete(tokenHash);
       throw error;
     }
-    if (!device || device.revokedAt || device.deviceExpiresAt <= this.now()) {
+    if (!device || device.revokedAt || device.deviceExpiresAt <= current) {
       this.webSessions.delete(tokenHash);
       throw new RelayError(401, 'device_not_authorized', 'Paired device is no longer authorized');
     }
+    // Activity marker for the push watcher (in-memory; persisted on the next
+    // token operation): lets the watcher skip pushing to actively-used apps.
+    device.lastSeenAt = current;
     return { ...session, device };
   }
 
@@ -558,6 +682,48 @@ class RelayHub {
     });
   }
 
+  // Long-lived SSE stream for a paired device: authenticates the short-lived
+  // access token, then proxies the desktop orchestrator's /api/events stream
+  // (via the device's connector) straight to the caller. The mobile app's
+  // background service consumes this to raise a local notification when an
+  // agent turn finishes. No fixed timeout — the caller ends it, or the
+  // connector drop path (failConnectorRequests) destroys it.
+  streamMobileEvents(req, res, accessToken) {
+    const device = this.store.getDeviceForAccess({ accessToken });
+    if (!device.connectorId) {
+      throw new RelayError(503, 'connector_missing', 'Pairing is not attached to a desktop connector');
+    }
+    const connector = this.connectors.get(device.connectorId);
+    if (!connector) {
+      throw new RelayError(503, 'desktop_offline', 'Desktop connector is offline');
+    }
+    const id = randomId('r_');
+    const request = {
+      id,
+      connectorId: device.connectorId,
+      response: res,
+      started: false,
+      finished: false,
+      timer: null,
+    };
+    this.httpRequests.set(id, request);
+    res.once('close', () => {
+      if (request.finished) return;
+      this.httpRequests.delete(id);
+      clearTimeout(request.timer);
+      connector.sendJson({ type: 'http.cancel', id });
+    });
+    connector.sendJson({
+      type: 'http.request',
+      id,
+      method: 'GET',
+      path: '/api/events',
+      headers: { accept: 'text/event-stream', 'cache-control': 'no-cache' },
+      bodyBase64: null,
+    });
+    return { deviceId: device.id };
+  }
+
   handleConnectorMessage(connection, raw) {
     let message;
     try {
@@ -581,15 +747,31 @@ class RelayHub {
     }
 
     switch (message.type) {
-      case 'http.response.start':
+      case 'http.response.start': {
+        const watcher = this.eventWatcherFor(connection.connectorId, message.id);
+        if (watcher) break; // SSE headers for the event watcher are ignored
         this.httpResponseStart(message);
         break;
-      case 'http.response.chunk':
-        this.httpResponseChunk(message);
+      }
+      case 'http.response.chunk': {
+        const watcher = this.eventWatcherFor(connection.connectorId, message.id);
+        if (watcher) {
+          this.handleEventWatcherChunk(connection.connectorId, message.dataBase64);
+        } else {
+          this.httpResponseChunk(message);
+        }
         break;
-      case 'http.response.end':
-        this.httpResponseEnd(message);
+      }
+      case 'http.response.end': {
+        const watcher = this.eventWatcherFor(connection.connectorId, message.id);
+        if (watcher) {
+          this.eventWatchers.delete(connection.connectorId);
+          this.scheduleEventWatcherRetry(connection.connectorId);
+        } else {
+          this.httpResponseEnd(message);
+        }
         break;
+      }
       case 'http.error':
         this.httpError(message);
         break;
@@ -827,6 +1009,24 @@ function createRelayServer(options = {}) {
             deviceId: session.deviceId,
             expiresAt: session.expiresAt,
           }, { ...requestOptions, setCookie: session.cookie });
+          return;
+        }
+        if (req.method === 'GET' && pathname === '/v1/mobile/events') {
+          // Streaming SSE; owns the response (no sendJson).
+          hub.streamMobileEvents(req, res, bearerToken(req));
+          return;
+        }
+        if (req.method === 'POST' && pathname === '/v1/mobile/push-token') {
+          const body = await readJsonBody(req);
+          const device = hub.store.getDeviceForAccess({ accessToken: bearerToken(req) });
+          hub.store.setPushToken(device.id, typeof body.token === 'string' ? body.token : '');
+          sendJson(res, 200, { ok: true, deviceId: device.id }, requestOptions);
+          return;
+        }
+        if (req.method === 'DELETE' && pathname === '/v1/mobile/push-token') {
+          const device = hub.store.getDeviceForAccess({ accessToken: bearerToken(req) });
+          hub.store.setPushToken(device.id, '');
+          sendJson(res, 200, { ok: true, deviceId: device.id }, requestOptions);
           return;
         }
         if (req.method === 'GET' && pathname === '/v1/devices') {

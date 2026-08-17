@@ -166,6 +166,37 @@ for narrow viewports:
   lock).
 - **480px**: further tightening for small phones.
 
+## Turn notifications (stay-alive)
+
+Gate Mobile keeps a background connection so it can notify when Buffy
+finishes a turn:
+
+- **Android**: a foreground `TurnNotificationService` (dataSync type) holds
+  a long-lived HTTPS SSE stream to `GET /v1/mobile/events` on the relay,
+  which proxies the desktop orchestrator's `/api/events` stream through the
+  device's connector. When an `agent` event with `event.type == "finish"`
+  arrives and the app is not in the foreground, a local notification
+  ("Buffy finished working") is raised; tapping it opens the app. The
+  service refreshes the short-lived access token before each reconnect and
+  backs off on errors. It starts when the app reaches CONNECTED and stops
+  when unpaired/revoked/disconnected.
+- **iOS**: `AppDelegate` registers for remote notifications; the APNs device
+  token is uploaded to the relay via `POST /v1/mobile/push-token` (Bearer
+  access token). The relay's turn-finished watcher sends the APNs push
+  (ES256 JWT auth, HTTP/2) when a `finish` event arrives for a device that
+  is not currently connected, so the notification arrives even while the
+  app is backgrounded or killed. Requires the `aps-environment` entitlement
+  (development in the repo; switch to `production` for TestFlight/App
+  Store) and  a real APNs key — set `FB_APNS_KEY` (path to the .p8 key),
+  `FB_APNS_KEY_ID`, `FB_APNS_TEAM_ID` (and optionally `FB_APNS_TOPIC`,
+  default `com.freebuff.gate`) on the relay's systemd unit. Without these env vars the watcher skips push (no crash);
+  foreground notification still works via `UNUserNotificationCenter`.
+  `UIBackgroundModes` `remote-notification` is set for silent pushes.
+
+The relay route requires a valid access token (`Bearer`), returns 401
+otherwise, and streams with no fixed timeout (the app's service reconnects
+on drop; the connector-disconnect path destroys the stream).
+
 ## Regression coverage
 
 Automated mobile regression coverage runs the injected CSS and JavaScript in a

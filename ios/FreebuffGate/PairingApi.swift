@@ -53,6 +53,23 @@ class PairingApi {
     /// Exchanges short-lived access token for relay-owned Secure/HttpOnly
     /// cookie. The cookie is installed into the WKWebView cookie store by
     /// native code; the access token is never injected into page JavaScript.
+    /// Registers (or clears, with an empty token) the device's APNs token
+    /// with the relay so it can push turn-finished notifications while the
+    /// app is backgrounded.
+    func uploadPushToken(session: PairingSession, token: String) async throws {
+        guard session.gatewayBaseUrl == baseUrl else {
+            throw PairingError.invalidUrl("Session endpoint changed")
+        }
+        let body: [String: Any] = ["token": token]
+        _ = try await request(
+            baseUrl: baseUrl,
+            path: "/v1/mobile/push-token",
+            method: "POST",
+            body: body,
+            headers: ["Authorization": "Bearer \(session.accessToken)"]
+        )
+    }
+
     func establishWebSession(webBaseUrl: String, accessToken: String) async throws -> String {
         let webOrigin = Self.normalizeBaseUrl(webBaseUrl)
         let result = try await request(

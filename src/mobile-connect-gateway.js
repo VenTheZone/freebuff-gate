@@ -231,6 +231,7 @@ class PairingStore {
       accessExpiresAt,
       prevAccessTokenHash: null,
       prevAccessExpiresAt: null,
+      pushToken: null,
       createdAt,
       lastSeenAt: createdAt,
       revokedAt: null,
@@ -297,6 +298,23 @@ class PairingStore {
   getDevice(deviceId) {
     const id = requireString(deviceId, 'deviceId');
     return this.state.devices[id] || null;
+  }
+
+  setPushToken(deviceId, token) {
+    const device = this.getDevice(deviceId);
+    if (!device) throw new GatewayError(404, 'device_not_found', 'Device not found');
+    const normalized = typeof token === 'string' ? token.trim() : '';
+    device.pushToken = normalized || null;
+    this.persist();
+    return device;
+  }
+
+  devicesForConnector(connectorId) {
+    const result = [];
+    for (const device of Object.values(this.state.devices)) {
+      if (device.connectorId === connectorId && !device.revokedAt) result.push(device);
+    }
+    return result;
   }
 
   getDeviceForAccess(options = {}) {

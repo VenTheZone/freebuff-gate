@@ -35,11 +35,15 @@ struct MainView: View {
                 hasSession = session != nil
                 switch newState {
                 case .connected:
+                    // Keep the push token registered with the relay for the
+                    // active session so background notifications work.
+                    PushTokenStore.shared.setSession(session)
                     if let session, let target = webTargetFor(session) {
                         webTarget = target
                         showWebView = true
                     }
                 case .unpaired, .pairingRequired, .revoked, .disconnected:
+                    PushTokenStore.shared.setSession(nil)
                     showWebView = false
                 default:
                     break

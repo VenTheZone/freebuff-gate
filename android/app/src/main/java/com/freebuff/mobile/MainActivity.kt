@@ -1,6 +1,7 @@
 package com.freebuff.mobile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Build
@@ -39,6 +40,24 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) openScanner() else showState(ConnectionState.ERROR, "Camera permission is required for QR pairing")
+    }
+
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        // Best effort: the background turn-notification service still runs
+        // without POST_NOTIFICATIONS; only the notification itself is hidden.
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isForeground = true
+        if (::reconnectController.isInitialized) reconnectController.onResume()
+    }
+
+    override fun onPause() {
+        isForeground = false
+        super.onPause()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,10 +126,6 @@ class MainActivity : AppCompatActivity() {
         reconnectController.start()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (::reconnectController.isInitialized) reconnectController.onResume()
-    }
 
     override fun onBackPressed() {
         if (scannerPanel.visibility == View.VISIBLE) {
@@ -123,11 +138,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        isForeground = false
+        stopTurnNotifications()
         if (::qrScanner.isInitialized) qrScanner.close()
         if (::reconnectController.isInitialized) reconnectController.close()
         pairingExecutor.shutdownNow()
         engine.destroy()
         super.onDestroy()
+    }
+
+    companion object {
+        @Volatile
+        var isForeground = false
+            private set
     }
 
     private fun claimPairing() {
@@ -184,6 +207,7 @@ class MainActivity : AppCompatActivity() {
         when (state) {
             ConnectionState.CONNECTED -> {
                 if (session != null) loadRemoteUi(session)
+                startTurnNotifications()
             }
             ConnectionState.UNPAIRED,
             ConnectionState.PAIRING_REQUIRED,
@@ -192,6 +216,7 @@ class MainActivity : AppCompatActivity() {
             -> {
                 setupPanel.visibility = View.VISIBLE
                 browserHost.visibility = View.GONE
+                stopTurnNotifications()
             }
             ConnectionState.RECONNECTING,
             ConnectionState.OFFLINE,
@@ -202,6 +227,23 @@ class MainActivity : AppCompatActivity() {
                 if (browserHost.visibility != View.VISIBLE) setupPanel.visibility = View.VISIBLE
             }
         }
+    }
+
+    private fun startTurnNotifications() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, TurnNotificationService::class.java))
+        }
+    }
+
+    private fun stopTurnNotifications() {
+        runCatching { stopService(Intent(this, TurnNotificationService::class.java)) }
     }
 
     private fun setPairingFormVisible(visible: Boolean) {
