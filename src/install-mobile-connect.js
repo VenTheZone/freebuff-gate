@@ -794,8 +794,9 @@ function applyBundlePatch(bundleFile) {
     proxy.CLOSE_FIX1,
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
+    proxy.CLOSE_BTN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX'];
   const already = fixed.every((mark) => body.includes(mark));
   if (already) return { file: bundleFile, outcome: 'already-patched' };
   const patched = proxy.patchBundle(body);
@@ -1122,8 +1123,9 @@ function collectProblems(desktopDir, options = {}) {
     proxy.CLOSE_FIX1,
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
+    proxy.CLOSE_BTN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX'];
 
   let bundles = [];
   try {

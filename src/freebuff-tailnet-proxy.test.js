@@ -10,7 +10,7 @@ const test = require('node:test');
 
 process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -132,7 +132,7 @@ function createWatchUpstream(state) {
     if (pathname === '/assets/index-ABC.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       res.end(state.healthy
-        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}`
+        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}${CLOSE_BTN_FIX}`
         : 'var x = 1;');
       return;
     }
@@ -228,6 +228,22 @@ test('patchBundle upgrades an already-V2-patched bundle to the V3 delete-on-clos
   assert.ok(patched.includes(CLOSE_FIX1), 'CLOSE_FIX1 upgraded to V3');
   assert.ok(patched.includes(CLOSE_FIX3), 'CLOSE_FIX3 upgraded to V3');
   assert.ok(!patched.includes('g.tabs.some(u=>u.home&&u.id===n)?null:ve.close(n)'), 'old V2 close path replaced');
+});
+
+test('patchBundle adds a close button to empty home tabs (CLOSE_BTN)', () => {
+  // The vanilla tab bar hides the close button on home tabs (!i&& guard), so
+  // an empty pinned home thread could never be closed even with the store
+  // patch in place. The render patch must expose the button when the thread
+  // has no messages and leave non-home tabs unchanged.
+  const patched = patchBundle(CLOSE_BTN_MARK);
+  assert.ok(!patched.includes(CLOSE_BTN_MARK), 'vanilla guard replaced');
+  assert.ok(patched.includes(CLOSE_BTN_FIX), 'home-close button patch present');
+  assert.ok(
+    patched.includes('(G.getState().threads[e]&&G.getState().threads[e].messages||[]).length===0'),
+    'home close button renders only for empty threads',
+  );
+  // Idempotent: re-patching the fixed string does not double-wrap it.
+  assert.equal(patchBundle(patched), patched);
 });
 
 test('patchBundle repairs the buggy V2 closeTab whose double brace closed the body early', () => {

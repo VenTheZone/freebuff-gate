@@ -420,6 +420,19 @@ const CLOSE_FIX3_V2 =
 const CLOSE_FIX3 =
   'i.file||await Promise.resolve().then(()=>{const g=G.getState();if(g.tabs.some(u=>u.home&&u.id===n))return null;return fbEmpty?ve.deleteThread(n):ve.close(n)}).then(()=>{try{if(localStorage.getItem("fb.homeThread")===n)localStorage.removeItem("fb.homeThread")}catch(e){}}).catch(()=>{})},setActive(n){';
 
+// ---- Bundle patch: home tabs render a close button when the thread is empty ----
+// The vanilla tab bar hides the close (and popout) buttons on home tabs with
+// a `!i&&` guard, so an empty pinned home thread could never be closed even
+// though the patched closeTab would delete it. Render the close button on
+// home tabs too when the thread holds no messages; clicking it hits the
+// patched closeTab, which removes the empty row server-side. The store entry
+// shape is { thread, messages, items }, so emptiness reads the wrapper's
+// messages array (G.getState() is available on the component's store hook).
+const CLOSE_BTN_MARK =
+  '!i&&g.jsx("button",{className:"tab-close"';
+const CLOSE_BTN_FIX =
+  '(!i||(G.getState().threads[e]&&G.getState().threads[e].messages||[]).length===0)&&g.jsx("button",{className:"tab-close"';
+
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
@@ -438,6 +451,7 @@ function patchBundle(body) {
   if (out.includes(CLOSE_MARK3)) out = out.split(CLOSE_MARK3).join(CLOSE_FIX3);
   else if (out.includes(CLOSE_FIX3_V1)) out = out.split(CLOSE_FIX3_V1).join(CLOSE_FIX3);
   else if (out.includes(CLOSE_FIX3_V2)) out = out.split(CLOSE_FIX3_V2).join(CLOSE_FIX3);
+  if (out.includes(CLOSE_BTN_MARK)) out = out.split(CLOSE_BTN_MARK).join(CLOSE_BTN_FIX);
   return out;
 }
 
@@ -465,6 +479,7 @@ const UI_PATCH_MARKERS = [
   ['CLOSE_FIX1', CLOSE_FIX1],
   ['CLOSE_FIX2', CLOSE_FIX2],
   ['CLOSE_FIX3', CLOSE_FIX3],
+  ['CLOSE_BTN', CLOSE_BTN_FIX],
 ];
 
 function fetchUpstream(up, pathname) {
@@ -787,6 +802,8 @@ module.exports = {
   CLOSE_FIX3,
   CLOSE_FIX3_V1,
   CLOSE_FIX3_V2,
+  CLOSE_BTN_FIX,
+  CLOSE_BTN_MARK,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,

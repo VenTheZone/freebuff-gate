@@ -8,6 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  CLOSE_BTN_MARK,
   CREATE_MARK,
   CLOSE_MARK1,
   CLOSE_MARK2,
@@ -232,7 +233,7 @@ function fakeDesktop(root) {
   const uiDir = path.join(orchRoot, 'ui');
   const assets = path.join(uiDir, 'assets');
   fs.mkdirSync(assets, { recursive: true });
-  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};};`;
+  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};};`;
   fs.writeFileSync(path.join(assets, 'index-ABC.js'), stockBundle);
   fs.writeFileSync(path.join(uiDir, 'index.html'), `<!doctype html><head><title>t</title></head><body></body></html>`);
   const stockOrch = [
@@ -324,7 +325,7 @@ test('ui: missing patch anchors fail loudly instead of silently regressing', asy
       /did not match any patch anchor/,
     );
 
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};`);
     fs.writeFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'const m=42;');
     assert.throws(
       () => installUiStack(options, {}, { runPlatformCommand }),
@@ -355,7 +356,7 @@ test('verify: reports healthy stack, then fails loudly on each wiped patch', asy
     assert.match(report.errors[0].message, /CREATE_REUSE/);
 
     // Shim tag missing.
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};`);
     fs.writeFileSync(path.join(fake.uiDir, 'index.html'), '<!doctype html><head></head></html>');
     report = verifyUiStack(options);
     assert.equal(report.ok, false);
