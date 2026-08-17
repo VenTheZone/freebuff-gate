@@ -295,6 +295,8 @@ test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently'
     const orch = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
     assert.equal(orch.includes('/api/fb/dirlist'), true);
     assert.equal(orch.includes('/api/fb/perf-report'), true);
+    assert.equal(orch.includes('/api/fb/upload'), true);
+    assert.equal(orch.includes('/api/fb/read-file'), true);
     assert.equal(orch.includes('async function injectPerfProbe('), true);
     assert.equal(orch.includes('"cache-control": "no-store"'), true);
     assert.match(orch, /perf-report\.log/);

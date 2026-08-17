@@ -11,8 +11,10 @@ const test = require('node:test');
 process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
 // Ad sniffing must never write to the production ~/.config log during tests.
 process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}.log`);
+// Attach uploads must never write to the real ~/.local/share tree.
+process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -193,6 +195,52 @@ test('ui-patch watchdog flags every missing marker after a simulated update', as
     assert.ok(report.errors.some((e) => e.includes('dirlist')), 'dirlist route loss reported');
   } finally {
     await close(upstream);
+  }
+});
+
+test('attach upload + read-file routes store and serve browser attachments', async () => {
+  const server = createProxyServer({ upstream: 'http://127.0.0.1:1' });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const body = Buffer.from('hello attachment');
+    const upload = await new Promise((resolve, reject) => {
+      const req = http.request(`${base}/api/fb/upload?name=note.txt`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream', 'content-length': body.length },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, payload: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
+    assert.equal(upload.status, 200);
+    assert.equal(upload.payload.name, 'note.txt');
+    assert.ok(upload.payload.path.startsWith(UPLOADS_DIR + path.sep), 'upload lands in the uploads dir');
+    assert.equal(fs.readFileSync(upload.payload.path, 'utf8'), 'hello attachment');
+
+    const read = await new Promise((resolve, reject) => {
+      http.get(`${base}/api/fb/read-file?path=${encodeURIComponent(upload.payload.path)}`, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      }).on('error', reject);
+    });
+    assert.equal(read.status, 200);
+    assert.equal(read.body, 'hello attachment');
+
+    const forbidden = await new Promise((resolve, reject) => {
+      http.get(`${base}/api/fb/read-file?path=${encodeURIComponent('/etc/passwd')}`, (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      }).on('error', reject);
+    });
+    assert.equal(forbidden, 403);
+  } finally {
+    await close(server);
+    fs.rmSync(UPLOADS_DIR, { recursive: true, force: true });
   }
 });
 

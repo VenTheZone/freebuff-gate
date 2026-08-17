@@ -56,6 +56,13 @@ function devAdBroadcastEnabled() {
 }
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
+// Attached files uploaded from the browser (desktop or mobile WebView) land
+// here on the server; the composer sends the returned path to the agent just
+// like a native Electron attachment. The on-disk orchestrator patch writes to
+// the same directory so 58060-direct and 58061-proxied clients agree on it.
+const UPLOADS_DIR = process.env.FB_UPLOADS_DIR
+  || path.join(os.homedir(), '.local', 'share', 'freebuff', 'uploads');
+const FB_MAX_UPLOAD_BYTES = Number(process.env.FB_MAX_UPLOAD_BYTES || 256 * 1024 * 1024);
 
 // ---- perf probe ----
 // In-page Navigation/Resource Timing probe (src/perf-probe.js). Dormant unless
@@ -301,9 +308,74 @@ const SHIM = `(function () {
         .catch(function () { load(); });
     });
   };
+  // Attach files from the browser: pick local files with a hidden input,
+  // upload each to /api/fb/upload (the proxy/orchestrator stores it on the
+  // server and returns a real path), and hand the paths back in the same
+  // { path, name, isDirectory } shape the native Electron picker returns.
+  var uploadOne = function (file) {
+    return fetch('/api/fb/upload?name=' + encodeURIComponent(file.name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    }).then(function (r) {
+      if (!r.ok) throw new Error('upload failed: ' + r.status);
+      return r.json();
+    }).then(function (d) {
+      return { path: d.path, name: d.name || file.name, isDirectory: false };
+    });
+  };
+  var pickAttachments = function () {
+    return new Promise(function (resolve) {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.style.display = 'none';
+      var settled = false;
+      var finish = function (value) {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('focus', onFocus);
+        input.remove();
+        resolve(value);
+      };
+      var onFocus = function () {
+        // File inputs have no cancel event; when the dialog closes without a
+        // 'change', resolve empty shortly after the window regains focus.
+        setTimeout(function () { finish([]); }, 800);
+      };
+      input.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(input.files || []);
+        if (!files.length) { finish([]); return; }
+        Promise.all(files.map(uploadOne)).then(finish).catch(function (err) {
+          console.error('Freebuff attach failed', err);
+          finish([]);
+        });
+      });
+      window.addEventListener('focus', onFocus);
+      document.body.appendChild(input);
+      input.click();
+    });
+  };
+  // Preview an image attachment: the path lives on the server, so fetch it
+  // through /api/fb/read-file and return a data URL for the <img> src.
+  var readImage = function (filePath) {
+    return fetch('/api/fb/read-file?path=' + encodeURIComponent(filePath)).then(function (r) {
+      if (!r.ok) throw new Error('read failed: ' + r.status);
+      return r.blob();
+    }).then(function (blob) {
+      return new Promise(function (resolve) {
+        var reader = new FileReader();
+        reader.onload = function () { resolve(reader.result); };
+        reader.onerror = function () { resolve(null); };
+        reader.readAsDataURL(blob);
+      });
+    });
+  };
   window.freebuffDesktop = {
     platform: 'browser',
     pickDirectory: virtualPick,
+    pickAttachments: pickAttachments,
+    readImage: readImage,
     onMenuCommand: function () {},
     onTheme: function () {},
     onWindowStateChange: function () {},
@@ -317,8 +389,9 @@ const SHIM = `(function () {
     openIn: function (target) { if (target && target.url) window.open(target.url, '_blank', 'noopener'); },
     updateAction: function () { return Promise.resolve(); },
     windowState: function () { return Promise.resolve({ fullScreen: false, maximized: false, state: 'normal' }); }
-    // openExternal and readImage intentionally absent: the UI's guards fall
-    // through to window.open / the "failed" path in a browser.
+    // openExternal intentionally absent: the UI's guards fall through to
+    // window.open in a browser. readImage + pickAttachments are the browser
+    // equivalents for image preview and file attach.
   };
 })();`;
 
@@ -736,6 +809,63 @@ function createProxyServer(options = {}) {
     });
     return;
   }
+  // Attach: store an uploaded file from the browser (desktop or mobile
+  // WebView) on the server and return its real path so the composer can send
+  // it like a native Electron attachment. read-file serves it back for image
+  // preview. Handled locally (not forwarded) so mobile uploads land on the
+  // desktop even though the orchestrator only has the on-disk route after an
+  // installer re-run.
+  if (req.method === 'POST' && pathname === '/api/fb/upload') {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size <= FB_MAX_UPLOAD_BYTES) chunks.push(c);
+    });
+    req.on('end', () => {
+      if (size > FB_MAX_UPLOAD_BYTES) {
+        res.writeHead(413, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'upload too large' }));
+        return;
+      }
+      let rawName = '';
+      try { rawName = new URL(req.url || '/', 'http://x').searchParams.get('name') || ''; } catch (e) { /* keep empty */ }
+      const name = path.basename(String(rawName).replace(/[\\/]/g, '/')).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 200) || 'upload';
+      try {
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        const file = path.join(UPLOADS_DIR, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${name}`);
+        fs.writeFileSync(file, Buffer.concat(chunks));
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ path: file, name }));
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      }
+    });
+    req.on('error', () => res.destroy());
+    return;
+  }
+  if (req.method === 'GET' && pathname === '/api/fb/read-file') {
+    let requested = '';
+    try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || ''; } catch (e) { /* keep empty */ }
+    const root = path.resolve(UPLOADS_DIR) + path.sep;
+    const full = path.resolve(requested);
+    if (!requested || !full.startsWith(root)) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden path' }));
+      return;
+    }
+    fs.readFile(full, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not found' }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
+      res.end(data);
+    });
+    return;
+  }
   const reqChunks = [];
   if (sniffAd) req.on('data', (c) => reqChunks.push(c));
   let adPlacementId = null;
@@ -977,6 +1107,8 @@ module.exports = {
   SHIM,
   UI_PATCH_MARKERS,
   UI_PATCH_STATUS_FILE,
+  UPLOADS_DIR,
+  FB_MAX_UPLOAD_BYTES,
   checkUiPatches,
   createProxyServer,
   patchBundle,

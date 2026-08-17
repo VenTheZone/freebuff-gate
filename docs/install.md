@@ -222,6 +222,14 @@ the same /v1/mobile/session cookie exchange as Android.
   Electron picker, so the shim provides `pickDirectory` as a server-side file
   browser (breadcrumbs, Up/Home, recents) over the orchestrator's
   `/api/fb/dirlist` route. No path typing needed.
+- **Attachments**: the browser has no Electron file dialog, so the shim
+  implements `pickAttachments` (a hidden file input uploads each file to
+  `/api/fb/upload`, which stores it on the server and returns a real path) and
+  `readImage` (serves the stored bytes back through `/api/fb/read-file` for
+  image preview). The proxy handles both routes locally for desktop-browser and
+  mobile clients; the on-disk orchestrator patch adds the same routes so
+  58060-direct clients work too. Uploads land in
+  `~/.local/share/freebuff/uploads`.
 - **Mobile adaptation**: the desktop UI isn't mobile friendly; the proxy
   injects the scoped mobile layer at ≤1000px.
 - **WebView caching**: the Android WebView used LOAD_NO_CACHE, so every load

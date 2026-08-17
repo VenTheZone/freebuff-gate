@@ -822,10 +822,11 @@ function applyIndexShim(indexFile) {
   return { file: indexFile, outcome: 'patched' };
 }
 
-// Inserted route block: dirlist + perf-report. These are additive inserts
-// anchored after the terminal-upgrade route; they reuse the orchestrator's
-// own json3/url2 helpers. configDir is where the perf log lands.
-function orchestratorRouteBlock(configDir) {
+// Inserted route block: dirlist + perf-report + upload + read-file. These are
+// additive inserts anchored after the terminal-upgrade route; they reuse the
+// orchestrator's own json3/url2 helpers. configDir is where the perf log
+// lands; uploadsDir is where browser-attached files are stored.
+function orchestratorRouteBlock(configDir, uploadsDir) {
   return `      if (pathname === "/api/fb/dirlist") {
         let root = url2.searchParams.get("path") || "/";
         let entries = [];
@@ -860,6 +861,37 @@ function orchestratorRouteBlock(configDir) {
         } catch {
         }
         return json3({ ok: true });
+      }
+      if (pathname === "/api/fb/upload") {
+        try {
+          let name = (url2.searchParams.get("name") || "").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 200) || "upload";
+          let bytes = new Uint8Array(await req.arrayBuffer());
+          if (!bytes.length)
+            return json3({ error: "empty upload" }, 400);
+          let { mkdir, writeFile } = await import("fs/promises");
+          let { join } = await import("path");
+          let dir = ${JSON.stringify(uploadsDir)};
+          await mkdir(dir, { recursive: true });
+          let file = join(dir, Date.now() + "-" + Math.random().toString(36).slice(2, 10) + "-" + name);
+          await writeFile(file, bytes);
+          return json3({ path: file, name });
+        } catch (error47) {
+          return json3({ error: error47 instanceof Error ? error47.message : String(error47) }, 400);
+        }
+      }
+      if (pathname === "/api/fb/read-file") {
+        try {
+          let p = url2.searchParams.get("path") || "";
+          let { readFile } = await import("fs/promises");
+          let { resolve } = await import("path");
+          let dir = resolve(${JSON.stringify(uploadsDir)});
+          let full = resolve(p);
+          if (!full.startsWith(dir + "/"))
+            return json3({ error: "forbidden path" }, 403);
+          return new Response(await readFile(full), { headers: { "content-type": "application/octet-stream" } });
+        } catch (error47) {
+          return json3({ error: error47 instanceof Error ? error47.message : String(error47) }, 404);
+        }
       }
 `;
 }
@@ -908,7 +940,7 @@ const SERVE_SPA_CACHE_CANDIDATES = [
   ],
 ];
 
-function applyOrchestratorPatches(orchestratorFile, { configDir, perfProbePath }) {
+function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, perfProbePath }) {
   const src = fs.readFileSync(orchestratorFile, 'utf8');
   const changes = [];
   let out = src;
@@ -917,7 +949,7 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, perfProbePath }
     if (!out.includes(ORCH_ROUTE_ANCHOR)) {
       throw new Error(`orchestrator route anchor not found (app update may have renamed helpers); expected: ${ORCH_ROUTE_ANCHOR.slice(0, 80)}…`);
     }
-    out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${orchestratorRouteBlock(configDir)}      let match12 = findRoute(routes, req.method, pathname);`);
+    out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${orchestratorRouteBlock(configDir, uploadsDir)}      let match12 = findRoute(routes, req.method, pathname);`);
     performed.push('routes');
   }
   if (!out.includes(ORCH_HELPER_MARK)) {
@@ -1080,6 +1112,11 @@ function installUiStack(options, paths, { runPlatformCommand = runPlatformComman
     (options.env || process.env).XDG_CONFIG_HOME || path.join(os.homedir(), '.config'),
     'freebuff-desktop',
   );
+  const uploadsDir = path.join(
+    (options.env || process.env).XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
+    'freebuff',
+    'uploads',
+  );
   const perfProbePath = path.join(proxyDeploy.proxyDir, 'perf-probe.js');
 
   const assetsDir = path.join(uiDir, 'assets');
@@ -1094,7 +1131,7 @@ function installUiStack(options, paths, { runPlatformCommand = runPlatformComman
 
   const orchFile = path.join(orchDir, 'orchestrator.js');
   if (!fs.existsSync(orchFile)) throw new Error(`missing ${orchFile}`);
-  const orchResult = applyOrchestratorPatches(orchFile, { configDir, perfProbePath });
+  const orchResult = applyOrchestratorPatches(orchFile, { configDir, uploadsDir, perfProbePath });
   const changes = orchResult.changes;
   results.applied.push(`orchestrator:${changes.includes('routes') || changes.includes('perf-helper') || changes.includes('cache-headers') ? changes.join(',') : 'already-patched'}`);
   results.bestEffort = orchResult.bestEffort || [];
@@ -1180,6 +1217,9 @@ function collectProblems(desktopDir, options = {}) {
     }
     if (!src.includes('/api/fb/perf-report')) {
       problems.push({ level: 'error', item: 'orchestrator.routes', message: 'perf-report route missing (app update replaced orchestrator.js; re-run install)' });
+    }
+    if (!src.includes('/api/fb/upload')) {
+      problems.push({ level: 'error', item: 'orchestrator.routes', message: 'upload route missing (app update replaced orchestrator.js; re-run install)' });
     }
     if (!src.includes('async function injectPerfProbe(')) {
       problems.push({ level: 'error', item: 'orchestrator.perf', message: 'injectPerfProbe helper missing (app update replaced orchestrator.js; re-run install)' });
