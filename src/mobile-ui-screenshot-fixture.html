@@ -245,6 +245,54 @@
         content: "";
       }
 
+      .sponsored-ad {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+        padding: 9px 11px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-2);
+        color: var(--text);
+        text-decoration: none;
+      }
+
+      .ad-head,
+      .ad-detail {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-width: 0;
+      }
+
+      .ad-heading {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+      }
+
+      .ad-title,
+      .ad-copy {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .ad-title {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .ad-copy,
+      .ad-destination,
+      .ad-disclosure {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
       .composer {
         position: relative;
         display: flex;
@@ -434,6 +482,18 @@
                 <div class="todo-row">Capture phone screenshot</div>
               </div>
             </section>
+            <a class="sponsored-ad ad-banner" href="https://example.com/ad">
+              <span class="ad-head">
+                <span class="ad-heading">
+                  <span class="ad-title">Compact mobile ad placement</span>
+                </span>
+                <span class="ad-disclosure">Ad</span>
+              </span>
+              <span class="ad-detail">
+                <span class="ad-copy">Ad stays above model, reasoning, and time controls.</span>
+                <span class="ad-destination">example.com ↗</span>
+              </span>
+            </a>
             <form class="composer">
               <div class="composer-context">
                 <button class="agent-trigger" type="button">

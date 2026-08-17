@@ -380,6 +380,34 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Native ad is a direct sibling of the composer in .thread-bottom. Reserve
+     one compact pill-row above it; otherwise the model/reasoning/time pills
+     paint over the ad's lower edge. */
+  .thread-bottom > .sponsored-ad.ad-banner {
+    position: relative;
+    z-index: 56;
+    width: min(calc(100% - 16px), 460px);
+    max-width: calc(100% - 16px);
+    min-height: 0;
+    margin: 6px auto 0;
+    padding: 7px 9px;
+    gap: 3px;
+    border-radius: 10px;
+  }
+  .thread-bottom:has(.fb-composer-pills) > .sponsored-ad.ad-banner {
+    /* 38px pill + 6px gap + 6px breathing room. */
+    margin-bottom: 50px;
+  }
+  .thread-bottom > .sponsored-ad.ad-banner .ad-head,
+  .thread-bottom > .sponsored-ad.ad-banner .ad-detail {
+    gap: 8px;
+  }
+  .thread-bottom > .sponsored-ad.ad-banner .ad-copy {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* Composer: docked, full-width, thumb-friendly, no iOS zoom-on-focus. */
   .thread-bottom {
     padding-right: 0;

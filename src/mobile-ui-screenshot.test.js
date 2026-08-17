@@ -448,7 +448,8 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
         document.querySelector('.fb-composer-pills .fb-model-pill') &&
         document.querySelector('.fb-composer-pills .fb-effort-pill') &&
         document.querySelector('.fb-composer-pills .fb-time-pill') &&
-        document.querySelector('.thread-bottom .todo-dock')
+        document.querySelector('.thread-bottom .todo-dock') &&
+        document.querySelector('.thread-bottom > .sponsored-ad.ad-banner')
       ))()`,
     );
     await delay(180);
@@ -477,6 +478,7 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
         const title = document.querySelector('.tab.active .tab-title');
         const pills = rect('.fb-composer-pills');
         const task = rect('.thread-bottom .todo-dock');
+        const ad = rect('.thread-bottom > .sponsored-ad.ad-banner');
         const composer = rect('.composer');
         const streaming = rect('.fb-streaming-indicator');
         return {
@@ -489,6 +491,7 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
           pills,
           pillCount: document.querySelectorAll('.fb-composer-pills > button').length,
           task,
+          ad,
           composer,
           taskHidden: document
             .querySelector('.thread-bottom .todo-dock')
@@ -512,6 +515,13 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     assert.ok(layout.pills.height >= 36);
     assert.ok(layout.composer && layout.composer.bottom <= 844);
     assert.ok(layout.pills.bottom <= layout.composer.top + 1);
+    assert.ok(layout.ad && layout.ad.display !== 'none');
+    assert.ok(layout.ad.visibility === 'visible');
+    assert.ok(layout.ad.height <= 64, `ad card is too tall: ${JSON.stringify(layout.ad)}`);
+    assert.ok(
+      layout.ad.bottom <= layout.pills.top - 4,
+      `ad card overlaps selector pills: ${JSON.stringify(layout)}`,
+    );
     assert.ok(layout.task && layout.task.display !== 'none');
     assert.equal(layout.task.visibility, 'visible');
     assert.equal(layout.taskHidden, false);

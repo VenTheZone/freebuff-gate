@@ -2506,6 +2506,13 @@
             var items = [];
             ((data && data.projects) || []).forEach(function (p) {
               (p.threads || []).forEach(function (th) {
+                // Catalog threads inherit project path from their parent
+                // project; the API often omits it on each thread object.
+                var record = th &&
+                  Object.assign({}, th, {
+                    projectPath:
+                      th.projectPath || p.path || p.projectPath || '',
+                  });
                 // Named, non-archived, with some activity (the home catalog
                 // only renders threads that pass its activity check — mirror
                 // that so every listed session can actually be opened).
@@ -2513,14 +2520,14 @@
                 // the API and would be ambiguous to open by title, so skip
                 // them (the home catalog handles those).
                 if (
-                  th &&
-                  th.archivedAt === null &&
-                  th.title &&
-                  th.title !== 'New thread' &&
-                  (th.lastPromptAt || th.branch) &&
-                  !open[th.id]
+                  record &&
+                  !record.archivedAt &&
+                  record.title &&
+                  record.title !== 'New thread' &&
+                  (record.lastPromptAt || record.branch) &&
+                  !open[record.id]
                 ) {
-                  items.push(th);
+                  items.push(record);
                 }
               });
             });
@@ -2713,9 +2720,8 @@
             b.className = 'fb-session-menu-item recent';
             b.setAttribute('role', 'menuitem');
             b.setAttribute('data-fb-session-id', th.id || '');
-            // Two-line row: title on top, project name underneath (basename,
-            // same as the app's own project labels) so sessions from
-            // different projects are easy to tell apart.
+            // Two-line row: title on top, full project path underneath so
+            // sessions from different projects are easy to tell apart.
             var main = document.createElement('span');
             main.className = 'fb-session-menu-main';
             var label = document.createElement('span');
@@ -2725,10 +2731,7 @@
             var proj = document.createElement('span');
             proj.className = 'fb-session-menu-project';
             var projectPath = th.projectPath || '';
-            proj.textContent =
-              projectPath.split(/[\\/]/).filter(Boolean).pop() ||
-              projectPath ||
-              'Project unavailable';
+            proj.textContent = projectPath || 'Project path unavailable';
             main.appendChild(proj);
             makeSessionModelLine(main, modelLabelForThread(th), th.id || '', th);
             b.appendChild(main);
@@ -2801,6 +2804,12 @@
         var foot = document.createElement('div');
         foot.className = 'fb-session-menu-foot';
         var actions = [
+          [
+            'Thread history',
+            function () {
+              openHistorySheet();
+            },
+          ],
           [
             'New session',
             function () {
@@ -4144,41 +4153,36 @@
   function homeCatalogProjectLines() {
     if (homeCatalogBound) return;
     homeCatalogBound = true;
-    waitForEl('.home-thread-list', function () {
+    function apply() {
       var list = document.querySelector('.home-thread-list');
       if (!list) return;
-      function apply() {
-        var sel = document.querySelector('.home-project.selected');
-        var path = sel && sel.getAttribute('data-tooltip');
-        if (!path) return;
-        var parts = path.split('/').filter(Boolean);
-        var dir = parts.length ? parts[parts.length - 1] : path;
-        Array.prototype.forEach.call(
-          document.querySelectorAll('.home-thread'),
-          function (row) {
-            var line = row.querySelector('.fb-thread-project');
-            if (!line) {
-              line = document.createElement('span');
-              line.className = 'fb-thread-project';
-              var title = row.querySelector('.home-thread-title');
-              (title ? title.parentNode : row).appendChild(line);
-            }
-            if (line.textContent !== dir) line.textContent = dir;
-          },
-        );
-      }
-      apply();
-      new MutationObserver(apply).observe(list, {
-        childList: true,
-        subtree: true,
-      });
-    });
+      var sel = document.querySelector('.home-project.selected');
+      var path = sel && sel.getAttribute('data-tooltip');
+      if (!path) return;
+      var parts = path.split(/[\\\\/]/).filter(Boolean);
+      var dir = parts.length ? parts[parts.length - 1] : path;
+      Array.prototype.forEach.call(
+        list.querySelectorAll('.home-thread'),
+        function (row) {
+          var line = row.querySelector('.fb-thread-project');
+          if (!line) {
+            line = document.createElement('span');
+            line.className = 'fb-thread-project';
+            var title = row.querySelector('.home-thread-title');
+            (title ? title.parentNode : row).appendChild(line);
+          }
+          if (line.textContent !== dir) line.textContent = dir;
+        },
+      );
+    }
+    watchMobileBody(apply);
+    apply();
   }
 
   // Thread history (mobile home page): the native home catalog only lists the
   // selected project's threads, so add a "Thread history" entry above the
   // search box that opens a full-screen list of EVERY thread across all
-  // directories — title, directory, relative time — with live search, and
+  // directories — title, full project path, relative time — with live search, and
   // native click-to-open via the home catalog (openThreadViaHomeCatalog).
   function fetchThreadHistory() {
     return fetch('/api/projects', { headers: { Accept: 'application/json' } })
@@ -4190,10 +4194,15 @@
         var items = [];
         ((data && data.projects) || []).forEach(function (p) {
           (p.threads || []).forEach(function (th) {
+            // Catalog threads inherit path from their parent project.
+            var record = th &&
+              Object.assign({}, th, {
+                projectPath: th.projectPath || p.path || p.projectPath || '',
+              });
             // Every non-archived session across all directories — including
             // empty "New thread" rows, so the manager can clean them up.
-            if (th && th.archivedAt === null) {
-              items.push(th);
+            if (record && !record.archivedAt) {
+              items.push(record);
             }
           });
         });
@@ -4207,7 +4216,7 @@
       });
   }
   function dirNameOf(path) {
-    var parts = String(path || '').split('/').filter(Boolean);
+    var parts = String(path || '').split(/[\\/]/).filter(Boolean);
     return parts.length ? parts[parts.length - 1] : String(path || '');
   }
   function relativeTime(ts) {
@@ -4224,19 +4233,52 @@
   function homeThreadHistory() {
     if (historyBound) return;
     historyBound = true;
-    if (!window.matchMedia(MOBILE).matches) return;
-    waitForEl('.home-thread-search', function () {
+    var boundHomeTab = null;
+    var homePollTimer = null;
+    function sync() {
+      if (!window.matchMedia(MOBILE).matches) return;
       var search = document.querySelector('.home-thread-search');
-      if (!search) return;
-      if (search.parentNode.querySelector('.fb-history-entry')) return;
+      var parent = search
+        ? search.parentNode
+        : document.querySelector('.home-threads');
+      if (!parent || parent.querySelector('.fb-history-entry')) return;
       var entry = document.createElement('button');
       entry.type = 'button';
       entry.className = 'fb-history-entry';
       entry.innerHTML =
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.5h10M3 8h10M3 12.5h6"></path></svg><span>Thread history</span>';
-      search.parentNode.insertBefore(entry, search);
+      if (search) parent.insertBefore(entry, search);
+      else parent.insertBefore(entry, parent.firstChild);
       entry.addEventListener('click', openHistorySheet);
-    });
+    }
+    function pollHome() {
+      if (homePollTimer) return;
+      var attempts = 0;
+      homePollTimer = window.setInterval(function () {
+        sync();
+        if (document.querySelector('.fb-history-entry') || ++attempts > 40) {
+          window.clearInterval(homePollTimer);
+          homePollTimer = null;
+        }
+      }, 80);
+    }
+    function bindHomeTab() {
+      var tab = document.querySelector('.tabbar:not(.threadbar) .tab.home');
+      if (!tab || tab === boundHomeTab) return;
+      boundHomeTab = tab;
+      tab.addEventListener('click', pollHome);
+    }
+    function refresh() {
+      bindHomeTab();
+      sync();
+    }
+    // Home catalog lives inside transcript DOM, which shared body observer
+    // intentionally ignores while streaming. Poll after native Home click;
+    // bounded wait catches React's delayed catalog mount without observing
+    // every streamed token.
+    watchMobileBody(refresh);
+    waitForEl('.home-threads', refresh);
+    refresh();
   }
   var historySheetOpen = false;
   function openHistorySheet() {
@@ -4315,7 +4357,7 @@
         done = true;
         var title = input.value.trim();
         if (save && title && title !== th.title) {
-          apiCall(th.id, 'rename', { title: title, projectPath: th.projectPath })
+          apiCall(th.id, 'rename', { title: title })
             .then(function () {
               th.title = title;
               render(lastItems);
@@ -4353,7 +4395,7 @@
     function requestDelete(th) {
       var label = th.title || 'New thread';
       deleteSessionConfirm.request(th, function () {
-        apiCall(th.id, 'delete', { projectPath: th.projectPath })
+        apiCall(th.id, 'delete', {})
           .then(function () {
             lastItems = lastItems.filter(function (t) {
               return t.id !== th.id;
@@ -4383,7 +4425,7 @@
         if (
           q &&
           titleText.toLowerCase().indexOf(q) < 0 &&
-          dir.toLowerCase().indexOf(q) < 0
+          String(th.projectPath || dir).toLowerCase().indexOf(q) < 0
         ) {
           return;
         }
@@ -4404,7 +4446,7 @@
         line1.appendChild(time);
         var line2 = document.createElement('span');
         line2.className = 'fb-history-row-dir';
-        line2.textContent = dir;
+        line2.textContent = th.projectPath || 'Project path unavailable';
         var actions = document.createElement('div');
         actions.className = 'fb-history-actions';
         var renameBtn = document.createElement('button');

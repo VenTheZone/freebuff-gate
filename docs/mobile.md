@@ -56,8 +56,8 @@ for narrow viewports:
   dismisses the menu. Below the open sessions, a **Recent** section lists
   recently-active **closed** sessions from the app's own catalog API
   (`/api/projects`, same-origin: titled, non-archived, newest first, with a
-  relative time, and the **project name** under each title so sessions from
-  different projects are easy to tell apart), and its header has a
+  relative time, and the **full project path** under each title so sessions
+  from different projects are easy to tell apart), and its header has a
   **refresh** button that re-fetches the catalog in place (with a spinner)
   so the list updates without reopening the menu. Picking one reopens it as a
   tab through the app's native
