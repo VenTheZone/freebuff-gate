@@ -127,6 +127,15 @@ test('patchBundle exposes the native open-thread action to the mobile layer', ()
     'bundle must expose window.__fbOpenThread after the render statement',
   );
   assert.ok(!patched.includes(`${OPEN_THREAD_MARK};tail;`), 'render statement is not duplicated');
+  // Idempotent: the installer patches the bundle on disk and the proxy
+  // re-patches at serve time, so a second pass must not append the
+  // assignment again.
+  const repatched = patchBundle(patched);
+  assert.equal(
+    (repatched.match(/window\.__fbOpenThread=Rq;/g) || []).length,
+    1,
+    're-patching an already-patched bundle must not duplicate the assignment',
+  );
 });
 
 // Upstream fixture for the UI-patch watchdog: serves a page, a bundle, and

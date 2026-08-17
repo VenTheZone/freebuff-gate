@@ -175,7 +175,7 @@ After publishing a tagged release, a non-technical Desktop user can install the
 verified companion with one command:
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.1.0/install-mobile-connect.sh \\
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.1.11/install-mobile-connect.sh \\
   | bash -s -- \\
       --relay-http-url https://relay.example.com \\
       --enrollment-token '<relay-bootstrap-token>'
@@ -197,17 +197,17 @@ release mirrors. Keep enrollment tokens out of shell history when possible.
 Build release assets locally:
 
 ```bash
-node src/package-mobile-connect-release.js --version v0.1.0 --archive
+node src/package-mobile-connect-release.js --version v0.1.11 --archive
 ```
 
-This writes `dist/freebuff-mobile-connect-v0.1.0/` with the bootstrap,
+This writes `dist/freebuff-mobile-connect-v0.1.11/` with the bootstrap,
 versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a `.tar.gz`
 archive. Publish those assets with GitHub CLI after reviewing them:
 
 ```bash
-gh release create v0.1.0 \\
-  dist/freebuff-mobile-connect-v0.1.0/* \\
-  --title "Freebuff mobile-connect v0.1.0" \\
+gh release create v0.1.11 \\
+  dist/freebuff-mobile-connect-v0.1.11/* \\
+  --title "Freebuff mobile-connect v0.1.11" \\
   --generate-notes
 ```
 

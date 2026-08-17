@@ -203,7 +203,7 @@ function usage() {
   console.log(`Package Freebuff Desktop mobile-connect release assets
 
 Usage:
-  node src/package-mobile-connect-release.js --version v0.1.0 [options]
+  node src/package-mobile-connect-release.js --version v0.1.11 [options]
 
 Options:
   --version <v>              Release tag (v1.2.3; leading v is optional)

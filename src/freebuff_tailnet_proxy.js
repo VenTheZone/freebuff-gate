@@ -544,7 +544,12 @@ function patchBundle(body) {
   else if (out.includes(CLOSE_FIX3_V1)) out = out.split(CLOSE_FIX3_V1).join(CLOSE_FIX3);
   else if (out.includes(CLOSE_FIX3_V2)) out = out.split(CLOSE_FIX3_V2).join(CLOSE_FIX3);
   if (out.includes(CLOSE_BTN_MARK)) out = out.split(CLOSE_BTN_MARK).join(CLOSE_BTN_FIX);
-  if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
+  // OPEN_THREAD_FIX contains its own anchor (the render statement), so an
+  // already-patched bundle (installer patched it on disk, proxy re-patches at
+  // serve time) must be recognized and left alone, or the assignment would be
+  // appended a second time.
+  if (out.includes(OPEN_THREAD_FIX)) { /* already applied */ }
+  else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
   return out;
 }
 

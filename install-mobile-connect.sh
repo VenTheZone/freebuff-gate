@@ -30,7 +30,7 @@ Usage:
   curl -fsSL <release-url>/install-mobile-connect.sh | bash -s -- [options]
 
 Bootstrap options:
-  --version <v>             Release tag, for example v0.1.0
+  --version <v>             Release tag, for example v0.1.11
   --release-base-url <url>  HTTPS base URL containing versioned assets
   --check                   Check Freebuff Desktop + dependencies only, then exit
   --verify                  Verify the on-disk UI patches (bundle markers,
