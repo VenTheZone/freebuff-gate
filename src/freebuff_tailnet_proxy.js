@@ -84,11 +84,11 @@ const SHIM = `(function () {
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       }
       function joinPath(base, name) {
-        var b = base === '/' ? '' : String(base).replace(/\/+$/, '');
+        var b = base === '/' ? '' : String(base).replace(/\\/+$/, '');
         return b + '/' + name;
       }
       function parentOf(p) {
-        var t = String(p).replace(/\/+$/, '');
+        var t = String(p).replace(/\\/+$/, '');
         if (!t) return '/';
         var i = t.lastIndexOf('/');
         return i <= 0 ? '/' : t.slice(0, i);
@@ -206,7 +206,7 @@ const SHIM = `(function () {
               return;
             }
             current = (d && d.path) || current;
-            var parts = String(current).replace(/^\/+/, '').replace(/\/+$/, '').split('/').filter(Boolean);
+            var parts = String(current).replace(/^\\/+/, '').replace(/\\/+$/, '').split('/').filter(Boolean);
             renderCrumbs(parts, ui.crumbs);
             var entries = (d && d.entries) || [];
             if (!entries.length) {
@@ -315,8 +315,17 @@ const CREATE_REUSE_V2 =
 // the pin never matches. Resolve the thread first, then pin its real id &
 // hand the resolved thread to q. Without this every reload sees no pin and
 // creates a fresh empty home thread, stacking "New thread" tabs.
-const CREATE_REUSE =
+const CREATE_REUSE_V3 =
   'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const s=()=>{const ts=G.getState().tabs,lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,hb=ts.find(h=>h.home);if(hb&&lv(hb.id))return lv(hb.id);let k=null;try{k=localStorage.getItem("fb.homeThread")}catch(e){}if(k&&lv(k))return lv(k);return null},th=s();if(th)return th;return new Promise(q=>setTimeout(()=>{const th2=s();if(th2)return q(th2);ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}q(nt||id)},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}})},800))},"Could not open tab")';
+// V4: on a phone the relay path hydrates the store slowly, so at boot the
+// pinned thread is not in G.getState().threads yet and V3's single 800ms
+// retry misses it, then creates a NEW thread and re-pins it. Every connect
+// (fresh page load) therefore stacked another empty "New thread". V4 keeps
+// polling for the pinned thread while it exists, and only creates a fresh
+// one when no pin exists at all (a genuinely new browser) or the pinned
+// thread was deleted server-side.
+const CREATE_REUSE =
+  'lr(t,()=>{if(!r)return ve.createThread(n,{inheritFromThreadId:i});const lv=x=>G.getState().threads[x]&&G.getState().threads[x].thread,home=()=>{const hb=G.getState().tabs.find(h=>h.home);return hb&&lv(hb.id)},pin=()=>{try{return localStorage.getItem("fb.homeThread")}catch(e){return null}};const s=()=>{const k=pin();if(home())return lv(G.getState().tabs.find(h=>h.home).id);if(k&&lv(k))return lv(k);return k?0:null},th=s();if(th&&th!==0)return th;return new Promise(q=>{const create=()=>ve.createThread(n,{inheritFromThreadId:i}).then(nt=>{let id=null;try{id=nt&&nt.id||null}catch(e){}if(id){try{localStorage.setItem("fb.homeThread",id)}catch(e){}}q(nt||id)},()=>{try{localStorage.removeItem("fb.homeThread")}catch(e){}});if(!pin())return create();let tries=0;const step=()=>{const st=s();if(st&&st!==0)return q(st);tries++;if(tries>30)return create();setTimeout(step,200)};step()})},"Could not open tab")';
 const SETSTATE_MARK =
   'return s?(e(o=>{const c=r?o.tabs.find(h=>h.home):void 0,u={...o.threads,[s.id]:{thread:s,messages:[],items:[]}};return c&&delete u[c.id],{threads:u,tabs:r?[{id:s.id,projectPath:n,home:!0},...o.tabs.filter(h=>!h.home)]:[...o.tabs,{id:s.id,projectPath:n,openerId:i}],activeId:r&&o.activeId!==(c==null?void 0:c.id)?o.activeId:s.id}}),mi(),!0):!1}';
 const SETSTATE_FIX =
@@ -350,27 +359,55 @@ const SCROLL_FIX =
 // thread delete when the id belongs to a home tab.
 const CLOSE_MARK1 =
   'async closeTab(n){const i=t().tabs.find(u=>u.id===n);if(!i||i.home)return;';
-const CLOSE_FIX1 =
+const CLOSE_FIX1_V1 =
   'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i||i.home)return;';
+// V2: closing a home tab used to be refused outright, so a stray empty
+// "New thread" home tab (pinned by an older bug) could never be closed.
+// Allow it when the thread has no messages; only protect home tabs that
+// still hold a real conversation.
+const CLOSE_FIX1 =
+  'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i)return;if(i.home){const g=G.getState(),th=g.threads[n],empty=!th||!th.messages||!th.messages.length;if(!empty)return}';
+// V2 buggy: an early draft of CLOSE_FIX1 ended the home guard with a
+// double brace, closing the whole closeTab body right there and making
+// everything after (the store removal, server delete) dead code. Bundles
+// already carrying that string must be repaired, not left as-is.
+const CLOSE_FIX1_V2_BUGGY =
+  'async closeTab(n){const i=t().tabs.find(u=>u.id===n&&!u.home)||t().tabs.find(u=>u.id===n);if(!i)return;if(i.home){const g=G.getState(),th=g.threads[n],empty=!th||!th.messages||!th.messages.length;if(!empty)return}}';
 const CLOSE_MARK2 =
   'const h=u.tabs.filter(_=>!o.has(_.id)),{[n]:p,...f}=u.threads;';
-const CLOSE_FIX2 =
+const CLOSE_FIX2_V1 =
   'const h=u.tabs.filter(_=>!o.has(_.id)||(_.home&&_.id===n)),k2=u.tabs.some(_=>_.home&&_.id===n),f=(()=>{if(k2)return u.threads;const g={...u.threads};delete g[n];return g})();';
+// V2: keep the home tab (and its thread) only when it still has messages.
+// An empty home thread is dropped from the tab bar and the store, matching
+// the server-side delete in CLOSE_FIX3.
+const CLOSE_FIX2 =
+  'const h=u.tabs.filter(_=>!o.has(_.id)||(_.home&&_.id===n&&(u.threads[n]&&u.threads[n].messages||[]).length)),k2=u.tabs.some(_=>_.home&&_.id===n&&(u.threads[n]&&u.threads[n].messages||[]).length),f=(()=>{if(k2)return u.threads;const g={...u.threads};delete g[n];return g})();';
 const CLOSE_MARK3 =
   'i.file||await ve.close(n).catch(()=>{})},setActive(n){';
-const CLOSE_FIX3 =
+const CLOSE_FIX3_V1 =
   'i.file||await Promise.resolve().then(()=>t().tabs.some(u=>u.home&&u.id===n)||ve.close(n)).catch(()=>{})},setActive(n){';
+// V2: after the store update above, a home tab survives only when it has
+// messages, so "home tab still present" already means "keep it". Delete
+// server-side otherwise and drop the pin when it pointed at the closed
+// thread, so empty home threads do not pile up.
+const CLOSE_FIX3 =
+  'i.file||await Promise.resolve().then(()=>{const g=G.getState();return g.tabs.some(u=>u.home&&u.id===n)?null:ve.close(n)}).then(()=>{try{if(localStorage.getItem("fb.homeThread")===n)localStorage.removeItem("fb.homeThread")}catch(e){}}).catch(()=>{})},setActive(n){';
 
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
+  else if (out.includes(CREATE_REUSE_V3)) out = out.split(CREATE_REUSE_V3).join(CREATE_REUSE);
   if (out.includes(SETSTATE_MARK)) out = out.split(SETSTATE_MARK).join(SETSTATE_FIX);
   if (out.includes(SCROLL_MARK)) out = out.split(SCROLL_MARK).join(SCROLL_FIX);
   if (out.includes(CLOSE_MARK1)) out = out.split(CLOSE_MARK1).join(CLOSE_FIX1);
+  else if (out.includes(CLOSE_FIX1_V1)) out = out.split(CLOSE_FIX1_V1).join(CLOSE_FIX1);
+  else if (out.includes(CLOSE_FIX1_V2_BUGGY)) out = out.split(CLOSE_FIX1_V2_BUGGY).join(CLOSE_FIX1);
   if (out.includes(CLOSE_MARK2)) out = out.split(CLOSE_MARK2).join(CLOSE_FIX2);
+  else if (out.includes(CLOSE_FIX2_V1)) out = out.split(CLOSE_FIX2_V1).join(CLOSE_FIX2);
   if (out.includes(CLOSE_MARK3)) out = out.split(CLOSE_MARK3).join(CLOSE_FIX3);
+  else if (out.includes(CLOSE_FIX3_V1)) out = out.split(CLOSE_FIX3_V1).join(CLOSE_FIX3);
   return out;
 }
 
@@ -712,14 +749,19 @@ server.on('upgrade', (req, socket, head) => {
 module.exports = {
   CREATE_MARK,
   CLOSE_FIX1,
+  CLOSE_FIX1_V1,
+  CLOSE_FIX1_V2_BUGGY,
   CLOSE_FIX2,
+  CLOSE_FIX2_V1,
   CLOSE_FIX3,
+  CLOSE_FIX3_V1,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,
   CREATE_REUSE,
   CREATE_REUSE_V1,
   CREATE_REUSE_V2,
+  CREATE_REUSE_V3,
   SCROLL_FIX,
   SCROLL_MARK,
   SETSTATE_FIX,

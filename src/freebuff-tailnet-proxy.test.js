@@ -10,7 +10,7 @@ const test = require('node:test');
 
 process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, SETSTATE_FIX, SCROLL_FIX, CLOSE_FIX1, CLOSE_FIX2, CLOSE_FIX3, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, SETSTATE_FIX, SCROLL_FIX, checkUiPatches, UI_PATCH_STATUS_FILE } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -185,4 +185,35 @@ test('patchBundle pins the resolved thread id, not the createThread promise', ()
   assert.ok(patched.includes('setItem("fb.homeThread",id)'), 'pins the resolved thread id');
   // an already-V2-patched bundle upgrades to V3
   assert.notEqual(patched, CREATE_REUSE_V2, 'V2 bundle is upgraded in place');
+});
+
+test('patchBundle upgrades V3 home-thread reuse to V4 (wait for hydration, do not stack)', () => {
+  const patched = patchBundle(CREATE_REUSE_V3);
+  assert.notEqual(patched, CREATE_REUSE_V3, 'V3 bundle is upgraded in place');
+  // V4 polls for the pinned thread instead of creating a new one when the
+  // store has not hydrated it yet, and only creates when no pin exists.
+  assert.ok(patched.includes('k?0:null'), 'pinned-but-unhydrated signals "wait", not "create"');
+  assert.ok(patched.includes('if(!pin())return create()'), 'creates only when no pin exists');
+  assert.ok(patched.includes('setTimeout(step,200)'), 'polls for hydration');
+});
+
+test('patchBundle upgrades close patches so empty home threads can close and delete', () => {
+  const patched = patchBundle(`${CLOSE_FIX1_V1}${CLOSE_FIX2_V1}${CLOSE_FIX3_V1}`);
+  // V1 close refused all home tabs; V2 allows closing an EMPTY home thread.
+  assert.ok(!patched.includes(CLOSE_FIX1_V1), 'CLOSE_FIX1 V1 replaced');
+  assert.ok(patched.includes(CLOSE_FIX1), 'CLOSE_FIX1 upgraded to allow empty-home close');
+  assert.ok(patched.includes('if(!empty)return'), 'protects home threads that still have messages');
+  assert.ok(patched.includes('(u.threads[n]&&u.threads[n].messages||[]).length'), 'CLOSE_FIX2 keeps home tab only when it has messages');
+  assert.ok(patched.includes('g.tabs.some(u=>u.home&&u.id===n)?null:ve.close(n)'), 'CLOSE_FIX3 deletes server-side when the home thread is gone');
+  assert.ok(patched.includes('localStorage.removeItem("fb.homeThread")'), 'CLOSE_FIX3 drops the pin of a deleted home thread');
+});
+
+test('patchBundle repairs the buggy V2 closeTab whose double brace closed the body early', () => {
+  // A bad intermediate CLOSE_FIX1 ended the home guard with }} which closed
+  // the whole function, leaving the store removal + server delete as dead
+  // code. Bundles already carrying it must be repaired in place.
+  const patched = patchBundle(`${CLOSE_FIX1_V2_BUGGY}${CLOSE_FIX2}${CLOSE_FIX3}`);
+  assert.ok(!patched.includes(CLOSE_FIX1_V2_BUGGY), 'buggy V2 closeTab replaced');
+  assert.ok(patched.includes(CLOSE_FIX1), 'fixed CLOSE_FIX1 present');
+  assert.ok(!patched.includes('if(!empty)return}}'), 'no double-brace early close remains');
 });
