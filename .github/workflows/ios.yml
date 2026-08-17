@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ios-${{ github.workflow }}-${{ github.ref }}
@@ -181,3 +181,51 @@ jobs:
           path: ${{ runner.temp }}/export/*.ipa
           if-no-files-found: error
           retention-days: 14
+
+  attach-release:
+    # Publishes the unsigned simulator build to the ios-debug-latest release
+    # so the iOS app appears on the releases page (parallel to the Android
+    # debug APK on mobile-debug-latest). A device-installable IPA is only
+    # produced by the signed-ipa job when signing secrets are set.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-test
+    if: needs.build-test.result == 'success'
+
+    steps:
+      - name: Download simulator app
+        uses: actions/download-artifact@v4
+        with:
+          name: FreebuffGate-simulator-unsigned
+          path: ${{ runner.temp }}/app
+
+      - name: Package app + checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_DIR=$(find "$RUNNER_TEMP/app" -name 'FreebuffGate.app' -type d | head -1)
+          test -n "$APP_DIR"
+          cd "$(dirname "$APP_DIR")"
+          zip -qry "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" "$(basename "$APP_DIR")"
+          sha256sum "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
+            | tee "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256"
+
+      - name: Publish to ios-debug-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view ios-debug-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create ios-debug-latest \
+              --title "Freebuff Gate iOS simulator build (latest)" \
+              --notes "Unsigned iOS simulator build from main. A device-installable IPA requires the IOS_SIGNING_CERT_BASE64 / IOS_SIGNING_CERT_PASSWORD secrets." \
+              --prerelease \
+              "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
+              "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256" \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release upload ios-debug-latest \
+              "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
+              "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          fi
