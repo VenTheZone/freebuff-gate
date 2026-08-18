@@ -66,40 +66,25 @@ implementation in (`src/folder-select.js`).
 | `android/` | Native Android pairing/WebView scaffold. |
 | `android/app/src/androidTest/java/com/freebuff/mobile/MobilePairingE2EInstrumentedTest.kt` | Emulator test for real claim, refresh, cookie exchange, and relay WebView load. |
 | `.github/workflows/android.yml` | Builds/tests Android emulator, runs managed relay integration, and uploads artifacts. |
+| `.github/workflows/ios.yml` | Builds/tests the iOS app, signs an IPA when secrets are set, and publishes rolling releases. |
 | `.github/workflows/mobile-ui-screenshot.yml` | Runs mobile screenshot/layout regression and uploads the phone capture. |
+| `npm/` | npm distribution: `freebuff-gate` metapackage plus per-platform binary packages. |
 | `docs/` | User-facing guides: install guide, mobile adaptation, and historical planning notes. |
 
-## Caveman on Freebuff Desktop and CLI
+## Caveman profile
 
-Freebuff Desktop and Freebuff CLI use the same Codebuff instruction-file
-convention. They read `AGENTS.md` (unless a higher-priority `knowledge.md`
-exists), so the project-level `AGENTS.md` above enables the Caveman response
-profile in both products without patching installed binaries.
-
-The profile keeps technical content, code, commands, paths, and errors exact
-while removing conversational filler. It also falls back to normal prose for
-security warnings, irreversible actions, ambiguity, and user confusion.
-
-The project profile is already present. To apply the same profile to every
-Freebuff project, preview then explicitly install the home-level file:
+The project `AGENTS.md` enables the Caveman response profile in Freebuff
+Desktop and CLI. To apply it to every project, preview then install the
+home-level file:
 
 ```bash
 node src/install-caveman.js --global --dry-run
 node src/install-caveman.js --global
 ```
 
-Use `node src/install-caveman.js --global --remove` to remove only the managed
-block; any other content in `~/.AGENTS.md` stays intact. Restart existing
-Desktop/CLI sessions after changing instruction files. If `~/.knowledge.md`
-exists, it takes precedence and must be updated or removed for the global
-profile to apply.
-
-This integrates Caveman's communication layer, not its optional proxy/input
-compression. Caveman's native wrapper currently lists seven other agents, not
-Freebuff, and Freebuff's published launcher delegates to a compiled native
-binary. Routing Freebuff provider traffic through Caveman would require an
-upstream provider-hook change; silently patching the installed binary would be
-fragile and would be lost on update.
+`--remove` deletes only the managed block. Restart Desktop/CLI sessions after
+changing instruction files. If `~/.knowledge.md` exists, it takes precedence
+and must be updated or removed for the global profile to apply.
 
 ## Mobile pairing gateway
 
@@ -201,6 +186,56 @@ node src/package-freebuff-setup.js --metadata --version v0.2.0 --output dist
 Wizard currently uses existing local setup and advanced Tailscale path.
 Freebuff-hosted relay onboarding stays unavailable until hosted control-plane
 deployment is live; wizard reports that state instead of claiming readiness.
+
+## npm distribution
+
+The setup binary also ships as `freebuff-gate` on npm, with per-platform
+optional packages (`freebuff-gate-linux-x64`, `freebuff-gate-darwin-arm64`,
+and friends). Installing `freebuff-gate` on the matching platform pulls the
+right binary and exposes the `freebuff-setup` launcher:
+
+```bash
+npm install -g freebuff-gate
+freebuff-setup --version
+freebuff-setup --dry-run
+```
+
+Build the six tarballs from release binaries and validate checksums before
+publishing:
+
+```bash
+node src/package-freebuff-npm.js --version v0.2.0 --artifacts-dir dist --pack-destination /tmp/npm-check
+```
+
+Publish to the `next` dist-tag (platform packages first, then the
+metapackage):
+
+```bash
+node src/package-freebuff-npm.js --version v0.2.0 --artifacts-dir dist --publish --npm-tag next
+```
+
+CI runs this in the `publish-npm-prerelease` job gated on `NPM_TOKEN`; the
+`smoke-npm-platforms` matrix then installs the published package on Linux,
+macOS, and Windows runners and checks the launcher.
+
+## Self-host the relay with Docker
+
+The relay runs as a container with a Caddy sidecar that terminates HTTPS/WSS
+via Let's Encrypt, or a Tailscale sidecar for private tailnet exposure.
+Prebuilt images publish to `ghcr.io/venthezone/freebuff-gate-relay` (`latest`,
+`next`, and `vX.Y.Z` tags; linux/amd64 and linux/arm64):
+
+```bash
+cd docker/relay
+cp .env.example .env
+$EDITOR .env   # RELAY_DOMAIN, RELAY_ENROLLMENT_TOKEN, RELAY_ADMIN_TOKEN
+docker compose up -d
+```
+
+Compose pulls the published image and falls back to building from source when
+it is not published yet. Backup/restore for the state and certificate volumes
+lives in `docker/relay/backup.sh`. Full self-hosting guide:
+`docker/relay/README.md`.
 
 ## Freebuff Desktop mobile-connect installer
 
@@ -374,57 +409,13 @@ integration tests and uploads TAP output.
 ## Folder selection
 
 The deployed picker is a server-side file browser. The tailnet proxy shim opens
-a dialog that lists the server's folders through the orchestrator's
-`/api/fb/dirlist` route. Users do not need to type paths or use a local picker.
+a dialog listing the server's folders through the orchestrator's
+`/api/fb/dirlist` route; users do not need to type paths or use a local picker.
 See `docs/install.md` for setup details. `src/folder-select.js` is the older
-client-side reference implementation for the File System Access API:
-
-1. **User-gesture discipline.** `window.showDirectoryPicker()` must be called
-   synchronously inside a click handler; `await`ing anything first kills user
-   activation and the browser rejects with `SecurityError`. The tweak makes
-   this a hard rule of the API.
-2. **`webkitdirectory` fallback.** Firefox/Safari have no File System Access
-   API, so a hidden `<input type="file" webkitdirectory>` is used instead
-   (read-only, session-scoped).
-3. **Handle persistence.** The `DirectoryHandle` is stored in IndexedDB and
-   permission is re-requested via `handle.requestPermission({ mode })` on
-   reload, since handles don't auto-grant across sessions.
-4. **Last-folder restore.** Passing `{ id }` to the picker makes Chromium
-   remember the last-picked folder with no path stored.
-5. **Virtual paths.** Browsers refuse to expose absolute paths, so the UI
-   shows a stable synthetic path like `workspace://name`.
-
-The `folderSelection` block in `.freebuff-gate.json` is legacy client-side configuration. The live server-side picker ignores it. It remains below as a record of the old behavior:
-
-```json
-"folderSelection": {
-  "mode": "showDirectoryPicker",
-  "fallbackMode": "webkitdirectory",
-  "pickerId": "fb-workspace",
-  "permissionMode": "readwrite",
-  "persistHandles": true,
-  "reRequestPermissionOnReload": true,
-  "restoreLastFolder": true,
-  "virtualPaths": true,
-  "allowDragDrop": false
-}
-```
-
-Usage:
-
-```js
-import { pickFolder, restoreLastFolder, fromConfigFile } from "./src/folder-select.js";
-
-const cfg = fromConfigFile(loadedConfig);   // loadedConfig = .freebuff-gate.json
-
-document.querySelector("#pick-folder").addEventListener("click", async () => {
-  const handle = await pickFolder(cfg);      // MUST be called from the handler
-  console.log(virtualPath(handle));          // "workspace://my-project"
-});
-
-// On boot, reopen the last folder without a user gesture:
-const handle = await restoreLastFolder(cfg);
-```
+client-side reference implementation (File System Access API with
+`webkitdirectory` fallback, IndexedDB handle persistence, last-folder restore,
+virtual paths) and documents the `folderSelection` block in
+`.freebuff-gate.json`, which the live server-side picker ignores.
 
 ## Ads in Gate Desktop and Gate Mobile
 
@@ -476,43 +467,11 @@ Keep secrets out of this repository. `.gitignore` excludes `.env*`,
 - The `auth.tokenEnv` setting names the env var the browser port reads at
   runtime; no token is ever inline.
 
-## Layout
+## Quick reference
 
-```
-freebuff-gate/
-├── .freebuff-gate.json      # the dotfile configuration (legacy folder-selection notes)
-├── .env.example             # template for local .env (never committed)
-├── .gitignore               # secrets and runtime state stay out
-├── AGENTS.md                # shared Caveman profile for Freebuff
-├── README.md
-├── docs/
-│   ├── install.md           # full install guide for the stack
-│   ├── mobile.md            # phone/tablet adaptation details
-│   ├── e2e-tunnel.md        # E2E mobile↔desktop tunnel design and Phase 1 spike
-│   └── planning/            # task plan with phase status
-├── android/                 # Kotlin Android pairing/WebView scaffold
-├── ios/                     # iOS companion app (XcodeGen)
-└── src/
-    ├── folder-select.js     # the folder-selection tweak implementation
-    ├── check-ads.js         # ad-auction poller (watch for real fill)
-    ├── install-caveman.js   # project/global Caveman profile installer
-    ├── mobile-connect-protocol.js  # pairing/token protocol helpers
-    ├── mobile-connect-gateway.js   # pairing control plane
-    ├── mobile-connect-websocket.js # relay WebSocket framing
-    ├── mobile-connect-relay.js     # managed relay data plane
-    ├── mobile-connect-agent.js     # desktop outbound connector
-    ├── install-mobile-connect.js    # Desktop companion installer
-    ├── package-mobile-connect-release.js # versioned release artifact packager
-    ├── mobile-connect-e2e-fixture.js # HTTPS ephemeral relay/desktop Android CI fixture
-    ├── freebuff_tailnet_proxy.js   # browser-port proxy (injection, patches, watch)
-    ├── perf-probe.js               # page-load probe injected by the proxy
-    ├── mobile-ui.css        # mobile/tablet responsive layer (proxy-injected)
-    ├── mobile-ui.js         # viewport/touch helpers for phones
-    ├── mobile-ui-screenshot-fixture.html # deterministic mobile test fixture
-    ├── mobile-ui-screenshot.test.js # Chromium screenshot/layout regression
-    └── freebuff-tailnet-proxy.test.js # proxy ETag/cache/watchdog tests
-```
-
-Also in the repository root: `install-mobile-connect.sh` (release bootstrap),
-`install-release-apk.sh` (Android release install), `AGENTS.md`, and the
-`.github/workflows/` CI (`android.yml`, `ios.yml`, `mobile-ui-screenshot.yml`).
+Install guides: [docs/install.md](docs/install.md) (full stack),
+[docs/mobile.md](docs/mobile.md) (phone/tablet adaptation),
+[docker/relay/README.md](docker/relay/README.md) (self-hosted relay),
+[android/README.md](android/README.md) and [ios/README.md](ios/README.md)
+(mobile apps). One-command installers: `install-mobile-connect.sh` (Desktop
+companion), `install-release-apk.sh` (Android release APK).
