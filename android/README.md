@@ -28,19 +28,19 @@ gradle :app:assembleGeckoDebug        # GeckoView / Firefox engine (spike)
 ```
 
 A clean checkout needs Gradle and Android SDK. This workspace uses ignored
-project-local tools under `.tools/`: Gradle 8.9, Android API 35, build-tools
-35.0.0, platform-tools, emulator, and the Google APIs x86_64 system image. A
+project-local tools under `.tools/`: Gradle 8.11.1, Android API 36, build-tools
+36.0.0, platform-tools, emulator, and the Google APIs x86_64 system image. A
 local debug build runs from the repository root with:
 
 ```bash
 export ANDROID_HOME="$PWD/.tools/android-sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export GRADLE_USER_HOME="$PWD/.tools/gradle-home"
-.tools/gradle-8.9/bin/gradle -p android --no-daemon :app:assembleWebviewDebug
+.tools/gradle-8.11.1/bin/gradle -p android --no-daemon :app:assembleWebviewDebug
 ```
 
 `.github/workflows/android.yml` runs
-on Ubuntu with Java 17, Android API 35/build tools, and Gradle 8.9; it creates an
+on Ubuntu with Java 17, Android API 36/build tools, and Gradle 8.11.1; it creates an
 ephemeral HTTPS certificate, starts the local relay/desktop/upstream fixture,
 configures both Gradle relay origins, boots an API 35 Google APIs x86_64 emulator,
 and runs `connectedDebugAndroidTest`. The E2E test trusts only generated debug
@@ -156,8 +156,7 @@ origin guard, differing only in the rendering engine behind `GateBrowserEngine`:
 - `webview` — system Chromium WebView (`WebViewGateEngine`).
 - `gecko` — GeckoView, the Firefox engine (`GeckoGateEngine` +
   `RestrictedGeckoNavigationDelegate`), pinned to GeckoView
-  `138.0.20250517143237` because later releases pull androidx.core/kotlin-stdlib
-  versions that need a newer AGP/Kotlin toolchain than this project uses.
+  `153.0.20260810162159`, the current stable engine at release review time.
 
 The origin restriction is identical: only HTTPS navigations whose exact origin
 matches the paired relay are allowed, top-level and subframe loads alike, and

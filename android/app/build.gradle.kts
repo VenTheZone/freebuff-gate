@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,7 +16,7 @@ val defaultWebOrigin = providers.gradleProperty("freebuffWebOrigin")
 
 android {
     namespace = "com.freebuff.mobile"
-    compileSdk = 35
+    compileSdk = 36
 
     // Two rendering engines share the same activity, pairing flow, and origin
     // guard. "webview" is the default (system Chromium WebView). "gecko" swaps
@@ -66,8 +68,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
@@ -88,13 +92,15 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
+    // CameraX exposes ListenableFuture in its public API. Newer GeckoView
+    // dependency resolution selects the empty compatibility artifact unless
+    // Guava is declared explicitly.
+    implementation("com.google.guava:guava:33.6.0-android")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
-    // GeckoView stable channel. Pinned to 138.x: later releases pull
-    // androidx.core 1.17+/1.18+ and kotlin-stdlib 2.2 which require a newer
-    // AGP/Kotlin toolchain than this project uses. Flavor-scoped so the
-    // default webview APK stays lean.
-    "geckoImplementation"("org.mozilla.geckoview:geckoview:138.0.20250517143237")
+    // GeckoView stable channel. Flavor-scoped so default WebView APK stays
+    // lean. Update engine with Mozilla security releases.
+    "geckoImplementation"("org.mozilla.geckoview:geckoview:153.0.20260810162159")
 
     // JVM unit tests for the tunnel prototype (pure JVM stack, no device needed).
     testImplementation("junit:junit:4.13.2")

@@ -67,14 +67,14 @@ jobs:
           sdkmanager \
             "platform-tools" \
             "emulator" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
             "system-images;android-35;google_apis;x86_64"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.11.1"
 
       - name: Generate ephemeral HTTPS relay certificate
         shell: bash
@@ -235,12 +235,12 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.11.1"
 
       - name: Build GeckoView spike APK
         working-directory: android
@@ -333,14 +333,14 @@ jobs:
           sdkmanager \
             "platform-tools" \
             "emulator" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
             "system-images;android-35;google_apis;x86_64"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.11.1"
 
       - name: Enable KVM for emulator
         shell: bash
@@ -446,12 +446,12 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Set up Gradle 8.9
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
+          gradle-version: "8.11.1"
 
       # Built without -PfreebuffPairingOrigin/-PfreebuffWebOrigin so the APK
       # is generic and pairs against the HTTPS origin carried by the QR.
