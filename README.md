@@ -8,17 +8,16 @@ Freebuff Gate adapts the **Freebuff Desktop** UI for two uses:
   proxy injects the mobile layer, and the Freebuff Gate Android/iOS apps
   provide the companion clients.
 
-The project also includes a **folder-selection tweak**. Freebuff Desktop can
-open a native folder dialog, but a browser cannot. The browser version uses web
-APIs instead. The configuration lives in
-(`FB-Browser-UI/.fb-browser-ui.json`), with a small reference implementation in
-(`src/folder-select.js`).
+The project also includes folder-selection support. Freebuff Desktop can open
+native folder dialogs. Browsers cannot, so the browser port uses web APIs. Its
+configuration lives in (`freebuff-gate/.freebuff-gate.json`), with a reference
+implementation in (`src/folder-select.js`).
 
 ## Contents
 
 | Path | Purpose |
 | --- | --- |
-| `.fb-browser-ui.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
+| `.freebuff-gate.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
 | `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets (injected by the tailnet proxy). |
@@ -317,7 +316,7 @@ launchctl, or Task Scheduler.
 `--relay-ws-url` is derived from HTTPS URL when omitted. Desktop UI defaults to
 `http://127.0.0.1:58061`; override with `--upstream-url`. Use
 `--dry-run` before writing, `uninstall` to remove installed agent files, and
-`uninstall --purge` only when config/state should also be removed.Installer refuses insecure non-loopback relay URLs, refuses unmanaged
+`uninstall --purge` only when config/state should also be removed. The installer refuses insecure non-loopback relay URLs, refuses unmanaged
 destination collisions, rotates short-lived connector tokens through the
 relay, and never stores provider credentials. Node 22 is required because the
 agent uses a built-in WebSocket. Keep the bootstrap token out of shell history
@@ -372,7 +371,7 @@ host mapping. Managed relay deployment still needs a real HTTPS/WSS public origi
 and connector enrollment token. The same workflow also runs Node 22 relay/agent
 integration tests and uploads TAP output.
 
-## The folder-selection tweak
+## Folder selection
 
 The deployed picker is a server-side file browser. The tailnet proxy shim opens
 a dialog that lists the server's folders through the orchestrator's
@@ -395,7 +394,7 @@ client-side reference implementation for the File System Access API:
 5. **Virtual paths.** Browsers refuse to expose absolute paths, so the UI
    shows a stable synthetic path like `workspace://name`.
 
-The `folderSelection` block in `.fb-browser-ui.json` below is the **legacy** client-side knob set. The live server-side picker ignores it; keep the block only as documentation of the old behavior:
+The `folderSelection` block in `.freebuff-gate.json` is legacy client-side configuration. The live server-side picker ignores it. It remains below as a record of the old behavior:
 
 ```json
 "folderSelection": {
@@ -416,7 +415,7 @@ Usage:
 ```js
 import { pickFolder, restoreLastFolder, fromConfigFile } from "./src/folder-select.js";
 
-const cfg = fromConfigFile(loadedConfig);   // loadedConfig = .fb-browser-ui.json
+const cfg = fromConfigFile(loadedConfig);   // loadedConfig = .freebuff-gate.json
 
 document.querySelector("#pick-folder").addEventListener("click", async () => {
   const handle = await pickFolder(cfg);      // MUST be called from the handler
@@ -471,7 +470,7 @@ Keep secrets out of this repository. `.gitignore` excludes `.env*`,
 `state.json`, keypair, key, and token files, databases, logs, and runtime state.
 
 - Real values always live in a local, git-ignored `.env`, never in
-  `.fb-browser-ui.json`.
+  `.freebuff-gate.json`.
 - The Freebuff Desktop `state.json` (which holds auth tokens) is mirrored in
   shape only; the real file stays outside the repo.
 - The `auth.tokenEnv` setting names the env var the browser port reads at
@@ -480,8 +479,8 @@ Keep secrets out of this repository. `.gitignore` excludes `.env*`,
 ## Layout
 
 ```
-FB-Browser-UI/
-├── .fb-browser-ui.json      # the dotfile configuration (legacy folder-selection notes)
+freebuff-gate/
+├── .freebuff-gate.json      # the dotfile configuration (legacy folder-selection notes)
 ├── .env.example             # template for local .env (never committed)
 ├── .gitignore               # secrets and runtime state stay out
 ├── AGENTS.md                # shared Caveman profile for Freebuff

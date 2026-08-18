@@ -22,7 +22,7 @@
  *   5. Expose a stable synthetic "virtual path" (e.g. `workspace://name`)
  *      in the UI instead of an absolute path.
  *
- * Wire it up: pass the `folderSelection` block from `.fb-browser-ui.json`
+ * Wire it up: pass the `folderSelection` block from `.freebuff-gate.json`
  * into `pickFolder()` / `restoreLastFolder()`.
  */
 
@@ -152,7 +152,7 @@ export function virtualPath(handle) {
   return `workspace://${name}`;
 }
 
-/** Read the folder-selection block out of a loaded .fb-browser-ui.json. */
+/** Read the folder-selection block out of a loaded .freebuff-gate.json. */
 export function fromConfigFile(loadedConfig) {
   return resolveConfig(loadedConfig?.folderSelection ?? {});
 }

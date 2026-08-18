@@ -1,7 +1,7 @@
 {
-  "$comment": "freebuff-gate — dotfile configuration for the Freebuff Desktop browser port. Secrets are NEVER inline here; load them from .env (see .env.example).",
+  "$comment": "freebuff-gate dotfile configuration for the Freebuff Desktop browser port. Secrets are NEVER inline here; load them from .env (see .env.example).",
   "app": {
-    "name": "FB-Browser-UI",
+    "name": "freebuff-gate",
     "version": "0.1.0",
     "host": "127.0.0.1",
     "port": 8793
