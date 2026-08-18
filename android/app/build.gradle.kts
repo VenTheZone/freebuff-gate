@@ -14,6 +14,15 @@ val defaultWebOrigin = providers.gradleProperty("freebuffWebOrigin")
     .get()
     .replace("\"", "")
 
+// Release signing. Pass freebuffKeystorePath/Password and freebuffKeyAlias/
+// Password to sign with a production keystore (CI injects them from the
+// ANDROID_KEYSTORE_* secrets). Without them the release build falls back to
+// the debug key so CI and local builds always produce an installable APK.
+val freebuffKeystorePath = providers.gradleProperty("freebuffKeystorePath").orNull
+val freebuffKeystorePassword = providers.gradleProperty("freebuffKeystorePassword").orNull
+val freebuffKeyAlias = providers.gradleProperty("freebuffKeyAlias").orNull
+val freebuffKeyPassword = providers.gradleProperty("freebuffKeyPassword").orNull
+
 android {
     namespace = "com.freebuff.mobile"
     compileSdk = 36
@@ -60,6 +69,23 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (
+                freebuffKeystorePath != null &&
+                freebuffKeystorePassword != null &&
+                freebuffKeyAlias != null &&
+                freebuffKeyPassword != null
+            ) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(freebuffKeystorePath)
+                    storePassword = freebuffKeystorePassword
+                    keyAlias = freebuffKeyAlias
+                    keyPassword = freebuffKeyPassword
+                }
+            } else {
+                // No production keystore configured: sign with the debug key so
+                // the release APK stays installable (CI fallback path).
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 

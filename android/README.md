@@ -92,10 +92,17 @@ verify, uninstall the old build, install with permissions granted):
 It needs `gh` (authenticated, with repo access), `adb`, and `sha256sum`.
 
 Every push to `main` rebuilds the unpinned WebView debug APK and publishes it
-as `freebuff-gate-debug.apk` on the `mobile-debug-latest` GitHub release, with
-a SHA-256 checksum file (`freebuff-gate-debug.apk.sha256`) next to it. The APK
-is generic: it pairs against the HTTPS origin carried by the QR, not the CI
-relay. The repo is private, so downloads need repo access.
+as `freebuff-gate-debug.apk` on the `mobile-debug-latest` GitHub release, and
+the release build as `freebuff-gate-release.apk` on the `mobile-release-latest`
+release, each with a SHA-256 checksum file next to it. The APKs are generic:
+they pair against the HTTPS origin carried by the QR, not the CI relay. The
+repo is private, so downloads need repo access.
+
+Release signing: configure the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` repository secrets (keystore
+base64-encoded) and CI signs the release APK with that keystore. Without them
+the release APK falls back to the debug key: installable, but not for store
+distribution. The release notes state which signing path was used.
 
 Download both files from the release page (or with
 `gh release download mobile-debug-latest`), then verify the checksum before
@@ -107,7 +114,8 @@ sha256sum -c freebuff-gate-debug.apk.sha256
 
 It must print `freebuff-gate-debug.apk: OK`. If it reports FAILED or the
 checksum file is missing, do not install the APK: the download was truncated
-or tampered with.
+or tampered with. The release APK verifies the same way with
+`sha256sum -c freebuff-gate-release.apk.sha256`.
 
 Install the verified APK with adb:
 

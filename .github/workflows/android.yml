@@ -1,4 +1,4 @@
-name: Android debug build
+name: Android build and release
 
 on:
   push:
@@ -304,6 +304,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - name: Check out source
@@ -394,6 +399,39 @@ jobs:
           test -s "${apk}"
           "${apksigner}" verify --verbose --print-certs "${apk}"
 
+      - name: Prepare release signing keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+            test -s "$RUNNER_TEMP/release.keystore"
+            echo "KEYSTORE_PROPERTIES=-PfreebuffKeystorePath=$RUNNER_TEMP/release.keystore -PfreebuffKeystorePassword=$ANDROID_KEYSTORE_PASSWORD -PfreebuffKeyAlias=$ANDROID_KEY_ALIAS -PfreebuffKeyPassword=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "release APK will be signed with the production keystore"
+          else
+            echo "no ANDROID_KEYSTORE_BASE64 secret; release APK falls back to debug signing (installable, not for store distribution)" >&2
+          fi
+
+      - name: Build signed release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          # -PfreebuffPairingOrigin/-PfreebuffWebOrigin stay empty so the
+          # release APK is generic and pairs against the HTTPS origin in the QR.
+          gradle --no-daemon --stacktrace \
+            :app:assembleWebviewRelease \
+            ${KEYSTORE_PROPERTIES:-}
+
+      - name: Verify release APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/webview/release/app-webview-release.apk"
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "${apksigner}"
+          test -s "${apk}"
+          "${apksigner}" verify --verbose --print-certs "${apk}"
+
       - name: Publish debug APK as release asset
         shell: bash
         env:
@@ -416,6 +454,36 @@ jobs:
             # Keep the APK release pinned as GitHub's "Latest": an unrelated
             # newer tag previously hijacked the Latest badge and hid the app.
             gh release edit "$tag" --title "$title" --draft=false --prerelease=false --latest
+          else
+            gh release create "$tag" "$asset" "$asset.sha256" \
+              --title "$title" \
+              --notes "$notes" \
+              --target "$GITHUB_SHA"
+          fi
+
+      - name: Publish release APK as release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/webview/release/app-webview-release.apk"
+          asset="freebuff-gate-release.apk"
+          tag="mobile-release-latest"
+          cp "$apk" "$asset"
+          sha256sum "$asset" > "$asset.sha256"
+          version_name="$(grep -oP '(?<=versionName = \")[^\"]+' android/app/build.gradle.kts | head -1)"
+          version_label="${version_name:-dev}"
+          title="Freebuff Gate ${version_label} - release APK (latest)"
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            signing_note="Signed with the production keystore."
+          else
+            signing_note="Signed with the debug key (CI fallback); installable, not for store distribution."
+          fi
+          notes="Release APK ${version_label} rebuilt from ${GITHUB_SHA}. Pairs via QR; no baked-in relay origin. ${signing_note} Verify with: sha256sum -c freebuff-gate-release.apk.sha256"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" "$asset.sha256" --clobber
+            gh release edit "$tag" --title "$title" --draft=false --prerelease=false
           else
             gh release create "$tag" "$asset" "$asset.sha256" \
               --title "$title" \
