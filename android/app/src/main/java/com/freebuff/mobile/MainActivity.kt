@@ -36,6 +36,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var qrScanner: QrScanner
     private var webSessionLoading = false
     private var loadedWebSessionKey: String? = null
+    // E2E tunnel prototype (docs/e2e-tunnel.md §5): owns the loopback proxy +
+    // tunnel peer while the WebView is pointed at 127.0.0.1.
+    private var tunnelGateway: com.freebuff.mobile.tunnel.TunnelGateway? = null
     private val pairingExecutor = Executors.newSingleThreadExecutor()
 
     private val cameraPermission = registerForActivityResult(
@@ -120,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         pairButton.setOnClickListener { claimPairing() }
         disconnectButton.setOnClickListener {
             reconnectController.disconnect(clearSession = true)
+            stopTunnelGateway()
             engine.stopLoading()
             browserHost.visibility = View.GONE
             setupPanel.visibility = View.VISIBLE
@@ -142,6 +146,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         isForeground = false
         stopTurnNotifications()
+        stopTunnelGateway()
         if (::qrScanner.isInitialized) qrScanner.close()
         if (::reconnectController.isInitialized) reconnectController.close()
         pairingExecutor.shutdownNow()
@@ -257,6 +262,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadRemoteUi(session: PairingSession) {
+        if (session.tunnelEnabled) {
+            loadRemoteUiViaTunnel(session)
+            return
+        }
         val configuredUi = session.uiUrl?.takeIf { isHttpsUrl(it) }
         val candidate = configuredUi ?: session.relayUrl?.let { relayToHttp(it) }
         val uri = candidate?.let { runCatching { URI(it) }.getOrNull() }
@@ -309,6 +318,47 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Tunnel mode (Phase 1 prototype): WebView points at the loopback proxy
+     * (127.0.0.1) whose traffic rides the encrypted tunnel to the desktop
+     * agent. No relay session cookie — the desktop orchestrator's own cookie
+     * flows back through the tunnel like a desktop browser (docs/e2e-tunnel.md
+     * §5.6).
+     */
+    private fun loadRemoteUiViaTunnel(session: PairingSession) {
+        val sessionKey = "${session.deviceId}:tunnel"
+        if (webSessionLoading || (loadedWebSessionKey == sessionKey && browserHost.visibility == View.VISIBLE)) return
+        webSessionLoading = true
+        showState(ConnectionState.CONNECTED, "Establishing encrypted tunnel")
+        try {
+            val gateway = com.freebuff.mobile.tunnel.TunnelGateway(session)
+            val baseUrl = gateway.start()
+            val origin = RestrictedWebViewClient.originOf(baseUrl)
+            if (origin == null) {
+                gateway.close()
+                throw IllegalStateException("Tunnel loopback origin is invalid")
+            }
+            tunnelGateway = gateway
+            engine.setRestriction(origin) { blockedUrl ->
+                confirmOpenExternal(blockedUrl)
+            }
+            loadedWebSessionKey = sessionKey
+            webSessionLoading = false
+            setupPanel.visibility = View.GONE
+            browserHost.visibility = View.VISIBLE
+            engine.load(baseUrl, null)
+        } catch (error: Exception) {
+            webSessionLoading = false
+            stopTunnelGateway()
+            showState(ConnectionState.ERROR, error.message ?: "Tunnel failed to start")
+        }
+    }
+
+    private fun stopTunnelGateway() {
+        tunnelGateway?.close()
+        tunnelGateway = null
     }
 
     private fun configuredOrigin(raw: String): String? {

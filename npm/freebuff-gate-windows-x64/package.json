@@ -1,0 +1,21 @@
+{
+  "name": "freebuff-gate-windows-x64",
+  "version": "0.0.0",
+  "description": "Freebuff Gate companion setup binary for windows-x64 (SEA)",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "freebuff-setup.exe",
+  "files": [
+    "freebuff-setup",
+    "freebuff-setup.exe"
+  ],
+  "keywords": [
+    "freebuff",
+    "setup",
+    "sea"
+  ]
+}

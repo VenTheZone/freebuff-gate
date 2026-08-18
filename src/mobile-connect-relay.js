@@ -309,6 +309,11 @@ class RelayHub {
     this.httpRequests = new Map();
     this.webSockets = new Map();
     this.webSessions = new Map();
+    // Blind tunnel rendezvous (E2E prototype): maps a session id to the set
+    // of raw WebSocket peers. Bytes are piped between peers verbatim — the
+    // relay never parses tunnel frames, so it cannot read or forge the
+    // encrypted data path.
+    this.tunnels = new Map();
     // APNs turn-notification provider (no-op until FB_APNS_* is configured)
     // plus the per-connector /api/events watcher that drives it.
     this.apns = options.apnsProvider || createApnsProvider({ env: process.env });
@@ -955,9 +960,45 @@ class RelayHub {
       if (!request.response.writableEnded) request.response.destroy();
     }
     for (const bridge of this.webSockets.values()) bridge.mobile.close(1001, 'Relay shutting down');
+    for (const peers of this.tunnels.values()) {
+      for (const peer of peers) if (!peer.closed) peer.close(1001, 'Relay shutting down');
+    }
     this.connectors.clear();
     this.httpRequests.clear();
     this.webSockets.clear();
+    this.tunnels.clear();
+  }
+
+  // Blind rendezvous: pair up to two raw WebSocket connections by session id
+  // and pipe bytes verbatim between them. The relay has no key material and
+  // never parses the tunnel payloads — it can disrupt the channel but cannot
+  // read or forge it.
+  joinTunnel(sessionId, connection) {
+    let peers = this.tunnels.get(sessionId);
+    if (!peers) {
+      peers = new Set();
+      this.tunnels.set(sessionId, peers);
+    }
+    if (peers.size >= 2) {
+      connection.close(4001, 'Tunnel session full');
+      return;
+    }
+    peers.add(connection);
+    connection.on('message', (payload, isBinary) => {
+      if (peers.size < 2) return;
+      for (const peer of peers) {
+        if (peer === connection || peer.closed) continue;
+        if (isBinary) peer.sendBinary(payload);
+        else peer.sendText(String(payload));
+      }
+    });
+    connection.once('close', () => {
+      peers.delete(connection);
+      for (const peer of peers) {
+        if (!peer.closed) peer.close(1001, 'Peer disconnected');
+      }
+      if (peers.size === 0) this.tunnels.delete(sessionId);
+    });
   }
 }
 
@@ -1021,15 +1062,20 @@ function createRelayServer(options = {}) {
             deviceName: body.deviceName,
             devicePublicKey: body.devicePublicKey,
           });
+          // The tunnel rendezvous lives on this relay; hand the phone the
+          // WSS endpoint (blind /v1/tunnel) alongside the shared token.
+          if (result && result.tunnelToken) result.tunnelWsUrl = `${hub.publicWsUrl}/v1/tunnel`;
           sendJson(res, 200, result, requestOptions);
           return;
         }
         if (req.method === 'POST' && pathname === '/v1/sessions/refresh') {
           const body = await readJsonBody(req);
-          sendJson(res, 200, hub.store.refresh({
+          const result = hub.store.refresh({
             deviceId: body.deviceId,
             deviceToken: body.deviceToken,
-          }), requestOptions);
+          });
+          if (result && result.tunnelToken) result.tunnelWsUrl = `${hub.publicWsUrl}/v1/tunnel`;
+          sendJson(res, 200, result, requestOptions);
           return;
         }
         if (req.method === 'GET' && pathname === '/v1/mobile/session') {
@@ -1117,6 +1163,23 @@ function createRelayServer(options = {}) {
       }
       const protocol = protocols.includes('freebuff-mobile-v1') ? 'freebuff-mobile-v1' : null;
       hub.openMobileWebSocket(req, socket, head, session, protocol);
+      return;
+    }
+
+    if (url.pathname === '/v1/tunnel') {
+      // E2E tunnel rendezvous (prototype): pair raw sockets by session id,
+      // pipe bytes verbatim. No auth here — the tunnel's PAKE/key exchange
+      // inside the paired channel is what authenticates both peers.
+      const sessionId = url.searchParams.get('session');
+      if (!sessionId) {
+        rejectUpgrade(socket, 400, 'session query parameter is required');
+        return;
+      }
+      const connection = acceptUpgrade(req, socket, head, {
+        maxFrameBytes: MAX_BODY_BYTES,
+      });
+      if (!connection) return;
+      hub.joinTunnel(sessionId, connection);
       return;
     }
 

@@ -1624,9 +1624,11 @@
 .fb-session-menu-project {
   color: var(--faint);
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 .fb-session-menu-time {
   flex: none;
@@ -1682,6 +1684,155 @@
 .fb-model-sheet-close:active {
   background: var(--raised);
   color: var(--text);
+}
+
+/* Codex device-auth action and popup (mobile-ui.js). The CLI owns provider
+   credentials; browser surfaces only receive device URL, code, and status. */
+.fb-codex-connect {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 5px;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--fb-m-brand, var(--brand));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-codex-connect:hover,
+.fb-codex-connect:active {
+  background: var(--raised);
+}
+.fb-codex-connect:focus-visible,
+.fb-codex-actions button:focus-visible,
+.fb-codex-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.fb-codex-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(20px + env(safe-area-inset-top, 0px))
+    calc(16px + env(safe-area-inset-right, 0px))
+    calc(20px + env(safe-area-inset-bottom, 0px))
+    calc(16px + env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--shadow) 62%, transparent);
+}
+.fb-codex-dialog {
+  width: min(100%, 430px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-2);
+  box-shadow: 0 18px 44px color-mix(in srgb, var(--shadow) 55%, transparent);
+}
+.fb-codex-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fb-codex-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.25;
+}
+.fb-codex-close {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fb-codex-close:hover,
+.fb-codex-close:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-codex-copy,
+.fb-codex-status {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.fb-codex-copy {
+  margin: 12px 0 14px;
+}
+.fb-codex-device-link {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--fb-m-brand, var(--brand));
+  font-size: 13px;
+}
+.fb-codex-code-label {
+  margin-top: 18px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.fb-codex-code {
+  display: block;
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+.fb-codex-status {
+  min-height: 20px;
+  margin: 12px 0 16px;
+}
+.fb-codex-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fb-codex-actions button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fb-codex-actions button:hover,
+.fb-codex-actions button:active {
+  border-color: var(--fb-m-brand, var(--brand));
+}
+.fb-codex-retry {
+  margin-left: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-codex-overlay {
+    animation: none;
+  }
 }
 
 /* Thread-window (popout) back button — the browser port has no tabs or

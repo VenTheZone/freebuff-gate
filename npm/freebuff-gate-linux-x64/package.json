@@ -1,0 +1,21 @@
+{
+  "name": "freebuff-gate-linux-x64",
+  "version": "0.0.0",
+  "description": "Freebuff Gate companion setup binary for linux-x64 (SEA)",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "freebuff-setup",
+  "files": [
+    "freebuff-setup",
+    "freebuff-setup.exe"
+  ],
+  "keywords": [
+    "freebuff",
+    "setup",
+    "sea"
+  ]
+}

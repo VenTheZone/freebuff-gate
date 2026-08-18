@@ -297,7 +297,16 @@ class RelayAgent {
       this.logger('connected', { connectorId: this.connectorId });
     });
     socket.addEventListener('message', (event) => this.handleRelayMessage(event.data));
-    socket.addEventListener('error', () => this.logger('socket_error', { connectorId: this.connectorId }));
+    socket.addEventListener('error', () => {
+      // undici WebSocket fires 'error' without a following 'close' on network
+      // failures, so reconnect must be driven from here too; otherwise the
+      // agent silently exits 0 when the relay is unreachable.
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+      if (this.socket === socket) this.socket = null;
+      this.logger('socket_error', { connectorId: this.connectorId });
+      if (!this.manualStop) this.scheduleReconnect();
+    });
     socket.addEventListener('close', () => {
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;

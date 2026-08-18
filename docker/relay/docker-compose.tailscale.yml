@@ -1,0 +1,78 @@
+name: freebuff-relay
+
+# Freebuff mobile-connect relay with a Tailscale sidecar that terminates TLS
+# (tailscale serve) and proxies https://<host>.ts.net -> relay:8795.
+#
+# Required environment (copy .env.example to .env):
+#   TS_AUTHKEY                 Tailscale auth key (tagged node recommended)
+#   RELAY_HTTP_URL             https://<hostname>.ts.net
+#   RELAY_WS_URL               wss://<hostname>.ts.net
+#   RELAY_ENROLLMENT_TOKEN     installer bootstrap secret
+#   RELAY_ADMIN_TOKEN          device admin secret (required for non-loopback bind)
+#
+# Optional:
+#   TS_HOSTNAME, TS_HTTPS_HOSTNAME, RELAY_CONNECTOR_TOKEN, RELAY_ALLOWED_ORIGIN,
+#   RELAY_APP_URL, RELAY_UI_URL, FB_APNS_* (iOS push)
+
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: docker/relay/Dockerfile
+    restart: unless-stopped
+    environment:
+      FB_MOBILE_RELAY_HOST: "0.0.0.0"
+      FB_MOBILE_RELAY_PORT: "8795"
+      FB_MOBILE_RELAY_HTTP_URL: "${RELAY_HTTP_URL:?set RELAY_HTTP_URL (https://<host>.ts.net)}"
+      FB_MOBILE_RELAY_WS_URL: "${RELAY_WS_URL:?set RELAY_WS_URL (wss://<host>.ts.net)}"
+      FB_MOBILE_RELAY_ENROLLMENT_TOKEN: "${RELAY_ENROLLMENT_TOKEN:?set RELAY_ENROLLMENT_TOKEN}"
+      FB_MOBILE_RELAY_ADMIN_TOKEN: "${RELAY_ADMIN_TOKEN:?set RELAY_ADMIN_TOKEN (required for non-loopback bind)}"
+      FB_MOBILE_RELAY_CONNECTOR_TOKEN: "${RELAY_CONNECTOR_TOKEN:-}"
+      FB_MOBILE_RELAY_ALLOWED_ORIGIN: "${RELAY_ALLOWED_ORIGIN:-}"
+      FB_MOBILE_APP_URL: "${RELAY_APP_URL:-}"
+      FB_MOBILE_UI_URL: "${RELAY_UI_URL:-}"
+      FB_APNS_KEY: "${FB_APNS_KEY:-}"
+      FB_APNS_KEY_ID: "${FB_APNS_KEY_ID:-}"
+      FB_APNS_TEAM_ID: "${FB_APNS_TEAM_ID:-}"
+      FB_APNS_TOPIC: "${FB_APNS_TOPIC:-}"
+      FB_APNS_SANDBOX: "${FB_APNS_SANDBOX:-}"
+    volumes:
+      # Pairing/device registry + hashed connector-credential state. Survives
+      # container recreation; back these up.
+      - relay-state:/home/node/.config/freebuff
+      # Optional: APNs push keys (.p8). Mount and set FB_APNS_KEY to the
+      # container path (e.g. /keys/AuthKey.p8).
+      # - ./keys:/keys:ro
+    expose:
+      - "8795"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8795/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - tailnet
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: "${TS_AUTHKEY:?set TS_AUTHKEY}"
+      TS_HOSTNAME: "${TS_HOSTNAME:-freebuff-relay}"
+      TS_HTTPS_HOSTNAME: "${TS_HTTPS_HOSTNAME:-}"
+      TS_EXTRA_UP_FLAGS: "${TS_EXTRA_UP_FLAGS:---accept-dns=false}"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale-entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    # Userspace networking (see entrypoint) — no NET_ADMIN or TUN required.
+    networks:
+      - tailnet
+
+volumes:
+  relay-state:
+  tailscale-state:
+
+networks:
+  tailnet:

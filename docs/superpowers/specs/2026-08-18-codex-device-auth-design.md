@@ -9,7 +9,7 @@ Approved design. Implementation pending user review of this document.
 Let Desktop and paired mobile users connect an OpenAI Codex account through Codex's official device-auth flow:
 
 1. Desktop starts `codex login --device-auth`.
-2. UI shows `https://openai.com/codex/device` and one-time code.
+2. UI shows `https://auth.openai.com/codex/device/` and one-time code.
 3. User approves device from any browser.
 4. Codex CLI stores and refreshes credentials locally.
 5. Desktop and mobile refresh project/model data.
@@ -60,7 +60,7 @@ Success:
 ```json
 {
   "state": "waiting",
-  "deviceUrl": "https://openai.com/codex/device",
+  "deviceUrl": "https://auth.openai.com/codex/device/",
   "userCode": "ABCD-EFGH"
 }
 ```
@@ -120,7 +120,7 @@ The model picker remains authoritative. No parallel model registry is added.
 
 - Desktop user can start official device auth from model picker.
 - Mobile user can start the same flow through paired Desktop.
-- User can open `https://openai.com/codex/device`, enter displayed code, and see completion.
+- User can open `https://auth.openai.com/codex/device/`, enter displayed code, and see completion.
 - No provider token appears in browser responses, relay state, QR data, or logs.
 - Cancel, timeout, retry, missing CLI, and failed login behave predictably.
 - Successful login refreshes available project/model metadata.

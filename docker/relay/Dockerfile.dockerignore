@@ -1,0 +1,11 @@
+node_modules
+dist
+.tools
+.planning
+.freebuff
+docs
+ios
+android
+*.test.js
+*.log
+.env

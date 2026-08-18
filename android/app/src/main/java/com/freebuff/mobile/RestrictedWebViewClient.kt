@@ -32,8 +32,19 @@ class RestrictedWebViewClient(
     private fun isAllowed(rawUrl: String): Boolean {
         return runCatching {
             val uri = URI(rawUrl)
-            uri.scheme.equals("https", ignoreCase = true) && originOf(uri) == allowedOrigin
+            val schemeOk = uri.scheme.equals("https", ignoreCase = true) ||
+                // Tunnel mode (docs/e2e-tunnel.md): the WebView is pinned to the
+                // app's own loopback proxy origin. http is only permitted for
+                // loopback hosts AND the origin must still match exactly, so the
+                // pinning is unchanged — only the scheme relaxation for
+                // 127.0.0.1, which is app-controlled.
+                (uri.scheme.equals("http", ignoreCase = true) && isLoopbackHost(uri.host))
+            schemeOk && originOf(uri) == allowedOrigin
         }.getOrDefault(false)
+    }
+
+    private fun isLoopbackHost(host: String?): Boolean {
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
     }
 
     companion object {

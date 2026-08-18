@@ -55,7 +55,16 @@ data class PairingSession(
     val deviceExpiresAt: String,
     val relayUrl: String?,
     val uiUrl: String?,
+    // E2E tunnel rendezvous (Phase 1, docs/e2e-tunnel.md): when present, the
+    // WebView points at a loopback proxy that rides the encrypted tunnel to
+    // the desktop instead of loading the relay origin directly.
+    val tunnelWsUrl: String? = null,
+    val tunnelToken: String? = null,
+    val tunnelSessionId: String? = null,
 ) {
+    val tunnelEnabled: Boolean
+        get() = !tunnelWsUrl.isNullOrBlank() && !tunnelToken.isNullOrBlank() && !tunnelSessionId.isNullOrBlank()
+
     fun toJson(): JSONObject = JSONObject()
         .put("gatewayBaseUrl", gatewayBaseUrl)
         .put("deviceId", deviceId)
@@ -65,6 +74,9 @@ data class PairingSession(
         .put("deviceExpiresAt", deviceExpiresAt)
         .putNullable("relayUrl", relayUrl)
         .putNullable("uiUrl", uiUrl)
+        .putNullable("tunnelWsUrl", tunnelWsUrl)
+        .putNullable("tunnelToken", tunnelToken)
+        .putNullable("tunnelSessionId", tunnelSessionId)
 
     companion object {
         fun fromGatewayResponse(
@@ -82,6 +94,9 @@ data class PairingSession(
                 deviceExpiresAt = deviceExpiresAtOverride ?: json.requiredString("deviceExpiresAt"),
                 relayUrl = json.optionalString("relayUrl"),
                 uiUrl = json.optionalString("uiUrl"),
+                tunnelWsUrl = json.optionalString("tunnelWsUrl"),
+                tunnelToken = json.optionalString("tunnelToken"),
+                tunnelSessionId = json.optionalString("tunnelSessionId"),
             )
         }
 
@@ -95,6 +110,9 @@ data class PairingSession(
                 deviceExpiresAt = json.requiredString("deviceExpiresAt"),
                 relayUrl = json.optionalString("relayUrl"),
                 uiUrl = json.optionalString("uiUrl"),
+                tunnelWsUrl = json.optionalString("tunnelWsUrl"),
+                tunnelToken = json.optionalString("tunnelToken"),
+                tunnelSessionId = json.optionalString("tunnelSessionId"),
             )
         }
     }

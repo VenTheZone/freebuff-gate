@@ -29,8 +29,11 @@ const PROXY_FILES = Object.freeze([
   'mobile-ui.js',
   'perf-probe.js',
 ]);
+const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
 const LAUNCH_AGENT_LABEL = 'com.freebuff.mobile-connect';
 const WINDOWS_TASK_NAME = 'Freebuff Mobile Connect';
+const PROXY_LAUNCH_AGENT_LABEL = 'com.freebuff.tailnet-proxy';
+const PROXY_WINDOWS_TASK_NAME = 'Freebuff Tailnet Proxy';
 const RELEASE_VERSION_PATTERN = /^v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)*$/;
 
 function randomConnectorId() {
@@ -101,6 +104,20 @@ function defaultPaths({ platform = process.platform, env = process.env, home = o
       connectorCredentialFile: path.join(root, 'mobile-connect-connector.json'),
       binDir: path.join(root, 'bin'),
       autoStartFile: null,
+    };
+  }
+
+  if (platform === 'darwin') {
+    const dataRoot = path.join(home, 'Library', 'Application Support', 'Freebuff');
+    const configRoot = path.join(home, 'Library', 'Preferences', 'Freebuff');
+    return {
+      installDir: path.join(dataRoot, 'mobile-connect'),
+      proxyDir: path.join(dataRoot, 'tailnet-proxy'),
+      configFile: path.join(configRoot, 'mobile-connect-desktop.json'),
+      stateFile: path.join(configRoot, 'mobile-connect-agent.json'),
+      connectorCredentialFile: path.join(configRoot, 'mobile-connect-connector.json'),
+      binDir: path.join(dataRoot, 'bin'),
+      autoStartFile: path.join(home, 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`),
     };
   }
 
@@ -391,17 +408,19 @@ runCli(process.argv.slice(2)).then(
 `;
 }
 
-function unixLauncherSource(nodePath, wrapperPath) {
+function unixLauncherSource(nodePath, wrapperPath, runtimeArgs = []) {
+  const command = [nodePath, ...runtimeArgs, wrapperPath].map(shellQuote).join(' ');
   return `#!/bin/sh
 # ${MANAGED_MARKER}
-exec ${shellQuote(nodePath)} ${shellQuote(wrapperPath)} "$@"
+exec ${command} "$@"
 `;
 }
 
-function windowsLauncherSource(nodePath, wrapperPath) {
+function windowsLauncherSource(nodePath, wrapperPath, runtimeArgs = []) {
+  const command = [nodePath, ...runtimeArgs, wrapperPath].map((value) => `"${value}"`).join(' ');
   return `@echo off
 rem ${MANAGED_MARKER}
-"${nodePath}" "${wrapperPath}" %*
+${command} %*
 exit /b %errorlevel%
 `;
 }
@@ -451,7 +470,8 @@ function systemdEscape(value) {
   return `"${text.replace(/(["\\\\])/g, '\\\\$1')}"`;
 }
 
-function systemdUnitSource(nodePath, wrapperPath) {
+function systemdUnitSource(nodePath, wrapperPath, runtimeArgs = []) {
+  const command = [nodePath, ...runtimeArgs, wrapperPath, 'serve'].map(systemdEscape).join(' ');
   return `# ${MANAGED_MARKER}
 [Unit]
 Description=Freebuff Desktop mobile-connect companion
@@ -460,7 +480,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${systemdEscape(nodePath)} ${systemdEscape(wrapperPath)} serve
+ExecStart=${command}
 Restart=on-failure
 RestartSec=5
 
@@ -478,8 +498,8 @@ function xmlEscape(value) {
     .replace(/'/g, '&apos;');
 }
 
-function launchAgentPlistSource(nodePath, wrapperPath) {
-  const argumentsXml = [nodePath, wrapperPath, 'serve']
+function launchAgentPlistSource(nodePath, wrapperPath, runtimeArgs = []) {
+  const argumentsXml = [nodePath, ...runtimeArgs, wrapperPath, 'serve']
     .map((value) => `        <string>${xmlEscape(value)}</string>`)
     .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -502,11 +522,14 @@ ${argumentsXml}
 `;
 }
 
-function windowsTaskRun(nodePath, wrapperPath) {
-  for (const value of [nodePath, wrapperPath]) {
+function windowsTaskRun(nodePath, wrapperPath, runtimeArgs = []) {
+  for (const value of [nodePath, ...runtimeArgs, wrapperPath]) {
     if (/["\r\n]/.test(String(value))) throw new Error('Windows auto-start paths cannot contain quotes or newlines');
   }
-  return `"${nodePath}" "${wrapperPath}" serve`;
+  return [nodePath, ...runtimeArgs, wrapperPath]
+    .map((value) => `"${value}"`)
+    .concat('serve')
+    .join(' ');
 }
 
 function ensureManagedAutoStartFile(file, options) {
@@ -551,6 +574,7 @@ function applyAutoStart(options, wrapperPath, { previouslyEnabled = false } = {}
   const enabled = Boolean(options.autoStart);
   const exists = previouslyEnabled || Boolean(registration.file && fs.existsSync(registration.file));
   const nodePath = options.nodePath || process.execPath;
+  const runtimeArgs = options.agentRuntimeArgs || [];
 
   if (registration.type === 'unsupported') {
     if (enabled) {
@@ -562,7 +586,7 @@ function applyAutoStart(options, wrapperPath, { previouslyEnabled = false } = {}
   if (registration.type === 'systemd-user') {
     if (enabled) {
       ensureManagedAutoStartFile(registration.file, options);
-      writeAtomically(registration.file, systemdUnitSource(nodePath, wrapperPath), 0o644);
+      writeAtomically(registration.file, systemdUnitSource(nodePath, wrapperPath, runtimeArgs), 0o644);
       execute('systemctl', ['--user', 'daemon-reload']);
       execute('systemctl', ['--user', 'enable', registration.name]);
       execute('systemctl', ['--user', 'restart', registration.name]);
@@ -582,7 +606,7 @@ function applyAutoStart(options, wrapperPath, { previouslyEnabled = false } = {}
     const target = macGuiTarget(options);
     if (enabled) {
       ensureManagedAutoStartFile(registration.file, options);
-      writeAtomically(registration.file, launchAgentPlistSource(nodePath, wrapperPath), 0o644);
+      writeAtomically(registration.file, launchAgentPlistSource(nodePath, wrapperPath, runtimeArgs), 0o644);
       execute('launchctl', ['bootout', `${target}/${registration.name}`], { ignoreFailure: true });
       execute('launchctl', ['bootstrap', target, registration.file]);
       execute('launchctl', ['kickstart', '-k', `${target}/${registration.name}`]);
@@ -602,7 +626,7 @@ function applyAutoStart(options, wrapperPath, { previouslyEnabled = false } = {}
         '/Create',
         '/TN', registration.name,
         '/SC', 'ONLOGON',
-        '/TR', windowsTaskRun(nodePath, wrapperPath),
+        '/TR', windowsTaskRun(nodePath, wrapperPath, runtimeArgs),
         '/RL', 'LIMITED',
         '/F',
       ]);
@@ -718,7 +742,9 @@ function orchestratorDirOf(desktopDir) {
   return candidate;
 }
 
-function systemdProxyUnitSource(nodePath, proxyDir) {
+function systemdProxyUnitSource(nodePath, proxyDir, runtimeArgs = []) {
+  const proxyPath = path.join(proxyDir, 'freebuff_tailnet_proxy.js');
+  const command = [nodePath, ...runtimeArgs, proxyPath].map(systemdEscape).join(' ');
   return `# ${MANAGED_MARKER}
 [Unit]
 Description=Freebuff Desktop tailnet proxy (UI injection, bundle patch, shim)
@@ -727,7 +753,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${systemdEscape(nodePath)} ${systemdEscape(path.join(proxyDir, 'freebuff_tailnet_proxy.js'))}
+ExecStart=${command}
 Restart=on-failure
 RestartSec=5
 
@@ -738,15 +764,12 @@ WantedBy=default.target
 
 function proxyAutoStartPaths(options = {}) {
   const platform = options.platform || process.platform;
-  if (platform !== 'linux') {
-    return { platform, type: 'unsupported', name: null, file: null };
-  }
   const defaults = defaultPaths({
     platform,
     env: options.env || process.env,
     home: options.home || os.homedir(),
   });
-  return {
+  if (platform === 'linux') return {
     platform,
     type: 'systemd-user',
     name: PROXY_SERVICE_NAME,
@@ -758,6 +781,99 @@ function proxyAutoStartPaths(options = {}) {
     ),
     proxyDir: defaults.proxyDir,
   };
+  if (platform === 'darwin') return {
+    platform,
+    type: 'launch-agent',
+    name: PROXY_LAUNCH_AGENT_LABEL,
+    file: path.join(options.home || os.homedir(), 'Library', 'LaunchAgents', `${PROXY_LAUNCH_AGENT_LABEL}.plist`),
+    proxyDir: defaults.proxyDir,
+  };
+  if (platform === 'win32') return {
+    platform,
+    type: 'task-scheduler',
+    name: PROXY_WINDOWS_TASK_NAME,
+    file: null,
+    proxyDir: defaults.proxyDir,
+  };
+  return { platform, type: 'unsupported', name: null, file: null, proxyDir: defaults.proxyDir };
+}
+
+function proxyLaunchAgentPlistSource(nodePath, proxyPath, runtimeArgs = []) {
+  const argumentsXml = [nodePath, ...runtimeArgs, proxyPath]
+    .map((value) => `        <string>${xmlEscape(value)}</string>`)
+    .join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ${MANAGED_MARKER} -->
+    <key>Label</key>
+    <string>${xmlEscape(PROXY_LAUNCH_AGENT_LABEL)}</string>
+    <key>ProgramArguments</key>
+    <array>
+${argumentsXml}
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+`;
+}
+
+function proxyWindowsTaskRun(nodePath, proxyPath, runtimeArgs = []) {
+  for (const value of [nodePath, ...runtimeArgs, proxyPath]) {
+    if (/["\r\n]/.test(String(value))) throw new Error('Windows proxy paths cannot contain quotes or newlines');
+  }
+  return [nodePath, ...runtimeArgs, proxyPath]
+    .map((value) => `"${value}"`)
+    .join(' ');
+}
+
+function applyProxyAutoStart(options, proxyDir, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAND } = {}) {
+  const registration = proxyAutoStartPaths(options);
+  const execute = runPlatformCommand;
+  const nodePath = options.nodePath || process.execPath;
+  const runtimeArgs = options.proxyRuntimeArgs || [];
+  const proxyPath = path.join(proxyDir, 'freebuff_tailnet_proxy.js');
+  if (registration.type === 'unsupported') return { ...registration, enabled: false, changed: false };
+
+  if (registration.type === 'systemd-user') {
+    if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
+      throw new Error(`Refusing to overwrite unmanaged proxy auto-start registration: ${registration.file}`);
+    }
+    writeAtomically(registration.file, systemdProxyUnitSource(nodePath, proxyDir, runtimeArgs), 0o644);
+    execute('systemctl', ['--user', 'daemon-reload']);
+    execute('systemctl', ['--user', 'enable', registration.name]);
+    execute('systemctl', ['--user', 'restart', registration.name]);
+    return { ...registration, enabled: true, changed: true };
+  }
+
+  if (registration.type === 'launch-agent') {
+    const target = macGuiTarget(options);
+    if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
+      throw new Error(`Refusing to overwrite unmanaged proxy auto-start registration: ${registration.file}`);
+    }
+    writeAtomically(registration.file, proxyLaunchAgentPlistSource(nodePath, proxyPath, runtimeArgs), 0o644);
+    execute('launchctl', ['bootout', `${target}/${registration.name}`], { ignoreFailure: true });
+    execute('launchctl', ['bootstrap', target, registration.file]);
+    execute('launchctl', ['kickstart', '-k', `${target}/${registration.name}`]);
+    return { ...registration, enabled: true, changed: true };
+  }
+
+  if (registration.type === 'task-scheduler') {
+    execute('schtasks.exe', [
+      '/Create',
+      '/TN', registration.name,
+      '/SC', 'ONLOGON',
+      '/TR', proxyWindowsTaskRun(nodePath, proxyPath, runtimeArgs),
+      '/RL', 'LIMITED',
+      '/F',
+    ]);
+    return { ...registration, enabled: true, changed: true };
+  }
+  return { ...registration, enabled: false, changed: false };
 }
 
 function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAND, dryRun = false } = {}) {
@@ -782,12 +898,23 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
     if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
       throw new Error(`Refusing to overwrite unmanaged auto-start registration: ${registration.file}`);
     }
-    writeAtomically(registration.file, systemdProxyUnitSource(process.execPath, proxyDir), 0o644);
+    writeAtomically(
+      registration.file,
+      systemdProxyUnitSource(
+        options.nodePath || process.execPath,
+        proxyDir,
+        options.proxyRuntimeArgs || [],
+      ),
+      0o644,
+    );
     runPlatformCommand('systemctl', ['--user', 'daemon-reload']);
     runPlatformCommand('systemctl', ['--user', 'enable', registration.name]);
     runPlatformCommand('systemctl', ['--user', 'restart', registration.name]);
   }
-  return { copied: true, proxyDir, registration };
+  const autoStart = registration.type === 'systemd-user'
+    ? { ...registration, enabled: true, changed: true }
+    : applyProxyAutoStart({ ...options, proxyDir }, proxyDir, { runPlatformCommand });
+  return { copied: true, proxyDir, registration, autoStart };
 }
 
 function applyBundlePatch(bundleFile) {
@@ -1083,9 +1210,11 @@ async function install(options) {
     });
   }
 
+  const launcherNodePath = options.nodePath || process.execPath;
+  const launcherRuntimeArgs = options.agentRuntimeArgs || [];
   const launcherSource = platform === 'win32'
-    ? windowsLauncherSource(process.execPath, wrapperPath)
-    : unixLauncherSource(process.execPath, wrapperPath);
+    ? windowsLauncherSource(launcherNodePath, wrapperPath, launcherRuntimeArgs)
+    : unixLauncherSource(launcherNodePath, wrapperPath, launcherRuntimeArgs);
   writeAtomically(launcher, launcherSource, 0o755);
   writeAtomically(manifestFile, `${JSON.stringify({
     version: 1,
@@ -1137,15 +1266,13 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
 
   const orchDir = orchestratorDirOf(desktopDir);
   const uiDir = path.join(orchDir, 'ui');
-  const configDir = path.join(
-    (options.env || process.env).XDG_CONFIG_HOME || path.join(os.homedir(), '.config'),
-    'freebuff-desktop',
-  );
-  const uploadsDir = path.join(
-    (options.env || process.env).XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
-    'freebuff',
-    'uploads',
-  );
+  const platformPaths = defaultPaths({
+    platform: options.platform || process.platform,
+    env: options.env || process.env,
+    home: options.home || os.homedir(),
+  });
+  const configDir = path.dirname(platformPaths.configFile);
+  const uploadsDir = path.join(path.dirname(platformPaths.installDir), 'uploads');
   const perfProbePath = path.join(proxyDeploy.proxyDir, 'perf-probe.js');
 
   const assetsDir = path.join(uiDir, 'assets');
@@ -1170,10 +1297,10 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
 // ---------------------------------------------------------------------------
 // Verify: post-update regression check. Freebuff Desktop updates overwrite
 // ui/index.html, ui/assets/index-*.js, and orchestrator.js, silently wiping
-// every on-disk patch. verifyUiStack() scans for the patch markers and
-// reports each missing one by file; main() exits non-zero when anything is
-// missing, so an update that regressed the UI is caught loudly instead of
-// being discovered by a confused user.
+// every on-disk patch. verifyUiStack() scans patch markers and deployed UI
+// asset parity, reporting each problem by file; main() exits non-zero when
+// anything is missing or stale, so regressions are caught before users see
+// them.
 // ---------------------------------------------------------------------------
 
 function collectProblems(desktopDir, options = {}) {
@@ -1261,7 +1388,8 @@ function collectProblems(desktopDir, options = {}) {
     }
   }
 
-  // Proxy deployment (install state, not an on-disk UI patch: warn, not error).
+  // Missing proxy deployment files are warnings; stale injected UI is an
+  // error because the running proxy can otherwise serve a visibly regressed UI.
   const registration = proxyAutoStartPaths(options);
   const proxyDir = options.proxyDir || (registration.proxyDir || '');
   if (proxyDir && !fs.existsSync(proxyDir)) {
@@ -1270,6 +1398,20 @@ function collectProblems(desktopDir, options = {}) {
     const missingFiles = PROXY_FILES.filter((file) => !fs.existsSync(path.join(proxyDir, file)));
     if (missingFiles.length > 0) {
       problems.push({ level: 'warn', item: 'proxy-deploy', message: `proxy files missing in ${proxyDir}: ${missingFiles.join(', ')}` });
+    }
+    const sourceDir = options.sourceDir || __dirname;
+    const staleUiFiles = PROXY_UI_FILES.filter((file) => {
+      const source = path.join(sourceDir, file);
+      const deployed = path.join(proxyDir, file);
+      if (!fs.existsSync(source) || !fs.existsSync(deployed)) return false;
+      return !fs.readFileSync(source).equals(fs.readFileSync(deployed));
+    });
+    if (staleUiFiles.length > 0) {
+      problems.push({
+        level: 'error',
+        item: 'proxy-ui',
+        message: `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (re-run install)`,
+      });
     }
   }
   if (registration.type === 'systemd-user' && registration.file && !fs.existsSync(registration.file)) {
@@ -1458,14 +1600,17 @@ module.exports = {
   DEFAULT_UPSTREAM_URL,
   LAUNCH_AGENT_LABEL,
   MANAGED_MARKER,
+  PROXY_LAUNCH_AGENT_LABEL,
   PROXY_FILES,
   PROXY_SERVICE_NAME,
+  PROXY_WINDOWS_TASK_NAME,
   SYSTEMD_SERVICE_NAME,
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,
   applyIndexShim,
   applyOrchestratorPatches,
+  applyProxyAutoStart,
   autoStartPaths,
   deployProxy,
   defaultPaths,
@@ -1483,6 +1628,8 @@ module.exports = {
   parseArgs,
   perfHelperSource,
   proxyAutoStartPaths,
+  proxyLaunchAgentPlistSource,
+  proxyWindowsTaskRun,
   provisionConnector,
   systemdProxyUnitSource,
   systemdUnitSource,

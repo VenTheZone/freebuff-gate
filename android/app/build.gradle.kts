@@ -96,6 +96,9 @@ dependencies {
     // default webview APK stays lean.
     "geckoImplementation"("org.mozilla.geckoview:geckoview:138.0.20250517143237")
 
+    // JVM unit tests for the tunnel prototype (pure JVM stack, no device needed).
+    testImplementation("junit:junit:4.13.2")
+
     androidTestImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

@@ -1905,6 +1905,175 @@
     });
   }
 
+  // Codex device auth: keep provider credentials inside the official Codex CLI.
+  // This action is injected into every native model menu so Desktop and paired
+  // mobile surfaces share one setup path.
+  var codexConnectBound = false;
+  function codexConnect() {
+    if (codexConnectBound) return;
+    codexConnectBound = true;
+    waitForEl('body', function () {
+      var dialog = null;
+      var pollTimer = null;
+      var pending = false;
+      var deviceUrl = 'https://auth.openai.com/codex/device/';
+      function openExternal(url) {
+        if (window.FreebuffNative && window.FreebuffNative.openExternal) {
+          try {
+            window.FreebuffNative.openExternal(url);
+            return;
+          } catch (e) {}
+        }
+        window.open(url, '_blank', 'noopener');
+      }
+      function stopPolling() {
+        if (pollTimer) {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      }
+      function close() {
+        stopPolling();
+        if (pending) {
+          pending = false;
+          fetch('/api/fb/codex/device/cancel', { method: 'POST' }).catch(function () {});
+        }
+        if (dialog && dialog.parentNode) dialog.parentNode.removeChild(dialog);
+        dialog = null;
+        mobileOverlay.dismiss('codex-device-auth');
+      }
+      function statusMessage(value, error) {
+        if (error === 'codex_cli_missing') return 'Install Codex CLI on Desktop, then retry.';
+        if (error === 'codex_login_timeout') return 'Device code expired. Start again.';
+        return {
+          starting: 'Preparing device code…',
+          waiting: 'Open device page and enter code.',
+          connected: 'Codex connected. Refreshing models…',
+          failed: 'Codex setup failed. Try again.',
+          cancelled: 'Codex setup cancelled.',
+        }[value] || 'Waiting for approval…';
+      }
+      function showState(payload, status, retry) {
+        if (!dialog) return;
+        var statusEl = dialog.querySelector('.fb-codex-status');
+        var codeEl = dialog.querySelector('.fb-codex-code');
+        var retryEl = dialog.querySelector('.fb-codex-retry');
+        if (payload && payload.deviceUrl) {
+          deviceUrl = payload.deviceUrl;
+          var link = dialog.querySelector('.fb-codex-device-link');
+          link.href = deviceUrl;
+          link.textContent = deviceUrl;
+        }
+        if (payload && payload.userCode) codeEl.textContent = payload.userCode;
+        statusEl.textContent = status || statusMessage(payload && payload.state, payload && payload.error);
+        retryEl.hidden = !retry;
+        if (payload && payload.state === 'connected') {
+          pending = false;
+          stopPolling();
+          fetch('/api/projects', { headers: { Accept: 'application/json' } })
+            .catch(function () {})
+            .then(function () {
+              window.dispatchEvent(new Event('fb-codex-connected'));
+              window.setTimeout(close, 500);
+            });
+        }
+      }
+      function poll() {
+        fetch('/api/fb/codex/device/status', { headers: { Accept: 'application/json' } })
+          .then(function (response) {
+            if (!response.ok) throw new Error('status');
+            return response.json();
+          })
+          .then(function (payload) {
+            showState(payload);
+            if (payload.state === 'connected' || payload.state === 'failed' || payload.state === 'cancelled') {
+              pending = false;
+              stopPolling();
+              if (payload.state === 'failed') showState(payload, statusMessage(payload.state, payload.error), true);
+            }
+          })
+          .catch(function () {
+            showState({}, 'Unable to check Codex status. Retrying…');
+          });
+      }
+      function start() {
+        pending = true;
+        showState({ state: 'starting' });
+        fetch('/api/fb/codex/device/start', { method: 'POST' })
+          .then(function (response) {
+            return response.json().then(function (payload) {
+              if (!response.ok) throw new Error(payload.error || 'codex_login_failed');
+              return payload;
+            });
+          })
+          .then(function (payload) {
+            showState(payload);
+            pollTimer = window.setInterval(poll, 1000);
+            poll();
+          })
+          .catch(function (error) {
+            pending = false;
+            stopPolling();
+            showState({}, error.message === 'codex_cli_missing'
+              ? 'Install Codex CLI on Desktop, then retry.'
+              : 'Codex setup failed. Try again.', true);
+          });
+      }
+      function openDialog() {
+        if (dialog) return;
+        var menu = document.querySelector('.agent-menu');
+        if (menu) {
+          menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        }
+        dialog = document.createElement('div');
+        dialog.className = 'fb-codex-overlay';
+        dialog.innerHTML =
+          '<section class="fb-codex-dialog" role="dialog" aria-modal="true" aria-labelledby="fb-codex-title">' +
+          '<div class="fb-codex-head"><h2 id="fb-codex-title">Connect Codex</h2><button type="button" class="fb-codex-close" aria-label="Close">×</button></div>' +
+          '<p class="fb-codex-copy">Pair Desktop with your OpenAI account using official Codex device auth.</p>' +
+          '<a class="fb-codex-device-link" href="https://auth.openai.com/codex/device/" target="_blank" rel="noopener">https://auth.openai.com/codex/device/</a>' +
+          '<div class="fb-codex-code-label">Device code</div><code class="fb-codex-code">Preparing…</code>' +
+          '<p class="fb-codex-status" role="status" aria-live="polite">Starting…</p>' +
+          '<div class="fb-codex-actions"><button type="button" class="fb-codex-open">Open device page</button><button type="button" class="fb-codex-copy-code">Copy code</button><button type="button" class="fb-codex-retry" hidden>Retry</button></div>' +
+          '</section>';
+        dialog.querySelector('.fb-codex-close').addEventListener('click', close);
+        dialog.querySelector('.fb-codex-open').addEventListener('click', function () { openExternal(deviceUrl); });
+        dialog.querySelector('.fb-codex-copy-code').addEventListener('click', function () {
+          var value = dialog.querySelector('.fb-codex-code').textContent;
+          if (navigator.clipboard && value !== 'Preparing…') navigator.clipboard.writeText(value).catch(function () {});
+        });
+        dialog.querySelector('.fb-codex-retry').addEventListener('click', function () {
+          dialog.querySelector('.fb-codex-retry').hidden = true;
+          start();
+        });
+        dialog.addEventListener('click', function (event) { if (event.target === dialog) close(); });
+        document.body.appendChild(dialog);
+        mobileOverlay.open('codex-device-auth', close);
+        start();
+      }
+      function syncMenus() {
+        document.querySelectorAll('.agent-menu').forEach(function (menu) {
+          if (!menu.querySelector('.fb-codex-connect')) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'fb-codex-connect';
+            button.setAttribute('role', 'button');
+            button.textContent = 'Connect Codex';
+            button.addEventListener('mousedown', function (event) { event.stopPropagation(); });
+            button.addEventListener('click', function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              openDialog();
+            });
+            menu.appendChild(button);
+          }
+        });
+      }
+      new MutationObserver(syncMenus).observe(document.body, { childList: true, subtree: true });
+      syncMenus();
+    });
+  }
+
   // Tab-title menu: on mobile the header shows the active thread as a title,
   // and the tab's own actions (rename / pop out / close) are hidden. Tapping
   // the title opens a small menu that reuses those exact app actions: rename
@@ -4733,6 +4902,7 @@
     });
   }
   bindAdOverlay();
+  codexConnect();
 
   threadWindowBack();
   browserReloadCleanup();

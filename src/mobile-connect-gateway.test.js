@@ -206,6 +206,13 @@ test('HTTP gateway exposes pairing, refresh, list, and revoke flows', async () =
       }),
     });
     assert.equal(claim.response.status, 200);
+    // E2E tunnel rendezvous contract: the pairing minted a tunnel token the
+    // desktop connector received at create time; claim/refresh hand the SAME
+    // token to the phone plus the session id (deviceId).
+    assert.equal(typeof started.body.tunnelToken, 'string');
+    assert.ok(started.body.tunnelToken.length >= 16);
+    assert.equal(claim.body.tunnelToken, started.body.tunnelToken, 'claim reuses pairing tunnel token');
+    assert.equal(claim.body.tunnelSessionId, claim.body.deviceId);
 
     const refreshed = await jsonRequest(`${baseUrl}/v1/sessions/refresh`, {
       method: 'POST',
@@ -215,6 +222,8 @@ test('HTTP gateway exposes pairing, refresh, list, and revoke flows', async () =
       }),
     });
     assert.equal(refreshed.response.status, 200);
+    assert.equal(refreshed.body.tunnelToken, started.body.tunnelToken, 'refresh reuses pairing tunnel token');
+    assert.equal(refreshed.body.tunnelSessionId, claim.body.deviceId);
 
     const devices = await jsonRequest(`${baseUrl}/v1/devices`, { headers });
     assert.equal(devices.response.status, 200);

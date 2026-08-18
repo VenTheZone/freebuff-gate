@@ -1,0 +1,35 @@
+name: Documentation links
+
+on:
+  push:
+    paths:
+      - README.md
+      - docs/**
+      - docker/**/*.md
+      - src/check-doc-links.js
+      - .github/workflows/docs-links.yml
+  pull_request:
+    paths:
+      - README.md
+      - docs/**
+      - docker/**/*.md
+      - src/check-doc-links.js
+      - .github/workflows/docs-links.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check local Markdown links
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+      - name: Test documentation link checker
+        run: node --test src/check-doc-links.test.js
+      - name: Check documentation links
+        run: node src/check-doc-links.js

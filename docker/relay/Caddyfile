@@ -1,0 +1,9 @@
+# Caddy configuration for the default freebuff relay compose deployment.
+# Terminates TLS with Let's Encrypt (auto-HTTPS) and proxies
+# https://<RELAY_DOMAIN> -> relay:8795. RELAY_DOMAIN and ACME_EMAIL are
+# interpolated by Caddy from the compose service environment.
+
+{$RELAY_DOMAIN} {
+	encode gzip
+	reverse_proxy relay:8795
+}

@@ -83,6 +83,7 @@ async function startRelay() {
     server,
     baseUrl: `http://127.0.0.1:${address.port}`,
     wsUrl: `ws://127.0.0.1:${address.port}`,
+    publicWsUrl: 'ws://127.0.0.1',
   };
 }
 
@@ -171,6 +172,12 @@ async function pairAndConnect(relay) {
     }),
   });
   assert.equal(claim.response.status, 200);
+  // Tunnel rendezvous contract surfaced by the relay: claim returns the same
+  // tunnel token the connector got at pairing time, plus the blind WSS endpoint.
+  assert.equal(claim.body.tunnelToken, started.body.tunnelToken);
+  assert.equal(claim.body.tunnelSessionId, claim.body.deviceId);
+  // publicWsUrl is the configured rendezvous origin (test config: port 80).
+  assert.equal(claim.body.tunnelWsUrl, `${relay.publicWsUrl}/v1/tunnel`);
 
   return { desktop, desktopMessages, claim: claim.body };
 }
@@ -403,6 +410,7 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     ...relay,
     baseUrl: `http://127.0.0.1:${address.port}`,
     wsUrl: `ws://127.0.0.1:${address.port}`,
+    publicWsUrl: relay.hub.publicWsUrl,
   };
   try {
     const { desktop, desktopMessages, claim } = await pairAndConnect(relayWithUrls);

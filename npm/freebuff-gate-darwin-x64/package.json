@@ -1,0 +1,21 @@
+{
+  "name": "freebuff-gate-darwin-x64",
+  "version": "0.0.0",
+  "description": "Freebuff Gate companion setup binary for darwin-x64 (SEA)",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "freebuff-setup",
+  "files": [
+    "freebuff-setup",
+    "freebuff-setup.exe"
+  ],
+  "keywords": [
+    "freebuff",
+    "setup",
+    "sea"
+  ]
+}

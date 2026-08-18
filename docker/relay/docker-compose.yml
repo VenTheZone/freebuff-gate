@@ -1,0 +1,84 @@
+name: freebuff-relay
+
+# Freebuff mobile-connect relay with a Caddy sidecar that terminates TLS via
+# Let's Encrypt (auto-HTTPS) and proxies https://<domain> -> relay:8795.
+# No tailnet required — needs a public DNS name pointing at this host and
+# ports 80/443 reachable from the internet (ACME HTTP-01 challenge).
+#
+# Required environment (copy .env.example to .env):
+#   RELAY_DOMAIN               public domain pointing at this host
+#   RELAY_ENROLLMENT_TOKEN     installer bootstrap secret
+#   RELAY_ADMIN_TOKEN          device admin secret (required for non-loopback bind)
+#
+# Optional:
+#   RELAY_CONNECTOR_TOKEN, RELAY_ALLOWED_ORIGIN, RELAY_APP_URL, RELAY_UI_URL,
+#   FB_APNS_* (iOS push)
+#
+# Run: docker compose up -d --build
+
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: docker/relay/Dockerfile
+    restart: unless-stopped
+    environment:
+      FB_MOBILE_RELAY_HOST: "0.0.0.0"
+      FB_MOBILE_RELAY_PORT: "8795"
+      FB_MOBILE_RELAY_HTTP_URL: "https://${RELAY_DOMAIN:?set RELAY_DOMAIN (public domain pointing at this host)}"
+      FB_MOBILE_RELAY_WS_URL: "wss://${RELAY_DOMAIN:?set RELAY_DOMAIN (public domain pointing at this host)}"
+      FB_MOBILE_RELAY_ENROLLMENT_TOKEN: "${RELAY_ENROLLMENT_TOKEN:?set RELAY_ENROLLMENT_TOKEN}"
+      FB_MOBILE_RELAY_ADMIN_TOKEN: "${RELAY_ADMIN_TOKEN:?set RELAY_ADMIN_TOKEN (required for non-loopback bind)}"
+      FB_MOBILE_RELAY_CONNECTOR_TOKEN: "${RELAY_CONNECTOR_TOKEN:-}"
+      FB_MOBILE_RELAY_ALLOWED_ORIGIN: "${RELAY_ALLOWED_ORIGIN:-}"
+      FB_MOBILE_APP_URL: "${RELAY_APP_URL:-}"
+      FB_MOBILE_UI_URL: "${RELAY_UI_URL:-}"
+      FB_APNS_KEY: "${FB_APNS_KEY:-}"
+      FB_APNS_KEY_ID: "${FB_APNS_KEY_ID:-}"
+      FB_APNS_TEAM_ID: "${FB_APNS_TEAM_ID:-}"
+      FB_APNS_TOPIC: "${FB_APNS_TOPIC:-}"
+      FB_APNS_SANDBOX: "${FB_APNS_SANDBOX:-}"
+    volumes:
+      # Pairing/device registry + hashed connector-credential state. Survives
+      # container recreation; back these up.
+      - relay-state:/home/node/.config/freebuff
+      # Optional: APNs push keys (.p8). Mount and set FB_APNS_KEY to the
+      # container path (e.g. /keys/AuthKey.p8).
+      # - ./keys:/keys:ro
+    expose:
+      - "8795"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8795/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - relaynet
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"   # ACME HTTP-01 challenge + HTTP->HTTPS redirect
+      - "${CADDY_HTTPS_PORT:-443}:443" # HTTPS
+    environment:
+      RELAY_DOMAIN: "${RELAY_DOMAIN:?set RELAY_DOMAIN (public domain pointing at this host)}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certificates + Caddy config across restarts.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      relay:
+        condition: service_healthy
+    networks:
+      - relaynet
+
+volumes:
+  relay-state:
+  caddy-data:
+  caddy-config:
+
+networks:
+  relaynet:

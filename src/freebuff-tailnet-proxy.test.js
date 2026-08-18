@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 const test = require('node:test');
 
 process.env.FB_UI_PATCH_STATUS_FILE = path.join(os.tmpdir(), `fb-ui-patch-status-${process.pid}.json`);
@@ -14,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SHIM, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -50,6 +52,69 @@ function createUpstream(state) {
     res.end();
   });
 }
+
+test('Codex device-auth output exposes only official URL and user code', () => {
+  assert.deepEqual(
+    parseCodexDeviceAuthOutput('Open https://auth.openai.com/codex/device/ and enter code: abcd-1234'),
+    { deviceUrl: 'https://auth.openai.com/codex/device/', userCode: 'ABCD-1234' },
+  );
+  assert.equal(
+    parseCodexDeviceAuthOutput('Open https://openai.com/codex/device and enter code: abcd-1234').deviceUrl,
+    null,
+  );
+  assert.deepEqual(parseCodexDeviceAuthOutput('token=secret; no device details'), {
+    deviceUrl: null,
+    userCode: null,
+  });
+});
+
+test('folder picker keeps long directory names readable and discoverable', () => {
+  assert.match(SHIM, /overflow-wrap:anywhere/);
+  assert.match(SHIM, /word-break:break-word/);
+  assert.match(SHIM, /row\.title = fullName/);
+  assert.match(SHIM, /row\.setAttribute\('aria-label', \(e\.dir \? 'Open folder ' : 'File '\) \+ fullName\)/);
+  assert.match(SHIM, /b\.title = String\(seg\)/);
+});
+
+test('Codex device-auth endpoints track waiting and connected states', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.killed = false;
+  child.kill = () => { child.killed = true; };
+  const proxy = createProxyServer({
+    upstream: 'http://127.0.0.1:1',
+    codexSpawn: () => child,
+  });
+  const port = await listen(proxy);
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const start = await fetch(`${base}/api/fb/codex/device/start`, { method: 'POST' });
+    assert.equal(start.status, 200);
+    assert.equal((await start.json()).state, 'waiting');
+
+    child.stdout.write('Open https://auth.openai.com/codex/device/ and enter code: WXYZ-9876');
+    await new Promise((resolve) => setImmediate(resolve));
+    const waiting = await fetch(`${base}/api/fb/codex/device/status`);
+    assert.deepEqual(await waiting.json(), {
+      state: 'waiting',
+      deviceUrl: 'https://auth.openai.com/codex/device/',
+      userCode: 'WXYZ-9876',
+      error: null,
+    });
+
+    child.emit('close', 0);
+    const connected = await fetch(`${base}/api/fb/codex/device/status`);
+    assert.deepEqual(await connected.json(), {
+      state: 'connected',
+      deviceUrl: 'https://auth.openai.com/codex/device/',
+      userCode: 'WXYZ-9876',
+      error: null,
+    });
+  } finally {
+    await close(proxy);
+  }
+});
 
 test('proxy bundle route serves an ETag and honors If-None-Match', async () => {
   const state = { bundle: 'const APP_BOOT = () => { "index-BC09OLJz"; };' };

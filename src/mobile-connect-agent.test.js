@@ -203,3 +203,27 @@ test('desktop relay agent forwards HTTP streams and WebSocket frames', async () 
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test('agent retries when relay is unreachable instead of exiting', async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freebuff-agent-retry-'));
+  // Port 1 is never listening. undici fires 'error' on the WebSocket and, on
+  // connection-refused paths, no 'close' afterwards; the agent must still
+  // schedule a reconnect so the always-on service survives relay outages
+  // instead of exiting 0 (which on-failure supervisors treat as healthy).
+  const agent = new RelayAgent({
+    stateFile: path.join(stateDir, 'agent.json'),
+    connectorToken: 'unreachable-relay-token',
+    relayHttpUrl: 'http://127.0.0.1:1',
+    relayWsUrl: 'ws://127.0.0.1:1',
+    upstreamUrl: 'http://127.0.0.1:58061',
+  });
+  try {
+    agent.start();
+    await waitUntil(() => agent.retryAttempt >= 1 && !agent.manualStop);
+    assert.equal(agent.manualStop, false);
+    assert.ok(agent.retryTimer, 'reconnect timer should be pending');
+  } finally {
+    agent.stop();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});

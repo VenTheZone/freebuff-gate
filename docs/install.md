@@ -1,11 +1,65 @@
-# Freebuff Gate: Install Guide (agent prompt)
+# Freebuff Gate installation guide
 
-This file is an install guide written as a copy-paste prompt. Give the whole
-raw text below to an AI coding agent (e.g. Buffy / Codebuff) and it will set up
-the Freebuff Gate stack on a machine: the desktop orchestrator, the tailnet
-proxy with the mobile UI layer, the boot-time patches that stop empty-thread
-pollution, the server-side folder browser shim, and (optionally) the mobile
-relay + connector so the Freebuff Gate Android app can pair.
+This guide is formatted as a copy-paste prompt for an AI coding agent such as
+Buffy or Codebuff. The prompt sets up the Freebuff Gate stack on one machine:
+the desktop orchestrator, tailnet proxy, mobile UI patches, server-side folder
+browser, and optional mobile relay and connector.
+
+## Install with freebuff-setup
+
+`freebuff-setup` is a Node single-executable companion binary. Users do not
+need to install Node. The binary supports Linux x64/arm64, macOS x64/arm64,
+and Windows x64. It embeds setup assets, opens a loopback browser wizard, and
+creates per-user agent and proxy registrations. Freebuff Desktop must already
+be installed.
+
+### Download
+
+Download the artifact for your platform with its checksum and manifest
+sidecars. Names follow `freebuff-setup-<version>-<target>`. Targets are
+`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, and
+`windows-x64.exe`. For example, a release contains
+`freebuff-setup-v0.2.0-linux-x64`, `freebuff-setup-v0.2.0-SHA256SUMS`, and
+`freebuff-setup-v0.2.0-manifest.json`.
+Local builds go under `dist/freebuff-setup-<version>/`. GitHub prereleases use
+the same artifacts from the setup-binary workflow.
+
+### Verify checksums
+
+```bash
+sha256sum -c freebuff-setup-v0.2.0-SHA256SUMS   # ...: OK
+./freebuff-setup-v0.2.0-linux-x64 --version     # freebuff-setup v0.2.0
+```
+
+Prerelease binaries are unsigned: macOS Gatekeeper and Windows SmartScreen
+warn on first launch (right-click → Open on macOS). CI signs and notarizes
+macOS/Windows artifacts automatically when the signing secrets are configured.
+
+### First run
+
+```bash
+chmod +x freebuff-setup-v0.2.0-linux-x64
+./freebuff-setup-v0.2.0-linux-x64
+```
+
+On first run, the binary materializes its assets in the per-user cache
+(`~/.cache/freebuff/setup-assets/<version>` on Linux), starts a loopback-only
+wizard on `127.0.0.1` using a random port, and opens the default browser. The
+wizard inspects Desktop and the companion stack, shows **Ready** or lists the
+required actions, and applies them when you select **Apply setup**.
+**Advanced setup** selects the self-hosted/Tailscale path. **Exit** stops the
+wizard. Hosted-relay onboarding remains unavailable until the hosted control
+plane is live; the wizard reports that state.
+
+Running the binary again repeats inspection and applies only missing changes.
+Existing credentials and configuration remain in place. Use these terminal
+alternatives:
+
+```bash
+./freebuff-setup-v0.2.0-linux-x64 --no-browser   # existing terminal wizard
+./freebuff-setup-v0.2.0-linux-x64 --dry-run      # report + plan, change nothing
+./freebuff-setup-v0.2.0-linux-x64 --advanced     # prefer self-hosted path
+```
 
 ---
 
@@ -116,14 +170,19 @@ app).
 ### 3. Mobile relay + connector (optional, for the Freebuff Gate Android app)
 If the phone app is used:
 - The installer in step 2 already deploys the agent (mobile-connect-agent.js)
-  and its launcher/unit automatically; it does NOT deploy the relay. Run the
-  relay from ~/FB-Browser-UI/src/mobile-connect-relay.js on the server, with
-  the agent's upstream pointing at http://127.0.0.1:58061 (the proxy, so the
-  mobile UI layer is injected) and the relay exposed on a tailnet HTTPS URL.
-- Install a systemd USER unit like the existing
-  freebuff-mobile-relay.service on the reference machine (see
-  ~/.config/systemd/user/), with the agent unit already managed by the
-  installer (freebuff-mobile-connect.service).
+  and its launcher/unit automatically; it does NOT deploy the relay. For
+  Docker deployment, use `docker/relay/` — Caddy + Let's Encrypt is the
+  default and does not require Tailscale. The agent's upstream must point at
+  http://127.0.0.1:58061 (the proxy, so the mobile UI layer is injected).
+  Run `docker compose up -d --build` from `docker/relay/` and use its
+  public `https://<domain>` URL for the agent and phone.
+- A systemd USER relay remains valid for non-Docker deployments; install a
+  unit like the existing `freebuff-mobile-relay.service` on the reference
+  machine (see `~/.config/systemd/user/`), with the agent unit already managed
+  by the installer (`freebuff-mobile-connect.service`).
+- Tailscale remains an optional private-network deployment:
+  `docker compose -f docker-compose.tailscale.yml up -d --build`. Phones
+  using that variant must be connected to the same tailnet.
 - Set a strong connector token (relay --connector-token) and store it in a
   root-only file (chmod 600). Never commit it.
 - **APNs push (iOS turn notifications, optional).** The relay reads the
@@ -153,11 +212,13 @@ If the phone app is used:
   builds, `production` for TestFlight/App Store (see docs/mobile.md).
 
 ### 4. Exposure
-- The orchestrator already listens on the tailnet IP:58060 (verify with
-  `tailscale ip -4`). If not, bind it to 0.0.0.0 or use `tailscale serve`.
-- 58061 (proxy) is loopback-only; the relay (step 3) is the public face for
-  phones. Do NOT open raw ports to the internet; Tailscale (or the relay's
-  HTTPS) is the only exposure.
+- Caddy deployment: create a public DNS record for the relay host and allow
+  inbound ports 80/443. Caddy obtains and renews Let's Encrypt certificates;
+  the relay's 8795 port stays private to the Docker network.
+- Tailscale deployment: use the private `docker-compose.tailscale.yml` variant
+  or `tailscale serve`; phones and server must share a tailnet.
+- 58061 (proxy) is loopback-only; the relay is the public face for phones. Do
+  NOT open raw relay or proxy ports to the internet.
 
 ### 5. Final verification checklist
 - curl http://127.0.0.1:58060/api/projects → projects list, no "New thread"
@@ -210,7 +271,7 @@ If the phone app is used:
   enable-linger may be needed for user units to start at boot).
 ```
 
-## What this guide covers
+## Stack components
 
 | Layer | File | Port | Purpose |
 |-------|------|------|---------|
@@ -223,16 +284,15 @@ If the phone app is used:
 
 ## iOS companion app
 
-`ios/` is the native iOS port of the Android companion: QR pairing, Keychain
-device identity, AES-GCM session storage, reconnect with jittered backoff,
-and a WKWebView restricted to the relay origin. Build with XcodeGen + Xcode
-(see ios/README.md), or let .github/workflows/ios.yml build it on macOS CI.
-CI produces an unsigned simulator .app by default; a signed IPA requires an
-Apple Developer account (ad-hoc signing secrets), which the signed-ipa job
-uses when present. The app pairs against the same managed relay and consumes
-the same /v1/mobile/session cookie exchange as Android.
+`ios/` is the native iOS companion. It supports QR pairing, Keychain device
+identity, AES-GCM session storage, reconnect with jittered backoff, and a
+WKWebView restricted to the relay origin. Build it with XcodeGen and Xcode
+(see ios/README.md), or use `.github/workflows/ios.yml` on macOS CI.
+CI produces an unsigned simulator `.app` by default. A signed IPA requires an
+Apple Developer account and ad-hoc signing secrets. The app uses the same
+managed relay and `/v1/mobile/session` cookie exchange as Android.
 
-## Why these patches exist
+## Patch notes
 
 - **Boot-time thread pollution**: the packaged UI created 1 to 3 empty "New
   thread" rows on every page load. The bundle patch pins one dedicated home

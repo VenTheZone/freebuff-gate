@@ -12,6 +12,7 @@
  * Port defaults to 58061; override with FREEBUFF_PROXY_PORT.
  */
 const http = require('http');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -63,6 +64,117 @@ const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
 const UPLOADS_DIR = process.env.FB_UPLOADS_DIR
   || path.join(os.homedir(), '.local', 'share', 'freebuff', 'uploads');
 const FB_MAX_UPLOAD_BYTES = Number(process.env.FB_MAX_UPLOAD_BYTES || 256 * 1024 * 1024);
+const CODEX_DEVICE_URL = 'https://auth.openai.com/codex/device/';
+const CODEX_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+
+function parseCodexDeviceAuthOutput(output) {
+  const text = String(output || '').slice(-16 * 1024);
+  const hasDeviceUrl = /https:\/\/auth\.openai\.com\/codex\/device(?:[/?#][^\s"'<>]*)?/i.test(text);
+  const codeMatch = text.match(
+    /(?:device\s+)?(?:one[- ]time\s+)?code\s*[:=]?\s*([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)/i,
+  ) || text.match(/\b[A-Z0-9]{4,}-[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})?\b/);
+  return {
+    deviceUrl: hasDeviceUrl ? CODEX_DEVICE_URL : null,
+    userCode: codeMatch ? (codeMatch[1] || codeMatch[0]).toUpperCase() : null,
+  };
+}
+
+function createCodexDeviceAuthController(options = {}) {
+  const spawnCommand = options.spawnCommand || spawn;
+  const timeoutMs = options.timeoutMs || CODEX_LOGIN_TIMEOUT_MS;
+  let active = null;
+  let state = { state: 'idle', deviceUrl: null, userCode: null, error: null };
+
+  function snapshot() {
+    return { ...state };
+  }
+
+  function finish(session, nextState, error) {
+    if (session.done) return;
+    session.done = true;
+    clearTimeout(session.timer);
+    if (active === session) active = null;
+    state = {
+      state: nextState,
+      deviceUrl: state.deviceUrl,
+      userCode: state.userCode,
+      error: error || null,
+    };
+  }
+
+  function stop(session, nextState, error) {
+    if (!session || session.done) return;
+    try { session.child.kill('SIGTERM'); } catch (e) { /* process may already be gone */ }
+    finish(session, nextState, error);
+    const killTimer = setTimeout(() => {
+      try {
+        if (!session.child.killed) session.child.kill('SIGKILL');
+      } catch (e) { /* process may already be gone */ }
+    }, 1000);
+    killTimer.unref();
+  }
+
+  function start() {
+    if (active && !active.done) {
+      return { ok: false, error: 'codex_login_active', ...snapshot() };
+    }
+    let child;
+    try {
+      child = spawnCommand('codex', ['login', '--device-auth'], {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      state = { state: 'failed', deviceUrl: null, userCode: null, error: error && error.code === 'ENOENT' ? 'codex_cli_missing' : 'codex_login_failed' };
+      return { ok: false, ...snapshot() };
+    }
+    const session = { child, output: '', done: false, timer: null };
+    active = session;
+    state = { state: 'waiting', deviceUrl: CODEX_DEVICE_URL, userCode: null, error: null };
+    const consume = (chunk) => {
+      if (session.done) return;
+      session.output = (session.output + String(chunk || '')).slice(-16 * 1024);
+      const parsed = parseCodexDeviceAuthOutput(session.output);
+      if (parsed.deviceUrl) state.deviceUrl = parsed.deviceUrl;
+      if (parsed.userCode) state.userCode = parsed.userCode;
+    };
+    if (child.stdout) child.stdout.on('data', consume);
+    if (child.stderr) child.stderr.on('data', consume);
+    child.once('error', (error) => {
+      finish(session, 'failed', error && error.code === 'ENOENT' ? 'codex_cli_missing' : 'codex_login_failed');
+    });
+    child.once('close', (code) => {
+      if (session.done) return;
+      finish(session, code === 0 ? 'connected' : 'failed', code === 0 ? null : 'codex_login_failed');
+    });
+    session.timer = setTimeout(() => stop(session, 'failed', 'codex_login_timeout'), timeoutMs);
+    session.timer.unref();
+    return { ok: true, ...snapshot() };
+  }
+
+  function cancel() {
+    if (active && !active.done) stop(active, 'cancelled', 'codex_login_cancelled');
+    else state = { ...state, state: 'cancelled', error: 'codex_login_cancelled' };
+    return snapshot();
+  }
+
+  return {
+    start,
+    status: snapshot,
+    cancel,
+    close: () => { if (active && !active.done) stop(active, 'cancelled', 'codex_login_cancelled'); },
+  };
+}
+
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
 
 // ---- perf probe ----
 // In-page Navigation/Resource Timing probe (src/perf-probe.js). Dormant unless
@@ -157,6 +269,7 @@ const SHIM = `(function () {
         wrap.className = 'fb-pick-wrap';
         var style = document.createElement('style');
         style.textContent = '.fb-pick-wrap{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.55);font-family:system-ui,-apple-system,sans-serif}.fb-browse-box{width:min(100%,560px);max-height:82vh;display:flex;flex-direction:column;padding:18px;box-sizing:border-box;border:1px solid var(--border,#333);border-radius:14px;background:var(--bg,#111);color:var(--text,#eee);box-shadow:0 18px 44px rgba(0,0,0,.5)}.fb-browse-box h3{margin:0 0 10px;font-size:15px}.fb-browse-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border,#444);border-radius:9px;background:var(--surface-2,#1a1a1a);font-size:12.5px;overflow-x:auto;white-space:nowrap}.fb-crumb{background:none;border:none;color:var(--accent,#4ade80);cursor:pointer;font:inherit;font-size:12.5px;padding:2px 3px}.fb-crumb:hover{text-decoration:underline}.fb-crumb-sep{color:var(--muted,#777);user-select:none}.fb-browse-list{flex:1;overflow-y:auto;min-height:160px;max-height:46vh;border:1px solid var(--border,#333);border-radius:9px;background:var(--surface-2,#0d0d0d)}.fb-browse-item{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;box-sizing:border-box;border:none;background:none;color:var(--text,#eee);text-align:left;font:inherit;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)}.fb-browse-item:hover{background:rgba(78,222,128,.09)}.fb-browse-item .fb-ic{opacity:.85;flex:none}.fb-browse-item.file{color:var(--muted,#888);cursor:default}.fb-browse-item.file:hover{background:none}.fb-browse-msg{padding:14px;color:var(--muted,#999);font-size:13px}.fb-browse-recents{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.fb-browse-recents button{padding:6px 10px;border:1px solid var(--border,#444);border-radius:8px;background:var(--surface-2,#1a1a1a);color:var(--muted,#bbb);font:inherit;font-size:12px;cursor:pointer}.fb-browse-recents button:hover{color:var(--text,#eee);border-color:var(--accent,#4ade80)}.fb-pick-actions{display:flex;justify-content:space-between;gap:8px;margin-top:14px}.fb-pick-actions .fb-acts{display:flex;gap:8px}.fb-pick-actions button{min-width:80px;min-height:40px;padding:8px 14px;border:1px solid transparent;border-radius:9px;font:inherit;font-size:13px;font-weight:650;color:#fff;cursor:pointer}.fb-pick-ok{background:#2eaa62}.fb-pick-cancel{background:#555}.fb-pick-up{background:#444}@media(max-width:700px){.fb-browse-box h3{font-size:16px}.fb-pick-actions button{min-height:44px}}';
+        style.textContent += '.fb-browse-crumbs{align-items:flex-start;overflow:visible;white-space:normal;overflow-wrap:anywhere}.fb-crumb{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left}.fb-browse-item{align-items:flex-start}.fb-browse-item>span:last-child{min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:normal;line-height:1.35}.fb-browse-recents button{max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left}';
         wrap.appendChild(style);
         var box = document.createElement('div');
         box.className = 'fb-browse-box';
@@ -170,6 +283,7 @@ const SHIM = `(function () {
         list.setAttribute('aria-label', 'Server folders');
         var rec = document.createElement('div');
         rec.className = 'fb-browse-recents';
+        rec.hidden = true;
         var actions = document.createElement('div');
         actions.className = 'fb-pick-actions';
         var acts = document.createElement('div');
@@ -193,16 +307,7 @@ const SHIM = `(function () {
         box.appendChild(h);
         box.appendChild(crumbs);
         box.appendChild(list);
-        if (recents.length) {
-          recents.forEach(function (r) {
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.textContent = r;
-            b.addEventListener('click', function () { current = r; load(); });
-            rec.appendChild(b);
-          });
-          box.appendChild(rec);
-        }
+        box.appendChild(rec);
         acts.appendChild(up);
         acts.appendChild(home);
         actions.appendChild(acts);
@@ -227,7 +332,7 @@ const SHIM = `(function () {
         document.addEventListener('keydown', function (ev) {
           if (ev.key === 'Escape') { ev.preventDefault(); cancelPick(); }
         }, { once: true });
-        return { crumbs: crumbs, list: list };
+        return { crumbs: crumbs, list: list, recents: rec };
       }
       function renderCrumbs(parts, holder) {
         holder.innerHTML = '';
@@ -235,6 +340,7 @@ const SHIM = `(function () {
         root.type = 'button';
         root.className = 'fb-crumb';
         root.textContent = '/';
+        root.title = '/';
         root.setAttribute('aria-label', 'Go to root');
         root.addEventListener('click', function () { current = '/'; load(); });
         holder.appendChild(root);
@@ -249,9 +355,25 @@ const SHIM = `(function () {
           b.type = 'button';
           b.className = 'fb-crumb';
           b.textContent = seg;
+          b.title = String(seg);
+          b.setAttribute('aria-label', 'Go to ' + '/' + parts.slice(0, idx + 1).join('/'));
           b.addEventListener('click', function () { current = '/' + parts.slice(0, idx + 1).join('/'); load(); });
           holder.appendChild(b);
         });
+      }
+      function renderRecents(items, holder) {
+        holder.innerHTML = '';
+        items.slice(0, 6).forEach(function (r) {
+          var path = String(r);
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = path;
+          b.title = path;
+          b.setAttribute('aria-label', 'Open recent folder ' + path);
+          b.addEventListener('click', function () { current = path; load(); });
+          holder.appendChild(b);
+        });
+        holder.hidden = !items.length;
       }
       function load() {
         var ui = window.__fbBrowseUi;
@@ -277,11 +399,15 @@ const SHIM = `(function () {
               var row = document.createElement('button');
               row.type = 'button';
               row.className = 'fb-browse-item' + (e.dir ? '' : ' file');
+              var fullName = String(e.name || '');
+              row.title = fullName;
+              row.setAttribute('aria-label', (e.dir ? 'Open folder ' : 'File ') + fullName);
               var ic = document.createElement('span');
               ic.className = 'fb-ic';
               ic.textContent = e.dir ? '📁' : '📄';
               var name = document.createElement('span');
-              name.textContent = e.name;
+              name.textContent = fullName;
+              name.title = fullName;
               row.appendChild(ic);
               row.appendChild(name);
               if (e.dir) {
@@ -302,6 +428,7 @@ const SHIM = `(function () {
         .then(function (d) {
           var list = (d && (d.paths || d.recentProjects)) || [];
           recents = list.slice(0, 6);
+          renderRecents(recents, ui.recents);
           if (list.length && !current || current === '/') current = String(list[0]);
           load();
         })
@@ -760,6 +887,10 @@ function maybeProbeUiPatches(up, force) {
 function createProxyServer(options = {}) {
   const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
   const up = new URL(upstream);
+  const codexAuth = createCodexDeviceAuthController({
+    spawnCommand: options.codexSpawn || spawn,
+    timeoutMs: options.codexTimeoutMs,
+  });
   const server = http.createServer((req, res) => {
   const headers = { ...req.headers };
   headers.host = up.host;
@@ -769,6 +900,19 @@ function createProxyServer(options = {}) {
   headers['accept-encoding'] = 'identity';
   let pathname = req.url || '/';
   try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch (e) { /* keep raw */ }
+  if (req.method === 'POST' && pathname === '/api/fb/codex/device/start') {
+    const result = codexAuth.start();
+    sendJson(res, result.ok ? 200 : result.error === 'codex_login_active' ? 409 : 500, result);
+    return;
+  }
+  if (req.method === 'GET' && pathname === '/api/fb/codex/device/status') {
+    sendJson(res, 200, codexAuth.status());
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/fb/codex/device/cancel') {
+    sendJson(res, 200, codexAuth.cancel());
+    return;
+  }
   if (req.method === 'GET' && pathname === '/api/fb/ui-patch-status') {
     // Surface the last auto-verify result to any client (browser, agent,
     // installer) without rerunning the probe.
@@ -1069,6 +1213,7 @@ server.on('upgrade', (req, socket, head) => {
   const savedClose = server.close.bind(server);
   server.close = (cb) => {
     clearInterval(ownProbeTimer);
+    codexAuth.close();
     return savedClose(cb);
   };
 
@@ -1109,6 +1254,9 @@ module.exports = {
   UI_PATCH_STATUS_FILE,
   UPLOADS_DIR,
   FB_MAX_UPLOAD_BYTES,
+  CODEX_DEVICE_URL,
+  parseCodexDeviceAuthOutput,
+  createCodexDeviceAuthController,
   checkUiPatches,
   createProxyServer,
   patchBundle,

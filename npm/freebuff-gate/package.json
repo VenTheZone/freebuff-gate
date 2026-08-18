@@ -1,0 +1,26 @@
+{
+  "name": "freebuff-gate",
+  "version": "0.0.0",
+  "description": "Freebuff Gate companion setup binary (SEA) — platform package resolver",
+  "bin": {
+    "freebuff-setup": "bin/freebuff-setup.js"
+  },
+  "optionalDependencies": {
+    "freebuff-gate-linux-x64": "0.0.0",
+    "freebuff-gate-linux-arm64": "0.0.0",
+    "freebuff-gate-darwin-x64": "0.0.0",
+    "freebuff-gate-darwin-arm64": "0.0.0",
+    "freebuff-gate-windows-x64": "0.0.0"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "freebuff",
+    "setup",
+    "sea"
+  ]
+}

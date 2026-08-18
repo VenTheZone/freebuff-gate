@@ -1,0 +1,389 @@
+name: Freebuff setup binary
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example v0.2.0)
+        required: true
+        default: v0.2.0
+        type: string
+      publish_prerelease:
+        description: Publish built artifacts as a GitHub prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# ── Optional release signing ──────────────────────────────────────────────
+# When the platform signing secrets below are configured, macOS artifacts are
+# Developer-ID codesigned, notarized, and stapled, and Windows artifacts are
+# Authenticode signed (SHA-256, RFC 3161 timestamp). When the secrets are
+# absent, every signing step is skipped and the pipeline falls back to
+# unsigned artifacts — prerelease builds keep working without credentials.
+#
+# Required secrets (base64-encoded certificates):
+#   macOS:  MACOS_CERT_P12, MACOS_CERT_P12_PASSWORD, MACOS_CERT_ID
+#           (Developer ID Application identity name or SHA-1)
+#           MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_PASSWORD, MACOS_NOTARY_TEAM_ID
+#   Windows: WINDOWS_CERT_PFX, WINDOWS_CERT_PFX_PASSWORD
+#           (Authenticode code-signing certificate with private key)
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          TAG_VERSION: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            candidate="$INPUT_VERSION"
+          else
+            candidate="$TAG_VERSION"
+          fi
+          if [[ "$candidate" =~ ^v ]]; then version="$candidate"; else version="v$candidate"; fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)*$ ]]; then
+            echo "invalid release version: $candidate" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - run: npm ci
+      - run: node --test src/freebuff-gate-setup.test.js src/freebuff-setup*.test.js src/package-freebuff-setup.test.js src/install-mobile-connect.test.js
+
+  build:
+    needs: [version, tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-13
+          - target: darwin-arm64
+            runner: macos-14
+          - target: windows-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+      MACOS_CERT_ID: ${{ secrets.MACOS_CERT_ID }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+      MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+      WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+      WINDOWS_CERT_PFX_PASSWORD: ${{ secrets.WINDOWS_CERT_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - run: npm ci
+      - name: Build setup binary
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node src/package-freebuff-setup.js \
+            --version "$RELEASE_VERSION" \
+            --target "${{ matrix.target }}" \
+            --output dist
+      - name: Smoke test setup binary
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          binary="dist/freebuff-setup-${RELEASE_VERSION}-${{ matrix.target }}"
+          if [ "${{ matrix.target }}" = "windows-x64" ]; then binary="$binary.exe"; fi
+          "$binary" --version
+          # Clean runners do not have Freebuff Desktop installed, so the
+          # diagnostic is expected to report missing Desktop with exit 1.
+          set +e
+          "$binary" --dry-run
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+      - name: Smoke test agent reconnect (unreachable relay)
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          binary="dist/freebuff-setup-${RELEASE_VERSION}-${{ matrix.target }}"
+          if [ "${{ matrix.target }}" = "windows-x64" ]; then binary="$binary.exe"; fi
+          assets="$(pwd)/smoke-assets"
+          # Materialize the embedded assets, then drop a wrapper that mirrors
+          # the installed companion launcher (install-mobile-connect.js
+          # wrapperSource) into the versioned cache directory.
+          FREEBUFF_SETUP_ASSET_DIR="$assets" "$binary" --version > /dev/null
+          version_dir="$assets/$RELEASE_VERSION"
+          cat > "$version_dir/wrapper.js" <<'EOF'
+          #!/usr/bin/env node
+          'use strict';
+          const path = require('node:path');
+          const { runCli } = require(path.join(__dirname, 'mobile-connect-agent.js'));
+          runCli(process.argv.slice(2)).then(
+            (code) => { process.exitCode = code; },
+            (error) => { console.error('Error: ' + error.message); process.exitCode = 1; },
+          );
+          EOF
+          # Port 1 is never listening. undici fires 'error' without a 'close'
+          # on refused connections, so the agent must keep retrying instead of
+          # exiting 0 (which on-failure supervisors treat as healthy).
+          FREEBUFF_SETUP_ASSET_DIR="$assets" \
+            FB_MOBILE_RELAY_WS_URL=ws://127.0.0.1:1 \
+            FB_MOBILE_RELAY_HTTP_URL=http://127.0.0.1:1 \
+            FB_MOBILE_RELAY_CONNECTOR_TOKEN=ci-smoke-token \
+            "$binary" --run-agent "$version_dir/wrapper.js" serve > agent-smoke.log 2>&1 &
+          agent_pid=$!
+          sleep 4
+          if ! kill -0 "$agent_pid" 2> /dev/null; then
+            echo "agent exited while the relay is unreachable:" >&2
+            cat agent-smoke.log >&2 || true
+            exit 1
+          fi
+          echo "agent alive and retrying against unreachable relay"
+          kill -TERM "$agent_pid"
+          wait "$agent_pid" || true
+      # macOS/Windows signing is intentionally gated on the certificate
+      # secrets: without them the artifact is uploaded unsigned (prerelease
+      # path). Signing runs after the smoke test and before upload so the
+      # metadata job hashes the final, signed bytes.
+      - name: Import macOS Developer ID certificate
+        if: ${{ runner.os == 'macOS' && env.MACOS_CERT_P12 != '' && env.MACOS_CERT_P12_PASSWORD != '' && env.MACOS_CERT_ID != '' }}
+        shell: bash
+        run: |
+          KEYCHAIN=~/Library/Keychains/freebuff-build.keychain-db
+          security create-keychain -p build "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p build "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/freebuff-signing.p12"
+          security import "$RUNNER_TEMP/freebuff-signing.p12" -P "$MACOS_CERT_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k build "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+      - name: Codesign setup binary (macOS)
+        if: ${{ runner.os == 'macOS' && env.MACOS_CERT_P12 != '' && env.MACOS_CERT_P12_PASSWORD != '' && env.MACOS_CERT_ID != '' }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          binary="dist/freebuff-setup-${RELEASE_VERSION}-${{ matrix.target }}"
+          /usr/bin/codesign --force --options runtime --timestamp --sign "$MACOS_CERT_ID" "$binary"
+          /usr/bin/codesign --verify --strict --verbose=2 "$binary"
+      - name: Notarize and staple setup binary (macOS)
+        if: ${{ runner.os == 'macOS' && env.MACOS_NOTARY_APPLE_ID != '' && env.MACOS_NOTARY_PASSWORD != '' && env.MACOS_NOTARY_TEAM_ID != '' }}
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          binary="dist/freebuff-setup-${RELEASE_VERSION}-${{ matrix.target }}"
+          xcrun notarytool submit "$binary" \
+            --apple-id "$MACOS_NOTARY_APPLE_ID" \
+            --password "$MACOS_NOTARY_PASSWORD" \
+            --team-id "$MACOS_NOTARY_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$binary"
+          xcrun stapler validate "$binary"
+      - name: Sign setup binary (Windows Authenticode)
+        if: ${{ runner.os == 'Windows' && env.WINDOWS_CERT_PFX != '' && env.WINDOWS_CERT_PFX_PASSWORD != '' }}
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $binary = "dist/freebuff-setup-$env:RELEASE_VERSION-windows-x64.exe"
+          $pfx = Join-Path $env:RUNNER_TEMP "freebuff-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:WINDOWS_CERT_PFX_PASSWORD -AsPlainText -Force)
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found under Windows Kits" }
+          & $signtool.FullName sign /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 /sha1 $cert.Thumbprint $binary
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE" }
+          & $signtool.FullName verify /pa /v $binary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-setup-${{ matrix.target }}
+          path: dist/freebuff-setup-*
+          if-no-files-found: error
+
+  metadata:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: freebuff-setup-*
+          path: dist
+          merge-multiple: true
+      - name: Write release manifest and checksums
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: node src/package-freebuff-setup.js --metadata --version "$RELEASE_VERSION" --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-setup-release-${{ needs.version.outputs.version }}
+          path: dist
+          if-no-files-found: error
+
+  publish-prerelease:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true }}
+    needs: [version, metadata]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: freebuff-setup-release-${{ needs.version.outputs.version }}
+          path: dist
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: gh release create "$RELEASE_VERSION" dist/* --repo "$GITHUB_REPOSITORY" --prerelease --generate-notes
+
+  publish-npm-prerelease:
+    # The checkbox enables npm publishing, but NPM_TOKEN is still required.
+    # Missing credentials fail clearly before any package publish starts.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_prerelease == true }}
+    needs: [version, metadata]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: freebuff-setup-release-${{ needs.version.outputs.version }}
+          path: dist
+      - name: Require NPM_TOKEN
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required when publish_prerelease is enabled" >&2
+            exit 1
+          fi
+      - name: Verify release checksums and package inputs
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            sha256sum -c "freebuff-setup-${RELEASE_VERSION}-SHA256SUMS"
+          )
+          node src/package-freebuff-npm.js \
+            --version "$RELEASE_VERSION" \
+            --artifacts-dir dist \
+            --pack-destination "$RUNNER_TEMP/freebuff-gate-npm-check"
+      - name: Publish npm prerelease packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node src/package-freebuff-npm.js \
+            --version "$RELEASE_VERSION" \
+            --artifacts-dir dist \
+            --publish \
+            --npm-tag next \
+            --pack-destination "$RUNNER_TEMP/freebuff-gate-npm-published"
+
+  smoke-npm-platforms:
+    if: ${{ needs.publish-npm-prerelease.result == 'success' }}
+    needs: [version, publish-npm-prerelease]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+            launcher: ./node_modules/.bin/freebuff-setup
+          - runner: macos-14
+            platform: darwin-arm64
+            launcher: ./node_modules/.bin/freebuff-setup
+          - runner: windows-2022
+            platform: windows-x64
+            launcher: ./node_modules/.bin/freebuff-setup.cmd
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+          registry-url: https://registry.npmjs.org
+      - name: Install and smoke test published package (${{ matrix.platform }})
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          LAUNCHER: ${{ matrix.launcher }}
+        run: |
+          set -euo pipefail
+          smoke_dir="$RUNNER_TEMP/freebuff-gate-npm-smoke-${{ matrix.platform }}"
+          rm -rf "$smoke_dir"
+          mkdir -p "$smoke_dir"
+          cd "$smoke_dir"
+          npm init --yes >/dev/null
+
+          installed=0
+          for attempt in 1 2 3 4 5 6; do
+            if npm install --no-save --ignore-scripts --include=optional freebuff-gate@next; then
+              installed=1
+              break
+            fi
+            echo "npm registry propagation pending; retry $attempt/6" >&2
+            sleep 10
+          done
+          if [ "$installed" -ne 1 ]; then
+            echo "published freebuff-gate package was not installable on ${{ matrix.platform }}" >&2
+            exit 1
+          fi
+
+          expected="freebuff-setup $RELEASE_VERSION"
+          actual="$("$LAUNCHER" --version)"
+          [ "$actual" = "$expected" ] || {
+            echo "launcher version mismatch on ${{ matrix.platform }}: expected $expected, got $actual" >&2
+            exit 1
+          }
+
+          set +e
+          "$LAUNCHER" --dry-run > dry-run.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            cat dry-run.log >&2
+            echo "published launcher dry-run failed on ${{ matrix.platform }} with status $status" >&2
+            exit "$status"
+          fi
+          echo "${{ matrix.platform }} npm launcher smoke passed; dry-run status=$status"

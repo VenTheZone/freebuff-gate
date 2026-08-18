@@ -22,7 +22,9 @@ const {
   LAUNCH_AGENT_LABEL,
   MANAGED_MARKER,
   PROXY_FILES,
+  PROXY_LAUNCH_AGENT_LABEL,
   PROXY_SERVICE_NAME,
+  PROXY_WINDOWS_TASK_NAME,
   SYSTEMD_SERVICE_NAME,
   WINDOWS_TASK_NAME,
   applyAutoStart,
@@ -36,6 +38,9 @@ const {
   installUiStack,
   launchAgentPlistSource,
   parseArgs,
+  proxyAutoStartPaths,
+  proxyLaunchAgentPlistSource,
+  proxyWindowsTaskRun,
   systemdUnitSource,
   uninstall,
   verifyUiStack,
@@ -167,8 +172,11 @@ test('dry-run creates no files and uninstall preserves config unless purged', as
 
 test('default paths keep Windows and Unix data separated', () => {
   const unix = defaultPaths({ platform: 'linux', home: '/home/tester', env: {} });
+  const mac = defaultPaths({ platform: 'darwin', home: '/Users/tester', env: {} });
   const windows = defaultPaths({ platform: 'win32', home: 'C:\\Users\\tester', env: { LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local' } });
   assert.match(unix.installDir, /\.local[\\/]share[\\/]freebuff[\\/]mobile-connect$/);
+  assert.equal(mac.installDir, path.join('/Users/tester', 'Library', 'Application Support', 'Freebuff', 'mobile-connect'));
+  assert.equal(mac.configFile, path.join('/Users/tester', 'Library', 'Preferences', 'Freebuff', 'mobile-connect-desktop.json'));
   assert.match(windows.installDir, /Freebuff[\\/]mobile-connect$/);
   assert.notEqual(unix.configFile, windows.configFile);
 });
@@ -186,6 +194,12 @@ test('auto-start definitions target per-user Linux, macOS, and Windows registrat
     const unit = systemdUnitSource('/usr/bin/node', path.join(root, 'with space', 'wrapper.js'));
     assert.match(unit, /Restart=on-failure/);
     assert.match(unit, /ExecStart=.*with space.*wrapper\.js" serve/);
+    const seaUnit = systemdUnitSource(
+      '/opt/Freebuff/freebuff-setup',
+      path.join(root, 'with space', 'wrapper.js'),
+      ['--run-agent'],
+    );
+    assert.match(seaUnit, /ExecStart=.*freebuff-setup.*--run-agent.*with space.*wrapper\.js" serve/);
 
     const mac = autoStartPaths({ platform: 'darwin', home: root, env: {} });
     assert.equal(mac.type, 'launch-agent');
@@ -220,6 +234,47 @@ test('auto-start refuses unmanaged file collisions', () => {
         runPlatformCommand: () => {},
       }, path.join(root, 'wrapper.js')),
       /unmanaged auto-start registration/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('proxy auto-start definitions cover Linux, macOS, and Windows', () => {
+  const root = tempRoot();
+  try {
+    const linux = proxyAutoStartPaths({ platform: 'linux', home: root, env: {} });
+    assert.equal(linux.type, 'systemd-user');
+    assert.equal(linux.name, PROXY_SERVICE_NAME);
+
+    const mac = proxyAutoStartPaths({ platform: 'darwin', home: root, env: {} });
+    assert.equal(mac.type, 'launch-agent');
+    assert.equal(mac.name, PROXY_LAUNCH_AGENT_LABEL);
+    assert.equal(mac.file, path.join(root, 'Library', 'LaunchAgents', `${PROXY_LAUNCH_AGENT_LABEL}.plist`));
+    const plist = proxyLaunchAgentPlistSource('/usr/local/bin/node', '/Users/tester/proxy.js');
+    assert.match(plist, new RegExp(PROXY_LAUNCH_AGENT_LABEL));
+    assert.match(plist, /proxy\.js/);
+    const seaPlist = proxyLaunchAgentPlistSource(
+      '/Applications/Freebuff/freebuff-setup',
+      '/Users/tester/proxy.js',
+      ['--run-proxy'],
+    );
+    assert.match(seaPlist, /freebuff-setup[\s\S]*--run-proxy[\s\S]*proxy\.js/);
+
+    const windows = proxyAutoStartPaths({ platform: 'win32', home: 'C:\\Users\\tester', env: {} });
+    assert.equal(windows.type, 'task-scheduler');
+    assert.equal(windows.name, PROXY_WINDOWS_TASK_NAME);
+    assert.equal(
+      proxyWindowsTaskRun('C:\\Program Files\\nodejs\\node.exe', 'C:\\Users\\tester\\proxy.js'),
+      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\tester\\proxy.js"',
+    );
+    assert.equal(
+      proxyWindowsTaskRun(
+        'C:\\Program Files\\Freebuff\\freebuff-setup.exe',
+        'C:\\Users\\tester\\proxy.js',
+        ['--run-proxy'],
+      ),
+      '"C:\\Program Files\\Freebuff\\freebuff-setup.exe" "--run-proxy" "C:\\Users\\tester\\proxy.js"',
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -289,6 +344,43 @@ test('installUiStack resolves the default command runner when deps are omitted',
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ui stack registers proxy auto-start on macOS and Windows', () => {
+  for (const platform of ['darwin', 'win32']) {
+    const root = tempRoot();
+    try {
+      const fake = fakeDesktop(root);
+      const env = platform === 'win32'
+        ? { LOCALAPPDATA: path.join(root, 'AppData', 'Local'), PATH: '' }
+        : { PATH: '' };
+      const options = parseArgs([
+        '--source-dir', path.resolve(__dirname),
+        '--install-dir', path.join(root, 'agent'),
+        '--config-file', path.join(root, 'config', 'desktop.json'),
+        '--bin-dir', path.join(root, 'bin'),
+        '--desktop-dir', fake.root,
+        '--relay-http-url', 'https://relay.example.test',
+      ], { platform, home: root, env });
+      options.nodePath = platform === 'win32'
+        ? 'C:\\Program Files\\Freebuff\\freebuff-setup.exe'
+        : '/Applications/Freebuff/freebuff-setup';
+      options.proxyRuntimeArgs = ['--run-proxy'];
+      const recording = recordingCommands();
+      installUiStack(options, {}, recording);
+      const names = recording.calls.map((call) => call.command);
+      assert.ok(platform === 'darwin' ? names.includes('launchctl') : names.includes('schtasks.exe'));
+      if (platform === 'darwin') {
+        const registration = proxyAutoStartPaths(options);
+        assert.match(fs.readFileSync(registration.file, 'utf8'), /--run-proxy/);
+      } else {
+        const task = recording.calls.find((call) => call.command === 'schtasks.exe' && call.args.includes('/TR'));
+        assert.match(task.args[task.args.indexOf('/TR') + 1], /--run-proxy/);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -409,15 +501,25 @@ test('verify: reports healthy stack, then fails loudly on each wiped patch', asy
     const fake = fakeDesktop(root);
     const options = uiOptions(root, fake.root);
     const { runPlatformCommand } = recordingCommands();
-    installUiStack(options, {}, { runPlatformCommand });
+    const installed = installUiStack(options, {}, { runPlatformCommand });
 
     const healthy = verifyUiStack(options);
     assert.equal(healthy.ok, true, JSON.stringify(healthy.errors));
     assert.deepEqual(healthy.errors, []);
 
+    // A proxy can keep serving stale injected assets even when all Desktop
+    // bundle patch markers remain present. Setup must flag that drift so the
+    // next upgrade copies current picker assets and restarts the proxy.
+    fs.appendFileSync(path.join(installed.proxy, 'mobile-ui.js'), '\n// stale deployed asset\n');
+    fs.appendFileSync(path.join(installed.proxy, 'mobile-ui.css'), '\n/* stale deployed asset */\n');
+    let report = verifyUiStack(options);
+    assert.equal(report.ok, false);
+    assert.equal(report.errors.some((e) => e.item === 'proxy-ui'), true);
+    assert.match(report.errors.find((e) => e.item === 'proxy-ui').message, /mobile-ui\.css, mobile-ui\.js/);
+
     // App update wipes the bundle: patch markers gone -> verify fails.
     fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), 'const stock = 1;');
-    let report = verifyUiStack(options);
+    report = verifyUiStack(options);
     assert.equal(report.ok, false);
     assert.equal(report.errors.some((e) => e.item.startsWith('bundle:')), true);
     assert.match(report.errors[0].message, /CREATE_REUSE/);
@@ -552,6 +654,27 @@ test('auto-start defaults and lifecycle is opt-in and command-injectable', () =>
       runPlatformCommand: (command, args) => windowsCalls.push({ command, args }),
     }, 'C:\\Users\\tester\\wrapper.js', { previouslyEnabled: true });
     assert.equal(windowsCalls.at(-1).args[0], '/Delete');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('standalone runtime mode is carried into companion launcher and service', async () => {
+  const root = tempRoot();
+  try {
+    const options = optionsFor(root, ['--auto-start']);
+    const calls = [];
+    Object.assign(options, {
+      nodePath: '/opt/Freebuff/freebuff-setup',
+      agentRuntimeArgs: ['--run-agent'],
+      runPlatformCommand: (command, args) => calls.push({ command, args }),
+    });
+    const result = await install(options);
+    const launcher = fs.readFileSync(result.paths.launcher, 'utf8');
+    const unit = fs.readFileSync(result.paths.autoStartFile, 'utf8');
+    assert.match(launcher, /freebuff-setup.*--run-agent/);
+    assert.match(unit, /freebuff-setup.*--run-agent/);
+    assert.equal(calls.some((call) => call.args.includes('restart')), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

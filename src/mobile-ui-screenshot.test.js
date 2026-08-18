@@ -8,6 +8,29 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+process.env.FB_UI_PATCH_STATUS_FILE ||= path.join(
+  os.tmpdir(),
+  `fb-ui-patch-status-screenshot-${process.pid}.json`,
+);
+process.env.FB_AD_SNIFF_LOG ||= path.join(
+  os.tmpdir(),
+  `fb-ad-sniff-screenshot-${process.pid}.log`,
+);
+process.env.FB_UPLOADS_DIR ||= path.join(
+  os.tmpdir(),
+  `fb-uploads-screenshot-${process.pid}`,
+);
+const {
+  CLOSE_BTN_FIX,
+  CLOSE_FIX1,
+  CLOSE_FIX2,
+  CLOSE_FIX3,
+  CREATE_REUSE,
+  OPEN_THREAD_FIX,
+  SCROLL_FIX,
+  SETSTATE_FIX,
+  createProxyServer,
+} = require('./freebuff_tailnet_proxy');
 
 const SOURCE_DIR = __dirname;
 const FIXTURE = fs.readFileSync(
@@ -15,6 +38,27 @@ const FIXTURE = fs.readFileSync(
 );
 const MOBILE_CSS = fs.readFileSync(path.join(SOURCE_DIR, 'mobile-ui.css'));
 const MOBILE_JS = fs.readFileSync(path.join(SOURCE_DIR, 'mobile-ui.js'));
+const PROXY_WATCH_BUNDLE = [
+  CREATE_REUSE,
+  SETSTATE_FIX,
+  SCROLL_FIX,
+  CLOSE_FIX1,
+  CLOSE_FIX2,
+  CLOSE_FIX3,
+  CLOSE_BTN_FIX,
+  OPEN_THREAD_FIX,
+].join('\n');
+const PROXY_FIXTURE = Buffer.from(
+  FIXTURE.toString('utf8')
+    .replace('    <link rel="stylesheet" href="/mobile-ui.css" />\n', '')
+    .replace('    <script src="/mobile-ui.js"></script>\n', '')
+    .replace(
+      '</head>',
+      '    <script id="fb-desktop-shim">window.freebuffDesktop={};</script>\n' +
+        '    <script type="text/plain" src="/assets/index-ABC.js"></script>\n' +
+        '  </head>',
+    ),
+);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,19 +124,35 @@ function freePort() {
   });
 }
 
-function createFixtureServer() {
+function listenServer(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address !== 'object') {
+        reject(new Error('Server did not expose an address'));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+function createFixtureServer({ throughProxy = false } = {}) {
   const sessionStatus = {
     screenshot: 'running',
     'opus-session': 'stopped',
     'recent-sonnet': 'stopped',
   };
+  const page = throughProxy ? PROXY_FIXTURE : FIXTURE;
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname;
     const files = {
-      '/': [FIXTURE, 'text/html; charset=utf-8'],
-      '/mobile-ui-screenshot-fixture.html': [FIXTURE, 'text/html; charset=utf-8'],
+      '/': [page, 'text/html; charset=utf-8'],
+      '/mobile-ui-screenshot-fixture.html': [page, 'text/html; charset=utf-8'],
       '/mobile-ui.css': [MOBILE_CSS, 'text/css; charset=utf-8'],
       '/mobile-ui.js': [MOBILE_JS, 'text/javascript; charset=utf-8'],
+      '/assets/index-ABC.js': [PROXY_WATCH_BUNDLE, 'text/javascript; charset=utf-8'],
     };
 
     if (pathname === '/api/projects') {
@@ -146,7 +206,7 @@ function createFixtureServer() {
                 },
                 {
                   id: 'recent-sonnet',
-                  projectPath: '/workspace/freebuff',
+                  projectPath: '/home/alice/Development/freebuff/very-long-project-folder-name-for-clipping-regression-2026',
                   title: 'Recent model session',
                   model: 'sonnet-5',
                   turnState: sessionStatus['recent-sonnet'],
@@ -159,6 +219,18 @@ function createFixtureServer() {
           ],
         }),
       );
+      return;
+    }
+
+    if (
+      throughProxy &&
+      (pathname === '/api/fb/dirlist' ||
+        pathname === '/api/fb/perf-report')
+    ) {
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+      });
+      response.end('{}');
       return;
     }
 
@@ -175,21 +247,11 @@ function createFixtureServer() {
     response.end(asset[0]);
   });
 
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address !== 'object') {
-        reject(new Error('Fixture server did not expose an address'));
-        return;
-      }
-      resolve({
-        server,
-        url: `http://127.0.0.1:${address.port}/`,
-        sessionStatus,
-      });
-    });
-  });
+  return listenServer(server).then((port) => ({
+    server,
+    url: `http://127.0.0.1:${port}/`,
+    sessionStatus,
+  }));
 }
 
 async function fetchJson(url) {
@@ -406,7 +468,7 @@ async function closeChrome(browser) {
   fs.rmSync(browser.userDataDir, { recursive: true, force: true });
 }
 
-test('mobile UI screenshot regression covers header, composer pills, and task dock', async (t) => {
+test('live proxy mobile UI regression covers picker controls, header, and task dock', async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     if (process.env.CI) {
@@ -416,7 +478,9 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     return;
   }
 
-  const fixture = await createFixtureServer();
+  const fixture = await createFixtureServer({ throughProxy: true });
+  const proxy = createProxyServer({ upstream: fixture.url });
+  const proxyPort = await listenServer(proxy);
   let browser;
   const outputDir =
     process.env.FB_MOBILE_SCREENSHOT_DIR ||
@@ -438,7 +502,9 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
       screenHeight: 844,
     });
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
-    await cdp.send('Page.navigate', { url: fixture.url });
+    await cdp.send('Page.navigate', {
+      url: `http://127.0.0.1:${proxyPort}/`,
+    });
 
     await waitFor(
       cdp,
@@ -453,6 +519,22 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
       ))()`,
     );
     await delay(180);
+
+    const injectedControls = await evaluate(
+      cdp,
+      `(() => ({
+        mobileUiScripts: document.querySelectorAll('script#fb-mobile-ui').length,
+        mobileUiStyles: document.querySelectorAll('style#fb-mobile-ui').length,
+        composerPills: document.querySelectorAll('.fb-composer-pills').length,
+        modelPills: document.querySelectorAll('.fb-model-pill').length,
+      }))()`,
+    );
+    assert.deepEqual(injectedControls, {
+      mobileUiScripts: 1,
+      mobileUiStyles: 1,
+      composerPills: 1,
+      modelPills: 1,
+    });
 
     const layout = await evaluate(
       cdp,
@@ -547,8 +629,59 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
     await waitFor(
       cdp,
-      "Boolean(document.querySelector('.fb-model-session-summary')) && Boolean(document.querySelector('.fb-model-sheet-close')) && document.querySelectorAll('.fb-model-session-count').length === 3 && document.querySelector('.fb-model-session-users').textContent === 'Used by: Mobile screenshot review'",
+      `Boolean(document.querySelector('.fb-model-session-summary')) && Boolean(document.querySelector('.fb-model-sheet-close')) && Boolean(document.querySelector('.fb-codex-connect')) && !document.querySelector('.fb-codex-model-option') && Array.from(document.querySelectorAll('.freebuff-model-option')).map((option) => option.getAttribute('title')).join('|') === 'Fable 5|Sonnet 5|Opus 4.8' && document.querySelectorAll('.fb-model-session-count').length === 3 && document.querySelector('.fb-model-session-users').textContent === 'Used by: Mobile screenshot review'`,
     );
+    const pickerControls = await evaluate(
+      cdp,
+      `(() => ({
+        nativeTriggers: document.querySelectorAll('.composer .agent-trigger').length,
+        modelMenus: document.querySelectorAll('.composer-context .agent-menu').length,
+        codexActions: document.querySelectorAll('.composer-context .fb-codex-connect').length,
+        codexOptions: document.querySelectorAll('.fb-codex-model-option').length,
+      }))()`,
+    );
+    assert.deepEqual(pickerControls, {
+      nativeTriggers: 1,
+      modelMenus: 1,
+      codexActions: 1,
+      codexOptions: 0,
+    });
+    const codexAction = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.fb-codex-connect');
+        const nativeModels = Array.from(document.querySelectorAll('.freebuff-model-option')).map((option) => option.getAttribute('title'));
+        button.click();
+        return {
+          text: button.textContent,
+          role: button.getAttribute('role'),
+          injectedCodexModels: document.querySelectorAll('.fb-codex-model-option').length,
+          nativeModels,
+        };
+      })()`,
+    );
+    assert.deepEqual(codexAction, {
+      text: 'Connect Codex',
+      role: 'button',
+      injectedCodexModels: 0,
+      nativeModels: ['Fable 5', 'Sonnet 5', 'Opus 4.8'],
+    });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-codex-overlay'))");
+    const codexDialog = await evaluate(
+      cdp,
+      `(() => ({
+        title: document.querySelector('#fb-codex-title').textContent,
+        url: document.querySelector('.fb-codex-device-link').href,
+        code: document.querySelector('.fb-codex-code').textContent,
+      }))()`,
+    );
+    assert.equal(codexDialog.title, 'Connect Codex');
+    assert.equal(codexDialog.url, 'https://auth.openai.com/codex/device/');
+    assert.equal(codexDialog.code, 'Preparing…');
+    await evaluate(cdp, "document.querySelector('.fb-codex-close').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-codex-overlay')");
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-model-session-summary')) && Boolean(document.querySelector('.fb-codex-connect'))");
     const availability = await evaluate(
       cdp,
       `(() => ({
@@ -885,6 +1018,42 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
         statusAria: 'Session status: Stopped',
       },
     ]);
+    // Long project paths in Recent rows must wrap fully instead of being
+    // ellipsized, so folder names stay visible in the dropdown.
+    const projectPathBox = await evaluate(
+      cdp,
+      `(() => {
+        const el = document.querySelector('.fb-session-menu-item.recent .fb-session-menu-project');
+        const style = getComputedStyle(el);
+        return {
+          text: el.textContent,
+          whiteSpace: style.whiteSpace,
+          scrollWidth: el.scrollWidth,
+          clientWidth: el.clientWidth,
+          clientHeight: el.clientHeight,
+          scrollHeight: el.scrollHeight,
+        };
+      })()`,
+    );
+    assert.equal(projectPathBox.whiteSpace, 'normal');
+    assert.ok(
+      projectPathBox.scrollWidth <= projectPathBox.clientWidth + 1,
+      'project path must not overflow horizontally: ' + JSON.stringify(projectPathBox),
+    );
+    // One 11px/1.35 line is ~15px tall; a long path must wrap to at least
+    // two lines (45px in practice), so no folder name is ever clipped.
+    assert.ok(
+      projectPathBox.clientHeight > 20,
+      'long project path should wrap to multiple lines: ' + JSON.stringify(projectPathBox),
+    );
+    const sessionMenuScreenshot = await capture(
+      cdp,
+      path.join(outputDir, 'mobile-ui-session-menu-project-path.png'),
+    );
+    assert.ok(
+      sessionMenuScreenshot.length > 5000,
+      'session menu screenshot is unexpectedly empty',
+    );
     const modelFilterInfo = await evaluate(
       cdp,
       `(() => {
@@ -1270,6 +1439,7 @@ test('mobile UI screenshot regression covers header, composer pills, and task do
     assert.notEqual(desktop.taskPosition, 'fixed');
   } finally {
     await closeChrome(browser);
+    await new Promise((resolve) => proxy.close(resolve));
     await new Promise((resolve) => fixture.server.close(resolve));
   }
 });

@@ -160,10 +160,20 @@ class PairingStore {
     const expiresAt = createdAt + ttlMs;
     const pairingId = randomId('p_');
     const token = randomToken();
+    // E2E tunnel rendezvous secret (Phase 1, docs/e2e-tunnel.md): minted at
+    // pairing time so both the desktop connector (createPairing response) and
+    // the phone (claim/refresh response) receive the same token through the
+    // relay, without it ever transiting the data plane. Unlike the pairing
+    // token it is stored in plaintext (control-plane secret): the relay must
+    // be able to hand the identical token to both endpoints. The relay is
+    // already the pairing/device authority; Phase 1 only demotes it from the
+    // data plane.
+    const tunnelToken = randomToken();
 
     this.state.pending[pairingId] = {
       id: pairingId,
       tokenHash: hashSecret(token),
+      tunnelToken,
       createdAt,
       expiresAt,
       attempts: 0,
@@ -181,6 +191,7 @@ class PairingStore {
       expiresAt: new Date(expiresAt).toISOString(),
       relayUrl,
       uiUrl,
+      tunnelToken,
     };
   }
 
@@ -239,6 +250,7 @@ class PairingStore {
       connectorId: pairing.connectorId || null,
       relayUrl: pairing.relayUrl,
       uiUrl: pairing.uiUrl,
+      tunnelToken: pairing.tunnelToken || null,
     };
 
     delete this.state.pending[pairingId];
@@ -254,6 +266,8 @@ class PairingStore {
       deviceExpiresAt: new Date(deviceExpiresAt).toISOString(),
       relayUrl: pairing.relayUrl,
       uiUrl: pairing.uiUrl,
+      tunnelToken: pairing.tunnelToken || null,
+      tunnelSessionId: pairing.tunnelToken ? deviceId : null,
     };
   }
 
@@ -292,6 +306,8 @@ class PairingStore {
       accessTokenExpiresAt: new Date(accessExpiresAt).toISOString(),
       relayUrl: device.relayUrl,
       uiUrl: device.uiUrl,
+      tunnelToken: device.tunnelToken || null,
+      tunnelSessionId: device.tunnelToken ? deviceId : null,
     };
   }
 

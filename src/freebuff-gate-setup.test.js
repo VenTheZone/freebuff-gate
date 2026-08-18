@@ -186,6 +186,35 @@ test('parseArgs accepts -y and -h aliases', () => {
   assert.throws(() => setup.parseArgs(['--release']), /needs a value/);
 });
 
+test('derivePorts uses cross-platform environment ports without systemd probes', () => {
+  assert.deepEqual(
+    setup.derivePorts({
+      platform: 'darwin',
+      env: { FREEBUFF_DESKTOP_PORT: '59060', FREEBUFF_PROXY_PORT: '59061' },
+    }),
+    { desktopPort: 59060, proxyPort: 59061, proxyPid: null },
+  );
+  assert.deepEqual(
+    setup.derivePorts({ platform: 'win32', env: {} }),
+    { desktopPort: 58060, proxyPort: 58061, proxyPid: null },
+  );
+});
+
+test('cross-platform proxy restart uses native per-user registration', () => {
+  const calls = [];
+  setup.runRestartProxy({
+    platform: 'win32',
+    capture: (command, args) => {
+      calls.push({ command, args });
+      return { ok: true, stdout: '', stderr: '' };
+    },
+  });
+  assert.deepEqual(calls, [{
+    command: 'schtasks.exe',
+    args: ['/Run', '/TN', 'Freebuff Tailnet Proxy'],
+  }]);
+});
+
 test('resolveLocalStack uses logical sibling names directly', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-setup-logical-'));
   const repo = path.join(__dirname);

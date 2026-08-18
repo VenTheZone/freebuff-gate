@@ -1,0 +1,10 @@
+{
+  "name": "freebuff-gate",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@noble/curves": "2.3.0"
+  }
+}

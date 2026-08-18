@@ -1,19 +1,20 @@
 # Freebuff Gate
 
-Turns the **Freebuff Desktop** UI into two products:
+Freebuff Gate adapts the **Freebuff Desktop** UI for two uses:
 
-- **Gate Desktop**: the full desktop UI in a plain web browser (the server
-  serves it on 127.0.0.1:58060, or through the tailnet proxy on 58061).
-- **Gate Mobile**: the same UI adapted for phones and tablets (injected by the
-  tailnet proxy, backed by the Freebuff Gate Android/iOS apps).
+- **Gate Desktop**: the full desktop UI in a plain web browser. The server
+  exposes it on 127.0.0.1:58060, or through the tailnet proxy on 58061.
+- **Gate Mobile**: the same UI adapted for phones and tablets. The tailnet
+  proxy injects the mobile layer, and the Freebuff Gate Android/iOS apps
+  provide the companion clients.
 
-Includes the **folder-selection tweak**. Desktop Freebuff runs as a native app
-and can open a real folder dialog; a browser cannot, so folder selection is
-re-implemented with web APIs. This repo ships the configuration
-(`FB-Browser-UI/.fb-browser-ui.json`) plus a small reference implementation
-(`src/folder-select.js`) of that tweak.
+The project also includes a **folder-selection tweak**. Freebuff Desktop can
+open a native folder dialog, but a browser cannot. The browser version uses web
+APIs instead. The configuration lives in
+(`FB-Browser-UI/.fb-browser-ui.json`), with a small reference implementation in
+(`src/folder-select.js`).
 
-## What's inside
+## Contents
 
 | Path | Purpose |
 | --- | --- |
@@ -40,6 +41,16 @@ re-implemented with web APIs. This repo ships the configuration
 | `src/install-mobile-connect.test.js` | Installer safety, config, launcher, uninstall, UI-stack, and verify tests. |
 | `src/freebuff-gate-setup.js` | Interactive setup wizard: detects the Desktop install, installs/upgrades the proxy + UI patches, re-applies the tailnet forward, verifies health. |
 | `src/freebuff-gate-setup.test.js` | Wizard state/plan/parse and release-asset staging tests. |
+| `src/freebuff-setup.js` | Standalone browser-first setup entrypoint with terminal fallback. |
+| `src/freebuff-setup-wizard.js` | Loopback wizard server, session protection, and setup action controller. |
+| `src/freebuff-setup-sea-entry.js` | Node SEA entrypoint; materializes versioned assets and hosts agent/proxy service modes. |
+| `src/package-freebuff-setup.js` | Builds Linux, macOS, and Windows setup binaries plus manifests/checksums. |
+| `.github/workflows/setup-binary.yml` | Native-runner setup binary build, smoke, metadata, and prerelease workflow. |
+| `.github/workflows/identity-check.yml` | Rejects commits with unapproved author or committer identities. |
+| `.github/workflows/docs-links.yml` | Checks local Markdown links and anchors in CI. |
+| `src/check-doc-links.js` | Dependency-free local Markdown link checker. |
+| `src/check-doc-links.test.js` | Tests local links, anchors, external links, and fenced code. |
+| `docker/relay/` | Self-hosted mobile relay: Caddy/Let's Encrypt default, Tailscale private fallback. |
 | `src/freebuff_tailnet_proxy.js` | Tailnet browser-port proxy: injects the mobile layer + shim, patches the UI bundle, cache headers, ad/perf probes, and auto-verifies UI patches. |
 | `src/freebuff-tailnet-proxy.test.js` | Proxy ETag/cache and UI-patch watchdog tests. |
 | `src/perf-probe.js` | Page-load/perf instrumentation injected by the proxy. |
@@ -49,6 +60,8 @@ re-implemented with web APIs. This repo ships the configuration
 | `src/package-mobile-connect-release.test.js` | Release asset, checksum, bootstrap, and archive tests. |
 | `install-mobile-connect.sh` | Node 22-validated one-command release bootstrap. |
 | `src/mobile-connect-relay.test.js` | Relay cookie, stream, and WebSocket integration tests. |
+| `docker/relay/backup.sh` | Relay/Caddy volume backup, metadata validation, dry-run, and restore utility. |
+| `src/mobile-connect-backup.test.js` | Backup metadata, checksum tamper, version, and project mismatch tests. |
 | `src/mobile-connect-agent.test.js` | End-to-end desktop-agent forwarding test. |
 | `src/mobile-connect-e2e-fixture.js` | Ephemeral HTTPS relay/desktop/upstream fixture used by Android CI pairing E2E. |
 | `android/` | Native Android pairing/WebView scaffold. |
@@ -91,9 +104,9 @@ fragile and would be lost on update.
 
 ## Mobile pairing gateway
 
-This gateway slice adds a secure pairing control plane for the managed
-Freebuff relay. It keeps Tailscale, IPv6, port forwarding, and firewall
-details out of the normal user flow.
+The gateway provides secure pairing for the managed Freebuff relay. It keeps
+Tailscale, IPv6, port forwarding, and firewall setup out of the normal user
+flow.
 
 Start local gateway on loopback:
 
@@ -120,7 +133,7 @@ node src/mobile-connect-gateway.js devices
 node src/mobile-connect-gateway.js revoke --device d_...
 ```
 
-Gateway properties:
+Gateway behavior:
 
 - Default bind is `127.0.0.1:8794`; non-loopback binding refuses to start unless
   `FB_MOBILE_ADMIN_TOKEN` is set.
@@ -167,14 +180,37 @@ relay operator can read proxied payloads; WSS protects network transit, not
 relay end-to-end confidentiality. The desktop agent currently uses Node 22's
 built-in WebSocket client; native Freebuff CLI integration remains separate.
 
+## Standalone setup binary
+
+The setup binary is a companion launcher, not a replacement for Freebuff
+Desktop. It embeds Node and setup assets, opens a loopback browser wizard, and
+installs per-user agent and proxy registrations without administrator access.
+
+Targets: Linux x64/arm64, macOS x64/arm64, and Windows x64. Run the matching
+`freebuff-setup-vX.Y.Z-<target>` artifact. `--no-browser` uses terminal setup;
+`--dry-run` inspects without changes; `--version` prints artifact version.
+Artifacts include JSON manifest and SHA-256 sidecar. Prerelease artifacts are
+currently unsigned; signing remains release gate before production distribution.
+
+Build on matching native runner:
+
+```bash
+node src/package-freebuff-setup.js --version v0.2.0 --target linux-x64 --output dist
+node src/package-freebuff-setup.js --metadata --version v0.2.0 --output dist
+```
+
+Wizard currently uses existing local setup and advanced Tailscale path.
+Freebuff-hosted relay onboarding stays unavailable until hosted control-plane
+deployment is live; wizard reports that state instead of claiming readiness.
+
 ## Freebuff Desktop mobile-connect installer
 
 Install companion connector without modifying compiled Freebuff Desktop files:
 
 ### One-command release install
 
-After publishing a tagged release, a non-technical Desktop user can install the
-verified companion with one command:
+After a tagged release, users can install the verified companion with one
+command:
 
 ```bash
 curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.1.11/install-mobile-connect.sh \\
@@ -202,9 +238,9 @@ Build release assets locally:
 node src/package-mobile-connect-release.js --version v0.1.11 --archive
 ```
 
-This writes `dist/freebuff-mobile-connect-v0.1.11/` with the bootstrap,
-versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a `.tar.gz`
-archive. Publish those assets with GitHub CLI after reviewing them:
+The command writes `dist/freebuff-mobile-connect-v0.1.11/` with the
+bootstrap, versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a
+`.tar.gz` archive. Publish those assets with GitHub CLI after reviewing them:
 
 ```bash
 gh release create v0.1.11 \\
@@ -338,7 +374,11 @@ integration tests and uploads TAP output.
 
 ## The folder-selection tweak
 
-The deployed picker is now a server-side file browser: the tailnet proxy shim opens a dialog that lists the server's real folders through the orchestrator's `/api/fb/dirlist` route, so no path typing and no local picker. See `docs/install.md` for the setup. `src/folder-select.js` below is the older client-side reference implementation, kept for the File System Access API details:
+The deployed picker is a server-side file browser. The tailnet proxy shim opens
+a dialog that lists the server's folders through the orchestrator's
+`/api/fb/dirlist` route. Users do not need to type paths or use a local picker.
+See `docs/install.md` for setup details. `src/folder-select.js` is the older
+client-side reference implementation for the File System Access API:
 
 1. **User-gesture discipline.** `window.showDirectoryPicker()` must be called
    synchronously inside a click handler; `await`ing anything first kills user
@@ -387,7 +427,7 @@ document.querySelector("#pick-folder").addEventListener("click", async () => {
 const handle = await restoreLastFolder(cfg);
 ```
 
-## Serving ads to Gate Desktop and Gate Mobile
+## Ads in Gate Desktop and Gate Mobile
 
 Gate Desktop and Gate Mobile show the same sponsored ads as the native
 desktop window. There is no forwarding toggle. The UI fetches a banner ad
@@ -398,11 +438,10 @@ token in `~/.config/freebuff-desktop/state.json`. If the network returns an
 empty `ads` array (no fill), nothing renders. That is expected, not a config
 issue.
 
-The tailnet proxy is the one interception point every surface shares (Gate
-Desktop direct, CLI, and Gate Mobile via relay → agent → proxy). It caches
-the last non-empty ad fill per placement and re-broadcasts it to any surface
-whose next auction comes back empty (substitutes flagged `stale`), so a
-fill seen once shows everywhere. Inspect the cache with:
+All surfaces use the tailnet proxy: Gate Desktop directly, the CLI, and Gate
+Mobile through relay → agent → proxy. The proxy caches the last non-empty ad
+fill for each placement and sends it to a surface when its next auction is
+empty. Cached fills are marked `stale`. Inspect the cache with:
 
 ```bash
 curl -s http://127.0.0.1:58061/api/fb/last-ad
@@ -428,8 +467,8 @@ message box. Full detail in [docs/mobile.md](docs/mobile.md).
 
 ## Secrets
 
-This repo must stay free of secrets. The `.gitignore` excludes `.env*`,
-`state.json`, keypair/key/token files, databases, logs, and runtime state.
+Keep secrets out of this repository. `.gitignore` excludes `.env*`,
+`state.json`, keypair, key, and token files, databases, logs, and runtime state.
 
 - Real values always live in a local, git-ignored `.env`, never in
   `.fb-browser-ui.json`.
@@ -450,6 +489,7 @@ FB-Browser-UI/
 ├── docs/
 │   ├── install.md           # full install guide for the stack
 │   ├── mobile.md            # phone/tablet adaptation details
+│   ├── e2e-tunnel.md        # E2E mobile↔desktop tunnel design and Phase 1 spike
 │   └── planning/            # task plan with phase status
 ├── android/                 # Kotlin Android pairing/WebView scaffold
 ├── ios/                     # iOS companion app (XcodeGen)

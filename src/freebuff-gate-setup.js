@@ -195,7 +195,20 @@ function resolveLocalStack(dir, cacheRoot) {
 // State discovery (read-only)
 // ---------------------------------------------------------------------------
 
-function derivePorts() {
+function derivePorts(options = {}) {
+  const platform = options.platform || process.platform;
+  const env = options.env || process.env;
+  if (platform !== 'linux') {
+    const readPort = (name, fallback) => {
+      const value = Number(options[name] || env[name === 'desktopPort' ? 'FREEBUFF_DESKTOP_PORT' : 'FREEBUFF_PROXY_PORT'] || fallback);
+      return Number.isInteger(value) && value > 0 && value < 65536 ? value : fallback;
+    };
+    return {
+      desktopPort: readPort('desktopPort', 58060),
+      proxyPort: readPort('proxyPort', 58061),
+      proxyPid: null,
+    };
+  }
   // Orchestrator port: the desktop unit's PORT env; fall back to the desktop
   // process's loopback listen socket.
   let desktopPort = null;
@@ -320,12 +333,12 @@ async function collectState(options, installerModule) {
       warnings: [],
     };
   }
-  const ports = derivePorts();
+  const ports = derivePorts(options);
   const proxy = await probeProxyHealth(ports.proxyPort, ports.desktopPort);
   // Leftover dev flag on the proxy masks real ad fills with the placeholder.
   // Read it from the live process env (drop-ins set it outside the unit file).
   let devBroadcastOn = false;
-  if (process.platform === 'linux' && ports.proxyPid) {
+  if ((options.platform || process.platform) === 'linux' && ports.proxyPid) {
     try {
       const environ = fs.readFileSync(`/proc/${ports.proxyPid}/environ`, 'utf8');
       devBroadcastOn = environ.split('\0').includes('FB_AD_DEV_BROADCAST=1');
@@ -353,14 +366,33 @@ async function collectState(options, installerModule) {
 // Actions
 // ---------------------------------------------------------------------------
 
-function runRestartProxy() {
-  const result = capture('systemctl', ['--user', 'restart', proxyServiceName()]);
+function runRestartProxy(options = {}) {
+  const platform = options.platform || process.platform;
+  const execute = options.capture || capture;
+  let command;
+  let args;
+  if (platform === 'darwin') {
+    const uid = options.uid || (typeof process.getuid === 'function' ? process.getuid() : null);
+    if (uid == null) throw new Error('Cannot determine macOS GUI user id for proxy restart');
+    command = 'launchctl';
+    args = ['kickstart', '-k', `gui/${uid}/com.freebuff.tailnet-proxy`];
+  } else if (platform === 'win32') {
+    command = 'schtasks.exe';
+    args = ['/Run', '/TN', 'Freebuff Tailnet Proxy'];
+  } else {
+    command = 'systemctl';
+    args = ['--user', 'restart', proxyServiceName()];
+  }
+  const result = execute(command, args);
   if (!result.ok) {
-    throw new Error(`restarting ${proxyServiceName()} failed: ${(result.stderr || result.stdout || '').trim()}`);
+    throw new Error(`restarting Freebuff tailnet proxy failed: ${(result.stderr || result.stdout || '').trim()}`);
   }
 }
 
-function runRestartOrchestrator() {
+function runRestartOrchestrator(options = {}) {
+  if ((options.platform || process.platform) !== 'linux') {
+    throw new Error('Restart Freebuff Desktop from its app menu, then refresh setup');
+  }
   // The on-disk orchestrator patch only activates after the orchestrator
   // (the Desktop app's Bun server) reloads its file.
   const result = capture('systemctl', ['--user', 'restart', DESKTOP_SERVICE]);
@@ -400,7 +432,7 @@ function planActions(state, options) {
       actions.push({ id: 'restart', description: 'Restart tailnet proxy (served UI checks stale)' });
     }
   }
-  if (!options.skipUpgrade && state.verify.ok && orchUploadFailing) {
+  if ((!options.platform || options.platform === 'linux') && !options.skipUpgrade && state.verify.ok && orchUploadFailing) {
     // Patches are on disk but the running orchestrator predates them: the
     // Desktop Bun server must reload the patched file to serve the routes.
     actions.push({ id: 'restart-orchestrator', description: `Restart ${DESKTOP_SERVICE} to load the patched orchestrator` });
@@ -529,6 +561,7 @@ Options:
   --yes                    Apply every needed fix without prompting
   --force                  Overwrite unmanaged proxy unit/auto-start files
   --dry-run                Report state + planned actions, change nothing
+  --advanced               Select self-hosted/local transport path
   --skip-upgrade           Do not install/upgrade the proxy or UI patches
   --skip-tailnet           Do not touch the tailscale serve forward
   --source-dir <dir>       Take proxy/installer files from <dir> (default: this file's dir)
@@ -547,17 +580,22 @@ Exits 0 when the stack is healthy, non-zero when fixes failed or remain.`);
 }
 
 function parseArgs(argv) {
+  const standaloneRuntime = process.env.FREEBUFF_SETUP_RUNTIME === 'sea';
   const options = {
     yes: false,
     force: false,
     dryRun: false,
     skipUpgrade: false,
     skipTailscale: false,
+    advanced: false,
     sourceDir: path.resolve(__dirname),
     desktopDir: process.env.FREEBUFF_DESKTOP_DIR || null,
     release: null,
     repository: DEFAULT_REPOSITORY,
     cacheDir: null,
+    nodePath: standaloneRuntime ? (process.env.FREEBUFF_SETUP_BINARY_PATH || process.execPath) : null,
+    agentRuntimeArgs: standaloneRuntime ? ['--run-agent'] : [],
+    proxyRuntimeArgs: standaloneRuntime ? ['--run-proxy'] : [],
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -584,6 +622,9 @@ function parseArgs(argv) {
         break;
       case '--skip-tailnet':
         options.skipTailscale = true;
+        break;
+      case '--advanced':
+        options.advanced = true;
         break;
       case '--source-dir':
         options.sourceDir = path.resolve(next());
@@ -679,10 +720,10 @@ async function main(argv = process.argv.slice(2)) {
           console.log(`  best-effort cache-header patch: ${stack.bestEffort.join(', ')}`);
         }
       } else if (action.id === 'restart') {
-        runRestartProxy();
+        runRestartProxy(options);
         console.log('  applied: proxy restarted.');
       } else if (action.id === 'restart-orchestrator') {
-        runRestartOrchestrator();
+        runRestartOrchestrator(options);
         console.log('  applied: orchestrator restarted.');
       } else if (action.id === 'tailscale') {
         const result = applyTailscaleForward(state.ports.desktopPort, state.ports.proxyPort);
@@ -719,8 +760,10 @@ module.exports = {
   applyTailscaleForward,
   capture,
   collectState,
+  derivePorts,
   ensureReleaseAssets,
   humanState,
+  main,
   parseArgs,
   parseServeTargets,
   planActions,
