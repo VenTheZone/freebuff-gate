@@ -272,6 +272,71 @@ function recordingCommands() {
   return { calls, runPlatformCommand };
 }
 
+test('installUiStack resolves the default command runner when deps are omitted', () => {
+  // Regression: the destructuring default used to reference its own binding
+  // (`{ runPlatformCommand = runPlatformCommand }`), which throws a TDZ
+  // ReferenceError the moment a caller passes {} as the deps argument.
+  const root = tempRoot();
+  try {
+    const fake = fakeDesktop(root);
+    const options = uiOptions(root, fake.root);
+    // A missing desktop dir makes findFreebuffDesktop throw before any
+    // platform command can run, proving the parameter resolves cleanly.
+    options.desktopDir = path.join(root, 'no-such-desktop');
+    assert.throws(
+      () => installUiStack(options, {}, {}),
+      /Freebuff Desktop directory does not exist/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyOrchestratorPatches upgrades a stale partial route block', () => {
+  // Regression: an older patch left dirlist+perf-report but predates the
+  // upload/read-file routes. The marker check (dirlist present) used to skip
+  // the re-patch, so upload/read-file were never added on-disk. The patcher
+  // must replace the stale block with the full current one.
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const legacyBlock = [
+      '      if (pathname === "/api/fb/dirlist") {',
+      '        let entries = [];',
+      '        return json3({ path: root, entries });',
+      '      }',
+      '      if (pathname === "/api/fb/perf-report") {',
+      '        return json3({ ok: true });',
+      '      }',
+    ].join('\n');
+    const legacyOrch = [
+      'let match12 = findRoute(routes, req.method, pathname);',
+      'return json3({ error: "upgrade required" }, 426);',
+      '      }',
+      legacyBlock,
+      '      let match12 = findRoute(routes, req.method, pathname);',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+      '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+    ].join('\n');
+    fs.writeFileSync(orchFile, legacyOrch);
+
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+
+    const out = fs.readFileSync(orchFile, 'utf8');
+    for (const mark of ['/api/fb/dirlist', '/api/fb/perf-report', '/api/fb/upload', '/api/fb/read-file']) {
+      assert.equal(out.includes(mark), true, `${mark} present after upgrade`);
+    }
+    assert.equal(out.split('/api/fb/dirlist').length - 1, 1, 'dirlist not duplicated');
+    assert.equal(out.split('let match12 = findRoute(routes, req.method, pathname);').length - 1, 2, 'route tail intact');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently', async () => {
   const root = tempRoot();
   try {

@@ -38,6 +38,8 @@ re-implemented with web APIs. This repo ships the configuration
 | `src/mobile-connect-agent.js` | Desktop outbound WSS connector and local UI bridge. |
 | `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify). |
 | `src/install-mobile-connect.test.js` | Installer safety, config, launcher, uninstall, UI-stack, and verify tests. |
+| `src/freebuff-gate-setup.js` | Interactive setup wizard: detects the Desktop install, installs/upgrades the proxy + UI patches, re-applies the tailnet forward, verifies health. |
+| `src/freebuff-gate-setup.test.js` | Wizard state/plan/parse and release-asset staging tests. |
 | `src/freebuff_tailnet_proxy.js` | Tailnet browser-port proxy: injects the mobile layer + shim, patches the UI bundle, cache headers, ad/perf probes, and auto-verifies UI patches. |
 | `src/freebuff-tailnet-proxy.test.js` | Proxy ETag/cache and UI-patch watchdog tests. |
 | `src/perf-probe.js` | Page-load/perf instrumentation injected by the proxy. |

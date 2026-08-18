@@ -533,6 +533,12 @@ function runPlatformCommand(command, args, { ignoreFailure = false } = {}) {
   return true;
 }
 
+// Stable alias for default-parameter fallbacks: a destructuring default that
+// references its own binding (`{ fn = fn }`) throws a TDZ ReferenceError, so
+// callers that omit the dependency object would crash. Default to this
+// module-level function instead.
+const DEFAULT_RUN_PLATFORM_COMMAND = runPlatformCommand;
+
 function macGuiTarget(options) {
   const uid = options.uid || (typeof process.getuid === 'function' ? process.getuid() : null);
   if (uid == null) throw new Error('Cannot determine macOS GUI user id for auto-start');
@@ -754,7 +760,7 @@ function proxyAutoStartPaths(options = {}) {
   };
 }
 
-function deployProxy(options, { runPlatformCommand = runPlatformCommand, dryRun = false } = {}) {
+function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAND, dryRun = false } = {}) {
   const registration = proxyAutoStartPaths(options);
   if (registration.type === 'unsupported') {
     console.warn(`Warning: tailnet proxy auto-start is unsupported on ${registration.platform}; deploy the files and start the proxy manually.`);
@@ -847,7 +853,7 @@ function orchestratorRouteBlock(configDir, uploadsDir) {
           body = "";
         }
         let ua = req.headers.get("user-agent") || "";
-        let client = /FreebuffMobile\//.test(ua) ? "webview" : /Firefox\//.test(ua) ? "firefox" : "browser";
+        let client = /FreebuffMobile\\//.test(ua) ? "webview" : /Firefox\\//.test(ua) ? "firefox" : "browser";
         try {
           let parsed = {};
           try {
@@ -915,7 +921,14 @@ function perfHelperSource(perfProbePath) {
 }
 
 const ORCH_ROUTE_MARK = 'if (pathname === "/api/fb/dirlist")';
-const ORCH_ROUTE_ANCHOR = 'return json3({ error: "upgrade required" }, 426);\n      }\n      let match12 = findRoute(routes, req.method, pathname);';
+const ORCH_ROUTE_MARKS = [
+  'if (pathname === "/api/fb/dirlist")',
+  'if (pathname === "/api/fb/perf-report")',
+  'if (pathname === "/api/fb/upload")',
+  'if (pathname === "/api/fb/read-file")',
+];
+const ORCH_ROUTE_TAIL = 'let match12 = findRoute(routes, req.method, pathname);';
+const ORCH_ROUTE_ANCHOR = `return json3({ error: "upgrade required" }, 426);\n      }\n      ${ORCH_ROUTE_TAIL}`;
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
 const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
 // Best-effort serveSpa cache-header candidates (stock -> patched). The stock
@@ -945,12 +958,28 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
   const changes = [];
   let out = src;
   const performed = [];
-  if (!out.includes(ORCH_ROUTE_MARK)) {
-    if (!out.includes(ORCH_ROUTE_ANCHOR)) {
-      throw new Error(`orchestrator route anchor not found (app update may have renamed helpers); expected: ${ORCH_ROUTE_ANCHOR.slice(0, 80)}…`);
+  const routeMarksPresent = ORCH_ROUTE_MARKS.filter((mark) => out.includes(mark));
+  if (routeMarksPresent.length < ORCH_ROUTE_MARKS.length) {
+    const block = orchestratorRouteBlock(configDir, uploadsDir);
+    if (routeMarksPresent.length === 0) {
+      // Fresh insert: anchor on the stock upgrade-required route.
+      if (!out.includes(ORCH_ROUTE_ANCHOR)) {
+        throw new Error(`orchestrator route anchor not found (app update may have renamed helpers); expected: ${ORCH_ROUTE_ANCHOR.slice(0, 80)}…`);
+      }
+      out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${block}      ${ORCH_ROUTE_TAIL}`);
+      performed.push('routes');
+    } else {
+      // Partial block: an older patch left dirlist/perf-report but predates
+      // the upload/read-file routes. Replace the existing block span with
+      // the full current block so the on-disk routes catch up.
+      const start = out.indexOf(ORCH_ROUTE_MARK);
+      const end = out.indexOf(ORCH_ROUTE_TAIL, start);
+      if (start < 0 || end < 0) {
+        throw new Error(`orchestrator stale route block cannot be located (app update may have moved it); expected: ${ORCH_ROUTE_MARK.slice(0, 60)}… → ${ORCH_ROUTE_TAIL.slice(0, 60)}…`);
+      }
+      out = `${out.slice(0, start)}${block}${out.slice(end)}`;
+      performed.push('routes');
     }
-    out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${orchestratorRouteBlock(configDir, uploadsDir)}      let match12 = findRoute(routes, req.method, pathname);`);
-    performed.push('routes');
   }
   if (!out.includes(ORCH_HELPER_MARK)) {
     if (!out.includes(ORCH_HELPER_ANCHOR)) {
@@ -1100,7 +1129,7 @@ async function install(options) {
 // idempotent and marker-checked: already-patched files are left alone, and
 // a patch whose anchors no longer match fails loudly instead of silently
 // shipping a stock (regressed) UI after an app update.
-function installUiStack(options, paths, { runPlatformCommand = runPlatformCommand } = {}) {
+function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAND } = {}) {
   const desktopDir = findFreebuffDesktop(options);
   const registration = proxyAutoStartPaths(options);
   const proxyDeploy = deployProxy(options, { runPlatformCommand });

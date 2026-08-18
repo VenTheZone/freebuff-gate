@@ -20,6 +20,9 @@ const RELEASE_FILES = Object.freeze([
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
+  // Interactive setup wizard: detects the Desktop install, installs/upgrades
+  // the proxy + UI patches, re-applies the tailnet forward, verifies health.
+  'freebuff-gate-setup.js',
 ]);
 
 function normalizeReleaseVersion(value) {

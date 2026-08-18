@@ -40,6 +40,26 @@ installer. Useful flags:
                                                # non-zero if bundle/shim/dirlist markers
                                                # are missing (e.g. right after an app update)
 
+### Setup wizard (interactive)
+freebuff-gate-setup.js is the interactive companion to the bootstrap. It
+detects the Freebuff Desktop install, reports the state of the whole stack,
+and offers to fix whatever is missing — no flags needed:
+- node freebuff-gate-setup.js                  # interactive: asks before each fix
+- node freebuff-gate-setup.js --dry-run        # report + plan, change nothing
+- node freebuff-gate-setup.js --yes            # apply every needed fix unprompted
+- node freebuff-gate-setup.js --release v0.1.13 --yes
+                                              # standalone: fetch release assets
+                                              # into ~/.cache and fix from them
+
+It checks four things and repairs them in order: the on-disk bundle/shim/
+orchestrator patches (re-runs the installer stack when an app update wiped
+any marker), the tailnet proxy (deploys/restarts it), the served UI markers
+(shim, mobile layer, bundle patch, upload route), and the tailscale serve
+forward (re-applies tcp:<orchestrator-port> -> 127.0.0.1:<proxy-port>,
+derived from the live units — never hardcoded). It works from the repo
+(src/), from a raw release asset directory (version-prefixed siblings are
+staged automatically), or standalone with --release.
+
 ### 1. Verify the orchestrator
 The orchestrator serves Gate Desktop on 127.0.0.1:58060 (and tailnet IP).
 - Confirm it answers: curl http://127.0.0.1:58060/api/projects
