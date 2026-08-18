@@ -1,5 +1,9 @@
 # Freebuff Gate
 
+<p align="center">
+  <img src="assets/freebuff-gate-icon.png" alt="Freebuff Gate" width="160" height="160">
+</p>
+
 Freebuff Gate adapts the **Freebuff Desktop** UI for two uses:
 
 - **Gate Desktop**: the full desktop UI in a plain web browser. The server
