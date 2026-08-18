@@ -54,6 +54,11 @@ xcodebuild \
 - `signed-ipa`: skipped unless the `IOS_SIGNING_CERT_BASE64` and
   `IOS_SIGNING_CERT_PASSWORD` secrets exist. It imports the distribution
   certificate, archives, and exports an ad-hoc IPA.
+- `attach-release` (main only): publishes the unsigned simulator build as
+  `freebuff-gate-simulator.app.zip` on the `ios-debug-latest` rolling
+  release. When signing secrets are set and the IPA was produced, it also
+  publishes `freebuff-gate.ipa` on the `ios-latest` rolling release, each
+  with a SHA-256 checksum.
 
 ## Signing for a real device
 

@@ -100,6 +100,8 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 40
     needs: build-test
+    outputs:
+      ipa: ${{ steps.signing.outputs.enabled }}
 
     steps:
       - name: Check signing secrets
@@ -185,12 +187,13 @@ jobs:
   attach-release:
     # Publishes the unsigned simulator build to the ios-debug-latest release
     # so the iOS app appears on the releases page (parallel to the Android
-    # debug APK on mobile-debug-latest). A device-installable IPA is only
-    # produced by the signed-ipa job when signing secrets are set.
+    # debug APK on mobile-debug-latest), and the signed IPA to ios-latest
+    # when the signing secrets are set. Runs only on main so PRs never touch
+    # the rolling releases.
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build-test
-    if: needs.build-test.result == 'success'
+    needs: [build-test, signed-ipa]
+    if: github.ref == 'refs/heads/main' && needs.build-test.result == 'success'
 
     steps:
       - name: Download simulator app
@@ -227,5 +230,35 @@ jobs:
             gh release upload ios-debug-latest \
               "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
               "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          fi
+
+      - name: Download signed IPA
+        if: needs.signed-ipa.result == 'success' && needs.signed-ipa.outputs.ipa == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: FreebuffGate-ipa
+          path: ${{ runner.temp }}/ipa
+
+      - name: Publish signed IPA to ios-latest release
+        if: needs.signed-ipa.result == 'success' && needs.signed-ipa.outputs.ipa == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ipa=$(find "$RUNNER_TEMP/ipa" -name '*.ipa' -type f | head -1)
+          test -n "$ipa"
+          cp "$ipa" freebuff-gate.ipa
+          sha256sum freebuff-gate.ipa > freebuff-gate.ipa.sha256
+          if ! gh release view ios-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create ios-latest \
+              --title "Freebuff Gate iOS app (latest)" \
+              --notes "Ad-hoc signed IPA from main (device-installable, up to 100 registered devices). Verify with: sha256sum -c freebuff-gate.ipa.sha256" \
+              --prerelease \
+              freebuff-gate.ipa freebuff-gate.ipa.sha256 \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release upload ios-latest \
+              freebuff-gate.ipa freebuff-gate.ipa.sha256 \
               --repo "$GITHUB_REPOSITORY" --clobber
           fi
