@@ -57,6 +57,16 @@ function devAdBroadcastEnabled() {
 }
 const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
+// ---- mobile theming SDK ----
+// Users drop a theme.css here (or point FB_MOBILE_THEME_FILE at their own
+// file) to restyle the mobile layer. It is injected after mobile-ui.css, so
+// plain CSS overrides win and the --fb-m-* tokens in mobile-ui.css can be
+// re-assigned wholesale. Missing file = no-op. Read per request so edits
+// apply on reload. See docs/mobile.md.
+function mobileThemePath() {
+  return process.env.FB_MOBILE_THEME_FILE
+    || path.join(os.homedir(), '.local', 'share', 'freebuff', 'tailnet-proxy', 'theme.css');
+}
 // Attached files uploaded from the browser (desktop or mobile WebView) land
 // here on the server; the composer sends the returned path to the agent just
 // like a native Electron attachment. The on-disk orchestrator patch writes to
@@ -524,17 +534,19 @@ const SHIM = `(function () {
 
 function mobileTag(type) {
   try {
-    const body = fs.readFileSync(type === 'css' ? MOBILE_CSS_PATH : MOBILE_JS_PATH, 'utf8');
-    return type === 'css'
-      ? `<style id="fb-mobile-ui">${body}</style>`
-      : `<script id="fb-mobile-ui">${body}<\/script>`;
+    const body = type === 'theme'
+      ? fs.readFileSync(mobileThemePath(), 'utf8')
+      : fs.readFileSync(type === 'css' ? MOBILE_CSS_PATH : MOBILE_JS_PATH, 'utf8');
+    if (type === 'js') return `<script id="fb-mobile-ui">${body}<\/script>`;
+    if (type === 'theme') return `<style id="fb-mobile-theme">${body}</style>`;
+    return `<style id="fb-mobile-ui">${body}</style>`;
   } catch (e) {
     return '';
   }
 }
 
 function injectInto(html, withPerf) {
-  const inject = mobileTag('css') + mobileTag('js') + (withPerf ? perfTag() : '') + `<script id="fb-desktop-shim">${SHIM}<\/script>`;
+  const inject = mobileTag('css') + mobileTag('theme') + mobileTag('js') + (withPerf ? perfTag() : '') + `<script id="fb-desktop-shim">${SHIM}<\/script>`;
   if (html.includes('</head>')) return html.replace('</head>', inject + '</head>');
   return inject + html;
 }

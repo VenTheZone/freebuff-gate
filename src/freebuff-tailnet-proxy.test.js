@@ -263,6 +263,38 @@ test('ui-patch watchdog flags every missing marker after a simulated update', as
   }
 });
 
+test('proxy injects a user theme after the built-in mobile css', async () => {
+  // Theming SDK: a user theme.css (or FB_MOBILE_THEME_FILE override) is
+  // injected after mobile-ui.css so it can reassign the --fb-m-* tokens.
+  const theme = ':root{--fb-m-brand:#123456;} .fb-panel-toggle{display:none;}'
+  const themeFile = path.join(os.tmpdir(), `fb-theme-${process.pid}.css`);
+  fs.writeFileSync(themeFile, theme);
+  process.env.FB_MOBILE_THEME_FILE = themeFile;
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<html><head></head><body></body></html>');
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+  try {
+    const page = await (await fetch(`http://127.0.0.1:${proxyPort}/`)).text();
+    assert.ok(page.includes('<style id="fb-mobile-ui">'), 'built-in mobile css injected');
+    const match = page.match(/<style id="fb-mobile-theme">([\s\S]*?)<\/style>/);
+    assert.ok(match, 'theme css injected');
+    assert.ok(match[1].includes('#123456'), 'theme body present');
+    assert.ok(
+      page.indexOf('fb-mobile-ui') < page.indexOf('fb-mobile-theme'),
+      'theme is injected after the built-in mobile css so overrides win',
+    );
+  } finally {
+    delete process.env.FB_MOBILE_THEME_FILE;
+    fs.rmSync(themeFile, { force: true });
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
 test('attach upload + read-file routes store and serve browser attachments', async () => {
   const server = createProxyServer({ upstream: 'http://127.0.0.1:1' });
   const port = await listen(server);

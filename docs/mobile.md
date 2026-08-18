@@ -174,6 +174,53 @@ for narrow viewports:
   lock).
 - **480px**: further tightening for small phones.
 
+## Theming SDK
+
+The mobile layer is themed through CSS custom properties (tokens). All
+interactive mobile chrome reads `--fb-m-*` variables (brand color, ink,
+soft background, focus ring, glow) defined in `src/mobile-ui.css` for both
+dark and light themes, so a redesign is a token reassignment, not a fork of
+the stylesheet.
+
+To apply your own theme, drop a `theme.css` in the proxy's deploy directory
+or point `FB_MOBILE_THEME_FILE` at your file:
+
+```bash
+# default location
+~/.local/share/freebuff/tailnet-proxy/theme.css
+
+# or any path
+FB_MOBILE_THEME_FILE=/path/to/theme.css <start the proxy>
+```
+
+The proxy injects the theme **after** `mobile-ui.css` on every page load, so
+plain CSS wins and tokens can be re-assigned wholesale. Missing file = no-op.
+Edit the file, reload the page; no proxy restart needed.
+
+Example theme (dark, amber accent):
+
+```css
+/* theme.css — reassign the mobile brand tokens */
+:root {
+  --fb-m-brand: #ffb020;
+  --fb-m-brand-ink: #1a1206;
+  --fb-m-brand-soft: color-mix(in srgb, #ffb020 13%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #ffb020 24%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px color-mix(in srgb, #ffb020 45%, transparent);
+}
+:root[data-theme='light'] {
+  --fb-m-brand: #b26a00;
+  --fb-m-brand-ink: #fff8ec;
+}
+```
+
+Beyond tokens, the theme file is plain CSS: hide, restyle, or reposition any
+mobile element (`display:none`, custom paddings, per-element colors). The
+scope is the injected layer only; desktop viewports are untouched because
+mobile-ui.css applies at narrow widths.
+
+Full token inventory lives in `src/mobile-ui.css` (search for `--fb-m-`).
+
 ## Turn notifications (stay-alive)
 
 Gate Mobile keeps a background connection so it can notify when Buffy
