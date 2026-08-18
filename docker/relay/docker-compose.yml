@@ -18,6 +18,10 @@ name: freebuff-relay
 
 services:
   relay:
+    # Published image is pulled when available; otherwise Compose builds from
+    # source (same Dockerfile the CI publish job uses).
+    image: ghcr.io/venthezone/freebuff-gate-relay:latest
+    pull_policy: missing
     build:
       context: ../..
       dockerfile: docker/relay/Dockerfile

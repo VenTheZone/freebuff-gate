@@ -13,6 +13,24 @@ Requirements:
 - Inbound ports `80` and `443` available for ACME HTTP-01 and app traffic.
 - Strong enrollment and admin secrets.
 
+## Published image
+
+CI publishes the relay image to GHCR for `linux/amd64` and `linux/arm64`:
+
+```sh
+docker pull ghcr.io/venthezone/freebuff-gate-relay:latest
+```
+
+Tag convention:
+
+- `latest` for stable releases (`v0.2.0` and later)
+- `next` for prereleases
+- `vX.Y.Z` for the exact release
+
+`docker-compose.yml` and `docker-compose.tailscale.yml` pull the published
+image when it is available locally, otherwise they build from source. Prefer
+the published image unless you are testing local relay changes.
+
 Create configuration:
 
 ```sh

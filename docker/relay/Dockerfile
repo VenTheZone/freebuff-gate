@@ -1,5 +1,13 @@
 # Freebuff mobile-connect relay — Node 22 Alpine, stdlib-only runtime.
+# Published to GHCR as ghcr.io/<owner>/freebuff-gate-relay (see
+# .github/workflows/setup-binary.yml publish-docker job).
 FROM node:22-alpine
+
+# Set by the publish job; empty in local builds.
+ARG FREEBUFF_VERSION=
+LABEL org.opencontainers.image.title="freebuff-gate-relay" \
+      org.opencontainers.image.description="Freebuff mobile-connect relay" \
+      org.opencontainers.image.version="${FREEBUFF_VERSION}"
 
 # Run as the image's unprivileged user; state lives on mounted volumes.
 USER node
