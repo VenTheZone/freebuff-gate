@@ -24,6 +24,14 @@ sidecars. Names follow `freebuff-setup-<version>-<target>`. Targets are
 Local builds go under `dist/freebuff-setup-<version>/`. GitHub prereleases use
 the same artifacts from the setup-binary workflow.
 
+The binary also ships on npm as `freebuff-gate` (per-platform optional
+packages carry the binaries, so the metapackage resolves the right one):
+
+```bash
+npm install -g freebuff-gate
+freebuff-setup --version
+```
+
 ### Verify checksums
 
 ```bash
@@ -174,8 +182,14 @@ If the phone app is used:
   Docker deployment, use `docker/relay/` — Caddy + Let's Encrypt is the
   default and does not require Tailscale. The agent's upstream must point at
   http://127.0.0.1:58061 (the proxy, so the mobile UI layer is injected).
-  Run `docker compose up -d --build` from `docker/relay/` and use its
-  public `https://<domain>` URL for the agent and phone.
+  Run `docker compose up -d` from `docker/relay/` (pulls the published
+  `ghcr.io/venthezone/freebuff-gate-relay` image; falls back to building from
+  source when the tag is not published) and use its public `https://<domain>`
+  URL for the agent and phone.
+- Android release APK: `install-release-apk.sh` downloads, verifies the
+  SHA-256 checksum, and installs `freebuff-gate-release.apk` from the
+  `mobile-release-latest` GitHub release (`--gecko` for the GeckoView spike
+  from `mobile-gecko-latest`). Requires `gh`, `adb`, and `sha256sum`.
 - A systemd USER relay remains valid for non-Docker deployments; install a
   unit like the existing `freebuff-mobile-relay.service` on the reference
   machine (see `~/.config/systemd/user/`), with the agent unit already managed
@@ -288,9 +302,12 @@ If the phone app is used:
 identity, AES-GCM session storage, reconnect with jittered backoff, and a
 WKWebView restricted to the relay origin. Build it with XcodeGen and Xcode
 (see ios/README.md), or use `.github/workflows/ios.yml` on macOS CI.
-CI produces an unsigned simulator `.app` by default. A signed IPA requires an
-Apple Developer account and ad-hoc signing secrets. The app uses the same
-managed relay and `/v1/mobile/session` cookie exchange as Android.
+CI produces an unsigned simulator `.app` by default, published on the
+`ios-debug-latest` rolling release. A signed, device-installable IPA requires
+an Apple Developer account and the `IOS_SIGNING_CERT_BASE64` /
+`IOS_SIGNING_CERT_PASSWORD` secrets; when set, CI publishes it on the
+`ios-latest` rolling release. The app uses the same managed relay and
+`/v1/mobile/session` cookie exchange as Android.
 
 ## Patch notes
 

@@ -469,7 +469,8 @@ Keep secrets out of this repository. `.gitignore` excludes `.env*`,
 
 ## Quick reference
 
-Install guides: [docs/install.md](docs/install.md) (full stack),
+Install guides: [docs/install.md](docs/install.md) (full stack, also a
+copy-paste setup prompt for an AI coding agent such as Buffy or Codebuff),
 [docs/mobile.md](docs/mobile.md) (phone/tablet adaptation),
 [docker/relay/README.md](docker/relay/README.md) (self-hosted relay),
 [android/README.md](android/README.md) and [ios/README.md](ios/README.md)
