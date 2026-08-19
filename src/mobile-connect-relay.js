@@ -305,13 +305,9 @@ class RelayHub {
     this.logger = typeof options.logger === 'function' ? options.logger : () => {};
     this.cookieName = options.cookieName || COOKIE_NAME;
     this.webSessionTtlMs = options.webSessionTtlMs || WEB_SESSION_TTL_MS;
-    // Compatibility switch for released APKs that reject the tunnel's
-    // app-local cleartext WebView origin. The standalone relay keeps tunnel
-    // support unless explicitly disabled; the managed self-check launcher
-    // supplies FB_MOBILE_RELAY_TUNNEL_ENABLED=0 for released APKs, omitting
-    // tunnel fields so they use the regular HTTPS WebView path.
+    // The released APK path is safe by default; tunnel is opt-in.
     this.tunnelEnabled = options.tunnelEnabled === undefined
-      ? process.env.FB_MOBILE_RELAY_TUNNEL_ENABLED !== '0'
+      ? process.env.FB_MOBILE_RELAY_TUNNEL_ENABLED === '1'
       : Boolean(options.tunnelEnabled);
     this.connectors = new Map();
     this.httpRequests = new Map();
@@ -1044,6 +1040,7 @@ function createRelayServer(options = {}) {
             service: 'freebuff-mobile-relay',
             protocolVersion: 1,
             connectors: hub.connectors.size,
+            tunnelEnabled: hub.tunnelEnabled,
           }, requestOptions);
           return;
         }
@@ -1266,7 +1263,7 @@ Required production settings:
   FB_MOBILE_RELAY_ENROLLMENT_TOKEN   installer bootstrap secret
   FB_MOBILE_RELAY_CONNECTOR_STATE_FILE  hashed issued-credential state path
   FB_MOBILE_RELAY_ADMIN_TOKEN          device admin secret
-  FB_MOBILE_RELAY_TUNNEL_ENABLED       set 0 for HTTPS-only compatibility with released APKs
+  FB_MOBILE_RELAY_TUNNEL_ENABLED       set 1 only for clients that support the tunnel path (default: HTTPS-only)
 
 The relay terminates WSS/TLS, provisions short-lived connector tokens through
 /v1/relay/enroll, refreshes them through /v1/relay/refresh, exchanges access

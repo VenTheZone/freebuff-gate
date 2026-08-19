@@ -19,7 +19,7 @@ class RelayWebSocket extends EventEmitter {
     socket.setNoDelay(true);
     socket.on('data', (chunk) => this.consume(chunk));
     socket.on('close', () => this.finishClose());
-    socket.on('error', (error) => this.emit('error', error));
+    socket.on('error', () => this.finishClose());
     if (this.buffer.length > 0) this.consume();
   }
 
