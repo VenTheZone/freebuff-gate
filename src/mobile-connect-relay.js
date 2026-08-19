@@ -306,9 +306,10 @@ class RelayHub {
     this.cookieName = options.cookieName || COOKIE_NAME;
     this.webSessionTtlMs = options.webSessionTtlMs || WEB_SESSION_TTL_MS;
     // Compatibility switch for released APKs that reject the tunnel's
-    // app-local cleartext WebView origin. HTTPS relay mode is the default;
-    // setting FB_MOBILE_RELAY_TUNNEL_ENABLED=0 omits tunnel fields from claim
-    // and refresh responses, so the APK uses the regular HTTPS WebView path.
+    // app-local cleartext WebView origin. The standalone relay keeps tunnel
+    // support unless explicitly disabled; the managed self-check launcher
+    // supplies FB_MOBILE_RELAY_TUNNEL_ENABLED=0 for released APKs, omitting
+    // tunnel fields so they use the regular HTTPS WebView path.
     this.tunnelEnabled = options.tunnelEnabled === undefined
       ? process.env.FB_MOBILE_RELAY_TUNNEL_ENABLED !== '0'
       : Boolean(options.tunnelEnabled);
