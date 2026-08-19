@@ -24,7 +24,7 @@ implementation in (`src/folder-select.js`).
 | `.freebuff-gate.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
-| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets (injected by the tailnet proxy). |
+| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets, plus the built-in theme picker styles and the Cyberpunk 2077 theme (injected by the tailnet proxy; see `docs/mobile.md`). |
 | `src/mobile-ui.js` | Tiny Gate Mobile helpers: viewport meta patch + dynamic viewport height. |
 | `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for Gate Mobile screenshot regression. |
 | `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for Gate Mobile. |
@@ -40,7 +40,7 @@ implementation in (`src/folder-select.js`).
 | `src/mobile-connect-websocket.js` | Dependency-free relay WebSocket server framing. |
 | `src/mobile-connect-relay.js` | Managed relay HTTP/SSE/WebSocket forwarding and cookie exchange. |
 | `src/mobile-connect-agent.js` | Desktop outbound WSS connector and local UI bridge. |
-| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify). |
+| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify; records the deploy source in `ui-source.json` so the proxy serves newer repo UI files without a re-install). |
 | `src/install-mobile-connect.test.js` | Installer safety, config, launcher, uninstall, UI-stack, and verify tests. |
 | `src/freebuff-gate-setup.js` | Interactive setup wizard: detects the Desktop install, installs/upgrades the proxy + UI patches, re-applies the tailnet forward, verifies health. |
 | `src/freebuff-gate-setup.test.js` | Wizard state/plan/parse and release-asset staging tests. |

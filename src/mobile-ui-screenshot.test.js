@@ -64,6 +64,16 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test('connected folder selector uses readable desktop and mobile grids', () => {
+  const css = MOBILE_CSS.toString('utf8');
+  assert.match(css, /\.new-thread-project-menu\s*\{[\s\S]*display: grid !important/);
+  assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(190px, 1fr\)\)/);
+  assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.new-thread-project-menu[\s\S]*position: fixed !important/);
+  assert.match(css, /max-height: calc\(100dvh - var\(--fb-mobile-header-height\) - 16px\) !important/);
+  assert.match(css, /project-option-text[\s\S]*overflow-wrap: anywhere/);
+});
+
 function isExecutable(file) {
   try {
     return fs.statSync(file).isFile() && (fs.statSync(file).mode & 0o111) !== 0;
@@ -1437,6 +1447,267 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
     assert.equal(desktop.mobileOnlyHidden, true);
     assert.equal(desktop.sessionSwitchVisible, true);
     assert.notEqual(desktop.taskPosition, 'fixed');
+  } finally {
+    await closeChrome(browser);
+    await new Promise((resolve) => proxy.close(resolve));
+    await new Promise((resolve) => fixture.server.close(resolve));
+  }
+});
+
+test('theme menu switches between default dark and Cyberpunk 2077 and persists', async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    if (process.env.CI) {
+      assert.fail('Chrome executable not found; CI screenshot coverage cannot run');
+    }
+    t.skip('Chrome executable not found; set FB_CHROME_BIN to run locally');
+    return;
+  }
+
+  const fixture = await createFixtureServer({ throughProxy: true });
+  const proxy = createProxyServer({ upstream: fixture.url });
+  const proxyPort = await listenServer(proxy);
+  let browser;
+  try {
+    browser = await launchChrome(chromePath);
+    const { cdp } = browser;
+    await cdp.send('Page.enable');
+    await cdp.send('Runtime.enable');
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+      screenWidth: 390,
+      screenHeight: 844,
+    });
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${proxyPort}/` });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+
+    // Default state: no data-fb-theme, menu has both options, default checked.
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    const menuState = await evaluate(
+      cdp,
+      `(() => ({
+        options: Array.from(document.querySelectorAll('.fb-theme-option')).map(
+          (option) => ({
+            label: option.querySelector('.fb-theme-label').textContent,
+            checked: option.getAttribute('aria-checked'),
+          }),
+        ),
+        expanded: document.querySelector('.fb-theme-toggle').getAttribute('aria-expanded'),
+      }))()`,
+    );
+    assert.deepEqual(menuState.options, [
+      { label: 'Default dark', checked: 'true' },
+      { label: 'Cyberpunk 2077', checked: 'false' },
+    ]);
+
+    // Pick Cyberpunk: attribute set, localStorage persisted, surface recolored.
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.fb-theme-option'))
+          .find((el) => el.textContent.includes('Cyberpunk 2077'));
+        option.click();
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "!document.querySelector('.fb-theme-menu')");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "getComputedStyle(document.body).backgroundColor"),
+      'rgb(18, 14, 27)',
+    );
+    // Ambient background layer present (cyberpunk-specific).
+    const ambient = await evaluate(
+      cdp,
+      "getComputedStyle(document.body, '::before').backgroundImage",
+    );
+    assert.ok(ambient.includes('radial-gradient'), 'ambient neon wash missing');
+
+    // Reload: the persisted theme applies before paint, no menu needed.
+    await cdp.send('Page.reload', { ignoreCache: true });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "getComputedStyle(document.body).backgroundColor"),
+      'rgb(18, 14, 27)',
+    );
+
+    // Switch back to default: attribute and storage cleared.
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.fb-theme-option'))
+          .find((el) => el.textContent.includes('Default dark'));
+        option.click();
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "!document.querySelector('.fb-theme-menu')");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    assert.equal(
+      await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"),
+      null,
+    );
+
+    // Desktop viewport: the toggle stays visible (it is not mobile-only).
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: 1280,
+      screenHeight: 800,
+    });
+    await delay(180);
+    const desktopToggle = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.fb-theme-toggle');
+        return {
+          present: Boolean(button),
+          visible: button && getComputedStyle(button).display !== 'none',
+        };
+      })()`,
+    );
+    assert.deepEqual(desktopToggle, { present: true, visible: true });
+
+    // The app's own Appearance surfaces (account menu + new-thread theme
+    // switch) mount/unmount per open/navigation; the injected gate options
+    // must appear there too, styled as native items.
+    await evaluate(
+      cdp,
+      `(() => {
+        const menu = document.createElement('div');
+        menu.className = 'account-menu';
+        menu.innerHTML = '<div role="group" aria-label="Appearance">' +
+          '<div class="header-menu-label">Appearance</div>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="true">Light</button>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="false">Dark</button>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="false">Match system</button>' +
+          '</div>';
+        document.querySelector('.app').appendChild(menu);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "document.querySelectorAll('.account-menu .fb-gate-theme-item').length === 2");
+    const accountMenu = await evaluate(
+      cdp,
+      `(() => ({
+        labels: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+          (item) => item.textContent.trim(),
+        ),
+        checks: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+          (item) => item.getAttribute('aria-checked'),
+        ),
+      }))()`,
+    );
+    assert.deepEqual(accountMenu.labels, ['Default dark', 'Cyberpunk 2077']);
+    assert.deepEqual(accountMenu.checks, ['true', 'false']);
+
+    // New-thread theme switch gets the same two options as icon buttons.
+    await evaluate(
+      cdp,
+      `(() => {
+        const wrap = document.createElement('div');
+        wrap.className = 'new-thread-theme';
+        wrap.innerHTML = '<div class="theme-switch"></div>';
+        document.querySelector('.app').appendChild(wrap);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length === 2");
+    assert.equal(
+      await evaluate(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length"),
+      2,
+    );
+    // The pill-row cyberpunk option switches the theme too.
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.new-thread-theme .fb-gate-theme-option'))
+          .find((el) => el.getAttribute('data-fb-theme-id') === 'cyberpunk');
+        option.click();
+        return true;
+      })()`,
+    );
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    // Checked state re-syncs on the mounted surfaces.
+    assert.deepEqual(
+      await evaluate(
+        cdp,
+        `(() => ({
+          account: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+            (item) => item.getAttribute('aria-checked'),
+          ),
+          switchRow: Array.from(document.querySelectorAll('.new-thread-theme .fb-gate-theme-option')).map(
+            (option) => option.getAttribute('aria-pressed'),
+          ),
+        }))()`,
+      ),
+      { account: ['false', 'true'], switchRow: ['false', 'true'] },
+    );
+    // A native Appearance click clears the gate override so the app's own
+    // Light/Dark/System switch stays authoritative.
+    await evaluate(
+      cdp,
+      `(() => {
+        const dark = Array.from(document.querySelectorAll('.account-menu .header-menu-item'))
+          .find((item) => !item.classList.contains('fb-gate-theme-item') && item.textContent.includes('Dark'));
+        dark.click();
+        return true;
+      })()`,
+    );
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    assert.equal(await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"), null);
+
+    // A React remount that replaces the tabbar node must not lose the button
+    // (the mobile bodySync fallback does not run on desktop).
+    await evaluate(
+      cdp,
+      `(() => {
+        const old = document.querySelector('.tabbar:not(.threadbar)');
+        const fresh = old.cloneNode(false);
+        const conn = document.createElement('div');
+        conn.className = 'conn-status';
+        fresh.appendChild(conn);
+        old.replaceWith(fresh);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+    assert.equal(
+      await evaluate(cdp, "document.querySelector('.fb-theme-toggle').parentElement.className"),
+      'tabbar',
+    );
   } finally {
     await closeChrome(browser);
     await new Promise((resolve) => proxy.close(resolve));

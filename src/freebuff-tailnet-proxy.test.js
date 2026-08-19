@@ -295,6 +295,61 @@ test('proxy injects a user theme after the built-in mobile css', async () => {
   }
 });
 
+test('proxy serves the newer of the source and deployed mobile UI files', async () => {
+  // A deployed proxy records its deploy source dir (ui-source.json, written
+  // by the installer). When a source file is NEWER than the deployed copy —
+  // an edit made in the repo after install — the proxy serves the source
+  // version, so UI changes apply on reload without a re-install.
+  // FB_UI_SOURCE_DIR is the override seam exercised here.
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-ui-source-'));
+  const past = new Date('2020-01-01T00:00:00Z');
+  const future = new Date(Date.now() + 60 * 60 * 1000);
+  fs.writeFileSync(path.join(sourceDir, 'mobile-ui.css'), '/* source-css */');
+  fs.writeFileSync(path.join(sourceDir, 'mobile-ui.js'), '/* source-js */');
+  process.env.FB_UI_SOURCE_DIR = sourceDir;
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<html><head></head><body></body></html>');
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+  const readInjected = async () => {
+    const page = await (await fetch(`http://127.0.0.1:${proxyPort}/`)).text();
+    const cssMatch = page.match(/<style id="fb-mobile-ui">([\s\S]*?)<\/style>/);
+    const jsMatch = page.match(/<script id="fb-mobile-ui">([\s\S]*?)<\/script>/);
+    assert.ok(cssMatch, 'mobile css injected');
+    assert.ok(jsMatch, 'mobile js injected');
+    return { css: cssMatch[1], js: jsMatch[1] };
+  };
+  try {
+    // Source older than the deployed copy: deployed (repo) content served.
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.css'), past, past);
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.js'), past, past);
+    let page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), false, 'old source css not served');
+    assert.equal(page.js.includes('/* source-js */'), false, 'old source js not served');
+    assert.ok(page.css.length > 1000, 'deployed mobile-ui.css served');
+    // Source newer (a repo edit after install): source content wins.
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.css'), future, future);
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.js'), future, future);
+    page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), true, 'newer source css served');
+    assert.equal(page.js.includes('/* source-js */'), true, 'newer source js served');
+    // Source removed or moved away: fall back to the deployed copy.
+    fs.rmSync(path.join(sourceDir, 'mobile-ui.css'));
+    fs.rmSync(path.join(sourceDir, 'mobile-ui.js'));
+    page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), false, 'deployed css after source removal');
+    assert.equal(page.js.includes('/* source-js */'), false, 'deployed js after source removal');
+  } finally {
+    delete process.env.FB_UI_SOURCE_DIR;
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
 test('attach upload + read-file routes store and serve browser attachments', async () => {
   const server = createProxyServer({ upstream: 'http://127.0.0.1:1' });
   const port = await listen(server);

@@ -107,6 +107,29 @@
     }
   } catch (e) {}
 
+  // Theme selection (all viewports): the header theme menu (themePicker
+  // below) switches between the app's own dark theme and the built-in
+  // Cyberpunk 2077 theme. The choice persists per browser in localStorage
+  // and is applied here, before the app paints, so a reload never flashes
+  // the wrong theme. The attribute is namespaced (data-fb-theme) and lives
+  // beside the app's own data-theme (dark/light switch), which it overrides
+  // while active — the injected stylesheet wins because it is served after
+  // the app's CSS.
+  var THEME_KEY = 'fb-ui:theme';
+  var THEME_CYBERPUNK = 'cyberpunk';
+  function persistedTheme() {
+    try {
+      return localStorage.getItem(THEME_KEY) === THEME_CYBERPUNK
+        ? THEME_CYBERPUNK
+        : 'default';
+    } catch (e) {
+      return 'default';
+    }
+  }
+  if (persistedTheme() === THEME_CYBERPUNK) {
+    root.setAttribute('data-fb-theme', THEME_CYBERPUNK);
+  }
+
   // Active session thread id, from the active tab's .tab-select id
   // ("thread-tab-<id>"). Empty on the home screen.
   function activeThreadId() {
@@ -3185,6 +3208,329 @@
     });
   }
 
+  // Theme picker (all viewports): a palette button in the header opens a
+  // menu with the built-in themes — the app's default dark theme and the
+  // Cyberpunk 2077 theme. Selecting one toggles data-fb-theme on <html> (the
+  // CSS lives in mobile-ui.css) and persists the choice per browser in
+  // localStorage, so Gate Desktop and Gate Mobile on this device keep the
+  // same look across reloads. The app's own dark/light switch is untouched;
+  // the injected theme layers on top of it. Runs at every viewport — unlike
+  // the mobile-only header controls, the button stays visible on desktop.
+  var themePickerBound = false;
+  function themePicker() {
+    if (themePickerBound) return;
+    themePickerBound = true;
+    // Wait for the main tabbar (like the session switcher), not just <body>:
+    // on the real app React mounts the tabbar after parse, and binding to a
+    // not-yet-existing header would drop the button forever.
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
+      var menu = null;
+      var opener = null;
+      var THEMES = [
+        { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
+        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#f2d21c' },
+      ];
+      function applyTheme(id, opts) {
+        if (id === THEME_CYBERPUNK) {
+          document.documentElement.setAttribute('data-fb-theme', id);
+        } else {
+          document.documentElement.removeAttribute('data-fb-theme');
+        }
+        try {
+          if (id === THEME_CYBERPUNK) localStorage.setItem(THEME_KEY, id);
+          else localStorage.removeItem(THEME_KEY);
+        } catch (e) {}
+        if (!opts || !opts.silent) {
+          mobileLiveRegion.announce(
+            id === THEME_CYBERPUNK
+              ? 'Theme set to Cyberpunk 2077.'
+              : 'Theme set to default dark.',
+            'polite',
+          );
+        }
+        syncAppearancePatch();
+      }
+      function close() {
+        if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+        menu = null;
+        if (opener) opener.classList.remove('open');
+        opener = null;
+        mobileOverlay.dismiss('theme-menu');
+      }
+      function open(btn) {
+        close();
+        opener = btn;
+        btn.classList.add('open');
+        var current = persistedTheme();
+        menu = document.createElement('div');
+        menu.className = 'fb-theme-menu';
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', 'Theme');
+        var title = document.createElement('div');
+        title.className = 'fb-theme-menu-title';
+        title.textContent = 'Theme';
+        menu.appendChild(title);
+        THEMES.forEach(function (theme) {
+          var option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'fb-theme-option';
+          option.setAttribute('role', 'menuitemradio');
+          option.setAttribute('aria-checked', current === theme.id ? 'true' : 'false');
+          var swatch = document.createElement('span');
+          swatch.className = 'fb-theme-swatch';
+          swatch.style.background = theme.swatch;
+          swatch.setAttribute('aria-hidden', 'true');
+          var label = document.createElement('span');
+          label.className = 'fb-theme-label';
+          label.textContent = theme.label;
+          var check = document.createElement('span');
+          check.className = 'fb-theme-check';
+          check.setAttribute('aria-hidden', 'true');
+          check.textContent = '✓';
+          option.appendChild(swatch);
+          option.appendChild(label);
+          option.appendChild(check);
+          option.addEventListener('click', function () {
+            applyTheme(theme.id);
+            close();
+          });
+          menu.appendChild(option);
+        });
+        document.body.appendChild(menu);
+        attachSwipeDownClose(menu, close);
+        mobileOverlay.open('theme-menu', close);
+      }
+      function ensure(header) {
+        if (!header || header.querySelector('.fb-theme-toggle')) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'fb-theme-toggle';
+        btn.setAttribute('aria-label', 'Change theme');
+        btn.setAttribute('aria-haspopup', 'menu');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.title = 'Theme';
+        btn.innerHTML =
+          '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="8" cy="8" r="6.25"/>' +
+          '<path d="M8 1.75a6.25 6.25 0 0 1 0 12.5Z" fill="currentColor" stroke="none"/>' +
+          '</svg>';
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (menu) close();
+          else open(btn);
+        });
+        var anchor =
+          header.querySelector('.conn-status') ||
+          header.querySelector('.tabbar-account') ||
+          null;
+        if (anchor) header.insertBefore(btn, anchor);
+        else header.appendChild(btn);
+      }
+      ensure(tabbar);
+      ensure(document.querySelector('.tabbar.threadbar'));
+      // React re-renders the tabbar on tab/status changes (streaming tokens
+      // swap tab nodes), so re-insert the button if a re-render dropped it.
+      // Two observers: the tabbar one catches child re-renders; the parent
+      // one (childList only, cheap) catches the tabbar node itself being
+      // replaced by a remount. Desktop has no mobile bodySync fallback, so
+      // the button must recover on its own.
+      new MutationObserver(function () {
+        ensure(tabbar);
+        ensure(document.querySelector('.tabbar.threadbar'));
+      }).observe(tabbar, {
+        childList: true,
+        subtree: true,
+      });
+      var tabbarParent = tabbar.parentElement;
+      if (tabbarParent) {
+        new MutationObserver(function () {
+          var current = document.querySelector('.tabbar:not(.threadbar)');
+          if (current && current !== tabbar) {
+            tabbar = current;
+            ensure(tabbar);
+          }
+          ensure(document.querySelector('.tabbar.threadbar'));
+        }).observe(tabbarParent, { childList: true });
+      }
+      // Outside tap / Escape / resize close, matching the session menu.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          if (isCloseConfirmTarget(ev.target)) return;
+          if (
+            menu &&
+            !menu.contains(ev.target) &&
+            (!opener || !opener.contains(ev.target))
+          ) {
+            close();
+          }
+        },
+        true,
+      );
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') close();
+      });
+      window.addEventListener('resize', close);
+      // Sync the theme across this device's other windows/tabs.
+      window.addEventListener('storage', function (ev) {
+        if (ev.key !== THEME_KEY) return;
+        if (persistedTheme() === THEME_CYBERPUNK) {
+          document.documentElement.setAttribute('data-fb-theme', THEME_CYBERPUNK);
+        } else {
+          document.documentElement.removeAttribute('data-fb-theme');
+        }
+      });
+
+      // ---- Native Appearance surfaces ----
+      // The app's own Appearance UI (account menu group + the new-thread
+      // theme switch) only offers Light/Dark/System, so the gate themes were
+      // easy to miss. Patch both surfaces with the same Default dark /
+      // Cyberpunk 2077 options, styled as native items. The surfaces
+      // mount/unmount per open/navigation and React re-renders them after a
+      // native themePref change (wiping injected nodes), so patching is
+      // idempotent and re-runs on any non-transcript DOM change (debounced
+      // like the mobile body sync). Clicking a NATIVE option also clears the
+      // gate override, so the app's own switch stays authoritative once the
+      // user touches it.
+      function optionIcon(kind) {
+        if (kind === 'moon') {
+          return '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" ' +
+            'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+            'stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M14 9.6A6 6 0 0 1 6.4 2a6 6 0 1 0 7.6 7.6Z"/></svg>';
+        }
+        return '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="8" cy="8" r="6.25"/>' +
+          '<path d="M8 1.75a6.25 6.25 0 0 1 0 12.5Z" fill="currentColor" stroke="none"/>' +
+          '</svg>';
+      }
+      function syncAppearancePatch() {
+        var active = persistedTheme() === THEME_CYBERPUNK;
+        document.querySelectorAll('.fb-gate-theme-item, .fb-gate-theme-option').forEach(function (el) {
+          var id = el.getAttribute('data-fb-theme-id');
+          var on = (id === THEME_CYBERPUNK) === active;
+          if (el.classList.contains('theme-option')) {
+            el.classList.toggle('on', on);
+            el.setAttribute('aria-pressed', on ? 'true' : 'false');
+          } else {
+            el.setAttribute('aria-checked', on ? 'true' : 'false');
+          }
+        });
+      }
+      function patchAppearance() {
+        // Account menu: the Appearance group gets a "Gate themes" section.
+        var group = document.querySelector('.account-menu [role="group"][aria-label="Appearance"]');
+        if (group && !group.querySelector('.fb-gate-theme-item')) {
+          var label = document.createElement('div');
+          label.className = 'header-menu-label';
+          label.textContent = 'Gate themes';
+          group.appendChild(label);
+          THEMES.forEach(function (theme) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'header-menu-item fb-gate-theme-item';
+            item.setAttribute('role', 'menuitemradio');
+            item.setAttribute('aria-checked', 'false');
+            item.setAttribute('data-fb-theme-id', theme.id);
+            item.setAttribute('aria-label', theme.label);
+            item.innerHTML =
+              optionIcon(theme.id === THEME_CYBERPUNK ? 'cyber' : 'moon') +
+              '<span>' + theme.label + '</span>' +
+              '<svg class="header-menu-check" width="14" height="14" viewBox="0 0 16 16" ' +
+              'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+              'stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3.2L13 4.5"/></svg>';
+            item.addEventListener('click', function () {
+              applyTheme(theme.id);
+            });
+            group.appendChild(item);
+          });
+        }
+        // New-thread screen: the Light/Dark/System pill row gets the same
+        // two options as icon buttons (tooltips carry the labels).
+        var sw = document.querySelector('.new-thread-theme .theme-switch');
+        if (sw && !sw.querySelector('.fb-gate-theme-option')) {
+          THEMES.forEach(function (theme) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'theme-option fb-gate-theme-option';
+            btn.setAttribute('aria-pressed', 'false');
+            btn.setAttribute('data-fb-theme-id', theme.id);
+            btn.setAttribute('data-tooltip', theme.label);
+            btn.setAttribute('aria-label', theme.label);
+            btn.title = theme.label;
+            btn.innerHTML = optionIcon(theme.id === THEME_CYBERPUNK ? 'cyber' : 'moon');
+            btn.addEventListener('click', function () {
+              applyTheme(theme.id);
+            });
+            sw.appendChild(btn);
+          });
+        }
+        syncAppearancePatch();
+      }
+      var patchTimer = null;
+      function schedulePatch() {
+        if (patchTimer) return;
+        patchTimer = setTimeout(function () {
+          patchTimer = null;
+          patchAppearance();
+        }, 80);
+      }
+      patchAppearance();
+      // A native Light/Dark/System click must clear the gate override;
+      // otherwise the cyberpunk theme silently wins over the app's switch.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          var target = ev.target && ev.target.closest
+            ? ev.target.closest('.header-menu-item, .theme-option')
+            : null;
+          if (!target) return;
+          if (
+            target.classList.contains('fb-gate-theme-item') ||
+            target.classList.contains('fb-gate-theme-option')
+          ) {
+            return;
+          }
+          var inAppearance =
+            target.closest('[role="group"][aria-label="Appearance"]') ||
+            target.closest('.theme-switch');
+          if (!inAppearance) return;
+          if (persistedTheme() === THEME_CYBERPUNK) {
+            applyTheme('default', { silent: true });
+          }
+        },
+        true,
+      );
+      // Menu open / home navigation mount the Appearance surfaces; React
+      // also re-renders them after a native themePref change (wiping
+      // injected nodes), so re-patch on any non-transcript DOM change.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          var target = ev.target && ev.target.closest
+            ? ev.target.closest('.account-trigger, .account-menu, .new-thread-theme, .theme-switch')
+            : null;
+          if (target) schedulePatch();
+        },
+        true,
+      );
+      var appShell = document.querySelector('.app');
+      if (appShell) {
+        new MutationObserver(function (records) {
+          if (records.some(function (record) { return !isTranscriptNode(record.target); })) {
+            schedulePatch();
+          }
+        }).observe(appShell, { childList: true, subtree: true });
+      }
+    });
+  }
+
   // Sliding tools panel (mobile): the explorer is hidden on mobile — no
   // open drawer, no collapsed rail. A header button (.fb-panel-toggle)
   // summons it as a panel that slides in from the right over the chat,
@@ -4910,6 +5256,7 @@
   homeThreadHistory();
   bindMessageCompact();
   sessionSwitcher();
+  themePicker();
   copyFeedback();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();

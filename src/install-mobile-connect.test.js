@@ -26,6 +26,7 @@ const {
   PROXY_SERVICE_NAME,
   PROXY_WINDOWS_TASK_NAME,
   SYSTEMD_SERVICE_NAME,
+  UI_SOURCE_SIDECAR,
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,
@@ -440,6 +441,14 @@ test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently'
     for (const file of PROXY_FILES) {
       assert.equal(fs.existsSync(path.join(first.proxy, file)), true, `proxy file ${file}`);
     }
+    // Deploy-source sidecar lets the running proxy serve newer repo UI files.
+    const sidecarPath = path.join(first.proxy, UI_SOURCE_SIDECAR);
+    assert.equal(fs.existsSync(sidecarPath), true, 'ui-source.json sidecar written');
+    assert.equal(
+      JSON.parse(fs.readFileSync(sidecarPath, 'utf8')).sourceDir,
+      path.resolve(options.sourceDir),
+      'sidecar records the deploy source dir',
+    );
     assert.match(first.applied.join(' '), /bundle:index-ABC\.js:patched/);
     assert.match(first.applied.join(' '), /shim:patched/);
     assert.match(first.applied.join(' '), /orchestrator:routes,perf-helper/);
@@ -448,6 +457,7 @@ test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently'
     assert.equal(bundle.includes(CREATE_REUSE), true);
     const html = fs.readFileSync(path.join(fake.uiDir, 'index.html'), 'utf8');
     assert.equal(html.includes('fb-desktop-shim'), true);
+    assert.equal(html.includes('fb-connected-folder-grid-v2'), true);
     assert.match(html, /fb-desktop-shim[\s\S]*<\/script>[\s\S]*<\/head>/);
     const orch = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
     assert.equal(orch.includes('/api/fb/dirlist'), true);
@@ -508,11 +518,21 @@ test('verify: reports healthy stack, then fails loudly on each wiped patch', asy
     assert.deepEqual(healthy.errors, []);
 
     // A proxy can keep serving stale injected assets even when all Desktop
-    // bundle patch markers remain present. Setup must flag that drift so the
-    // next upgrade copies current picker assets and restarts the proxy.
+    // bundle patch markers remain present. With the ui-source.json sidecar
+    // the proxy self-heals by serving the newer SOURCE copy, so drift is a
+    // warning; without the sidecar (older installs) the stale copy is what
+    // gets served, so it stays an error that demands a re-run.
     fs.appendFileSync(path.join(installed.proxy, 'mobile-ui.js'), '\n// stale deployed asset\n');
     fs.appendFileSync(path.join(installed.proxy, 'mobile-ui.css'), '\n/* stale deployed asset */\n');
     let report = verifyUiStack(options);
+    assert.equal(report.ok, true, JSON.stringify(report.errors));
+    assert.equal(report.warnings.some((e) => e.item === 'proxy-ui'), true);
+    assert.match(
+      report.warnings.find((e) => e.item === 'proxy-ui').message,
+      /mobile-ui\.css, mobile-ui\.js/,
+    );
+    fs.unlinkSync(path.join(installed.proxy, UI_SOURCE_SIDECAR));
+    report = verifyUiStack(options);
     assert.equal(report.ok, false);
     assert.equal(report.errors.some((e) => e.item === 'proxy-ui'), true);
     assert.match(report.errors.find((e) => e.item === 'proxy-ui').message, /mobile-ui\.css, mobile-ui\.js/);

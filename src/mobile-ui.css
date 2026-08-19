@@ -2439,3 +2439,310 @@ body {
 .fb-ad-cancel {
   background: color-mix(in srgb, var(--muted, #888) 30%, transparent);
 }
+
+/* ─────────────────── Theme selection (all viewports) ────────────────────
+   Header button (src/mobile-ui.js) opens the theme menu. Unlike the
+   mobile-only header controls, .fb-theme-toggle stays visible on desktop:
+   it is deliberately NOT in the min-width:1001px hide group above. */
+.fb-theme-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  /* The tabbar is a native drag region; the desktop button must stay
+     clickable wherever it renders (browser port or Electron). */
+  -webkit-app-region: no-drag;
+}
+.fb-theme-toggle:hover,
+.fb-theme-toggle:active,
+.fb-theme-toggle.open {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-theme-toggle:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Theme menu: same popover family as the tab/session menus, anchored under
+   the slim header on mobile and the tabbar on desktop (the shared
+   --fb-mobile-header-height token covers both). */
+.fb-theme-menu {
+  position: fixed;
+  top: calc(var(--fb-mobile-header-height) + 6px);
+  right: 8px;
+  z-index: 50;
+  min-width: 210px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 42%, transparent);
+  font-size: 13.5px;
+  animation: fb-menu-in 0.12s ease;
+}
+.fb-theme-menu-title {
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.fb-theme-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-theme-option:hover {
+  background: var(--raised);
+}
+.fb-theme-option:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+.fb-theme-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text) 32%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--shadow) 35%, transparent);
+}
+.fb-theme-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fb-theme-check {
+  flex: none;
+  color: var(--fb-m-brand);
+  opacity: 0;
+  font-weight: 700;
+}
+.fb-theme-option[aria-checked='true'] .fb-theme-check {
+  opacity: 1;
+}
+
+/* ─────────── Cyberpunk 2077 theme (dark-side) ───────────────────────────
+   Built-in theme, chosen from the header theme menu and persisted per
+   browser. Scoped to :root[data-fb-theme='cyberpunk'] so the app's default
+   dark theme is untouched. Re-assigns the app's own tokens (same names,
+   injected after the app stylesheet, so these win) and the mobile layer's
+   --fb-m-* tokens. Stays on the dark side: near-black violet surfaces,
+   Cyberpunk's signature yellow for brand accents, cyan for focus and glow,
+   plus a faint ambient background (neon wash + CRT scanlines) that shows
+   through the app's transparent regions only. */
+:root[data-fb-theme='cyberpunk'] {
+  color-scheme: dark;
+  --bg: #0b0912;
+  --chrome: #08060e;
+  --surface: #120e1b;
+  --surface-2: #191326;
+  --surface-3: #211a33;
+  --raised: #251d38;
+  --border: #2d2440;
+  --text: #e9e6f2;
+  --muted: #a39bb5;
+  --faint: #6e6584;
+  --brand: #f2d21c;
+  --brand-dim: #b89a0f;
+  --accent: #d6d2e4;
+  --accent-dim: #7f7894;
+  --premium: #e0b054;
+  --green: #7fbf96;
+  --danger: #e36a8a;
+  --ok: #4fd091;
+  --warn: #d3a51f;
+  --shadow: #000;
+  --focus-ring: color-mix(in srgb, #3fd8ee 45%, transparent);
+  --fb-m-brand: #f2d21c;
+  --fb-m-brand-ink: #151203;
+  --fb-m-brand-soft: color-mix(in srgb, #f2d21c 13%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #f2d21c 26%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px
+    color-mix(in srgb, #f2d21c 45%, transparent);
+}
+
+/* Ambient night-city wash: two soft neon glows (cyan top-left, violet
+   bottom-right) plus a faint yellow one. z-index:-1 keeps it under all app
+   content — it only tints the app's transparent regions (transcript, home,
+   composer glass, modal blur), never competes with text or panels. */
+:root[data-fb-theme='cyberpunk'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      42% 36% at 8% 0%,
+      color-mix(in srgb, #18c8e6 10%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      46% 42% at 96% 88%,
+      color-mix(in srgb, #8b2fd6 11%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      30% 26% at 78% 4%,
+      color-mix(in srgb, #f2d21c 6%, transparent),
+      transparent 70%
+    );
+}
+/* Subtle CRT scanlines over the same transparent regions. */
+:root[data-fb-theme='cyberpunk'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 3px,
+    color-mix(in srgb, #ffffff 2.2%, transparent) 3px 4px
+  );
+}
+
+/* Neon hairline under the tabbar — the yellow line is the brand accent, the
+   cyan under-glow stays faint. The mobile polish section already paints a
+   brand-tinted border-bottom at narrow widths; this covers desktop too. */
+:root[data-fb-theme='cyberpunk'] .tabbar {
+  border-bottom-color: color-mix(in srgb, #f2d21c 30%, var(--border));
+  box-shadow: 0 1px 0 color-mix(in srgb, #3fd8ee 14%, transparent),
+    0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
+}
+
+/* Faint cyan edge on the explorer panel so it reads as a neon-framed
+   surface instead of a flat slab. */
+:root[data-fb-theme='cyberpunk'] .explorer {
+  border-color: color-mix(in srgb, #3fd8ee 24%, var(--border));
+}
+
+/* Soft neon rim under user bubbles (mobile polish keeps the brand-tinted
+   border; this adds the cyan under-glow without brightening anything). */
+:root[data-fb-theme='cyberpunk'] .msg.user .bubble {
+  box-shadow: 0 1px 0 color-mix(in srgb, #3fd8ee 10%, transparent);
+}
+
+/* Connected-folder selector: show project paths as readable cards instead
+   of one narrow vertical dropdown. Applies to desktop and mobile. */
+.new-thread-project-menu {
+  display: grid !important;
+  box-sizing: border-box;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  width: min(560px, calc(100vw - 24px));
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  gap: 6px;
+  padding: 8px;
+}
+.new-thread-project-menu .project-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  min-width: 0;
+  min-height: 72px;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  white-space: normal;
+}
+.new-thread-project-menu .project-option:hover,
+.new-thread-project-menu .project-option[aria-checked='true'] {
+  border-color: var(--accent-dim);
+  background: var(--raised);
+}
+.new-thread-project-menu .project-option > svg {
+  margin-top: 2px;
+  color: var(--accent);
+}
+.new-thread-project-menu .project-option-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+.new-thread-project-menu .project-option-text strong,
+.new-thread-project-menu .project-option-text span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.new-thread-project-menu .project-option-text strong {
+  color: var(--text);
+  line-height: 1.25;
+}
+.new-thread-project-menu .project-option-text span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.new-thread-project-menu > .header-menu-sep,
+.new-thread-project-menu > .header-menu-item:not(.project-option) {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+  .new-thread-project-menu {
+    position: fixed !important;
+    top: calc(var(--fb-mobile-header-height) + 8px) !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    left: 8px !important;
+    z-index: 59;
+    box-sizing: border-box;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: calc(100dvh - var(--fb-mobile-header-height) - 16px) !important;
+    padding: 6px;
+    gap: 5px;
+  }
+  .new-thread-project-menu .project-option {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    min-height: 84px;
+    padding: 8px 5px;
+    text-align: center;
+  }
+  .new-thread-project-menu .project-option > svg {
+    margin-top: 0;
+  }
+  .new-thread-project-menu .project-option-text {
+    width: 100%;
+    text-align: center;
+  }
+  .new-thread-project-menu .header-menu-check {
+    display: none;
+  }
+}

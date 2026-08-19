@@ -174,6 +174,49 @@ for narrow viewports:
   lock).
 - **480px**: further tightening for small phones.
 
+## Built-in theme picker
+
+The header (mobile and desktop) carries a palette button that switches
+between the built-in themes:
+
+1. **Default dark** — the app's own dark theme, untouched.
+2. **Cyberpunk 2077** — a dark-side Cyberpunk skin: near-black violet
+   surfaces, Cyberpunk's signature yellow for brand accents (spinners,
+   unseen dots, pills), cyan for focus rings and neon hairlines, plus a
+   faint ambient background (soft cyan/violet neon wash and CRT scanlines)
+   that shows only through the app's transparent regions. Nothing bright —
+   it stays on the dark side.
+
+The choice persists per browser in `localStorage` (`fb-ui:theme`) and
+applies before the app paints, so reloads never flash the wrong theme. The
+Cyberpunk theme is independent of the app's native dark/light switch: when
+active it overrides that switch (the injected stylesheet is served after
+the app's CSS). The implementation lives in `src/mobile-ui.js` (picker
+state) and `src/mobile-ui.css` (scoped under
+`:root[data-fb-theme='cyberpunk']`).
+
+The gate options also appear inside the app's own Appearance UI, where the
+native Light/Dark/System choices live: the account menu's Appearance group
+gets a "Gate themes" section (Default dark / Cyberpunk 2077, with check
+marks), and the new-thread screen's theme switch row gets the same two
+options as icon buttons. Picking a native Light/Dark/System option clears
+the gate override, so the app's own switch stays authoritative once
+touched.
+
+### Source-file fallback (repo edits apply without re-installing)
+
+The proxy normally serves `mobile-ui.css` / `mobile-ui.js` from its own
+deploy directory. When the installer or setup wizard deploys the proxy, it
+writes a `ui-source.json` sidecar next to the proxy recording the directory
+the files were deployed from (the repo `src/`, or the setup-binary's asset
+cache). At serve time the proxy stats both copies per request and serves the
+one with the newer mtime — so an edit made in the repo after install shows
+up on reload, with no re-run of the installer. Override the recorded path
+with `FB_UI_SOURCE_DIR`. If the source copy is missing or older, the
+deployed copy is served as before. `install-mobile-connect.js verify`
+reflects this: stale deployed UI is a warning when the sidecar is present
+(the proxy self-heals) and an error on older installs without it.
+
 ## Theming SDK
 
 The mobile layer is themed through CSS custom properties (tokens). All

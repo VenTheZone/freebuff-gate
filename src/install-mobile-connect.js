@@ -30,6 +30,11 @@ const PROXY_FILES = Object.freeze([
   'perf-probe.js',
 ]);
 const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
+// Sidecar written next to the deployed proxy: records the directory the UI
+// files were deployed from. The running proxy reads it and serves the
+// SOURCE copy of mobile-ui.css/js when the source file is newer than the
+// deployed one, so repo edits apply on reload without re-running install.
+const UI_SOURCE_SIDECAR = 'ui-source.json';
 const LAUNCH_AGENT_LABEL = 'com.freebuff.mobile-connect';
 const WINDOWS_TASK_NAME = 'Freebuff Mobile Connect';
 const PROXY_LAUNCH_AGENT_LABEL = 'com.freebuff.tailnet-proxy';
@@ -886,6 +891,7 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
   if (missing.length > 0) throw new Error(`Missing proxy source file(s) in --source-dir: ${missing.join(', ')}`);
   if (dryRun) {
     console.log(`Would deploy tailnet proxy to ${proxyDir}`);
+    console.log(`Would record UI source dir ${path.resolve(options.sourceDir)} in ${path.join(proxyDir, UI_SOURCE_SIDECAR)}`);
     if (registration.type === 'systemd-user') console.log(`Would write and enable ${registration.file}`);
     return { changed: true, proxyDir, registration };
   }
@@ -894,6 +900,16 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
     fs.copyFileSync(path.join(options.sourceDir, file), path.join(proxyDir, file));
     try { fs.chmodSync(path.join(proxyDir, file), 0o644); } catch {}
   }
+  // Record the deploy source so the running proxy can serve newer repo
+  // versions of mobile-ui.css/js without waiting for the next install.
+  writeAtomically(
+    path.join(proxyDir, UI_SOURCE_SIDECAR),
+    `${JSON.stringify({
+      sourceDir: path.resolve(options.sourceDir),
+      deployedAt: new Date().toISOString(),
+    }, null, 2)}\n`,
+    0o644,
+  );
   if (registration.type === 'systemd-user') {
     if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
       throw new Error(`Refusing to overwrite unmanaged auto-start registration: ${registration.file}`);
@@ -943,7 +959,9 @@ function applyBundlePatch(bundleFile) {
 function applyIndexShim(indexFile) {
   let html = fs.readFileSync(indexFile, 'utf8');
   const present = html.includes('fb-desktop-shim');
-  if (present && /<script id="fb-desktop-shim">[\s\S]*?<\/script>/.test(html)) {
+  const currentShimMarker = 'fb-connected-folder-grid-v2';
+  const shimMatch = html.match(/<script id="fb-desktop-shim">[\s\S]*?<\/script>/);
+  if (present && shimMatch && shimMatch[0].includes(currentShimMarker)) {
     return { file: indexFile, outcome: 'already-patched' };
   }
   if (!html.includes('</head>')) throw new Error(`index.html has no </head> to anchor the shim: ${indexFile}`);
@@ -1165,7 +1183,11 @@ async function install(options) {
     if (options.uiPatches) {
       try {
         const desktopDir = findFreebuffDesktop(options);
-        console.log(`UI patches: would deploy proxy to ${paths.proxyDir} and patch ${desktopOrchestratorDir(desktopDir)}`);
+        // installUiStack derives the proxy dir from the PROXY auto-start
+        // paths (paths.proxyDir above is the agent stack's), so resolve it
+        // the same way here for an honest dry-run report.
+        const proxyDir = options.proxyDir || proxyAutoStartPaths(options).proxyDir;
+        console.log(`UI patches: would deploy proxy to ${proxyDir} and patch ${desktopOrchestratorDir(desktopDir)}`);
       } catch (error) {
         console.log(`UI patches: SKIPPED (${error.message})`);
       }
@@ -1407,10 +1429,18 @@ function collectProblems(desktopDir, options = {}) {
       return !fs.readFileSync(source).equals(fs.readFileSync(deployed));
     });
     if (staleUiFiles.length > 0) {
+      // With the ui-source.json sidecar the running proxy serves the newer
+      // SOURCE copy itself, so staleness of the deployed snapshot is a
+      // tidiness warning, not a live regression. Without the sidecar (older
+      // installs) the deployed copy is what gets served, so it stays an
+      // error that demands a re-run.
+      const hasSourceSidecar = fs.existsSync(path.join(proxyDir, UI_SOURCE_SIDECAR));
       problems.push({
-        level: 'error',
+        level: hasSourceSidecar ? 'warn' : 'error',
         item: 'proxy-ui',
-        message: `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (re-run install)`,
+        message: hasSourceSidecar
+          ? `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (proxy serves the newer source copy; re-run install to refresh the deployed snapshot)`
+          : `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (re-run install)`,
       });
     }
   }
@@ -1555,6 +1585,11 @@ function uninstall(options) {
   if (proxyLeftRunning) {
     console.log(`Tailnet proxy ${PROXY_SERVICE_NAME} is still running; left unit and files in place.`);
   } else {
+    // Drop the deploy-source sidecar (managed state for this install); the
+    // rest of the proxy dir is intentionally preserved for the next install.
+    try { fs.unlinkSync(path.join(proxyDir, UI_SOURCE_SIDECAR)); } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
     try { fs.rmdirSync(proxyDir); } catch (error) {
       if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
     }
@@ -1605,6 +1640,7 @@ module.exports = {
   PROXY_SERVICE_NAME,
   PROXY_WINDOWS_TASK_NAME,
   SYSTEMD_SERVICE_NAME,
+  UI_SOURCE_SIDECAR,
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,

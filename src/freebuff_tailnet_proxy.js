@@ -22,7 +22,46 @@ const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
 
 const REPO = __dirname;
-const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
+
+// ---- UI source fallback ----
+// The deployed proxy serves the mobile layer files (mobile-ui.css /
+// mobile-ui.js) from its own directory. When the installer/setup deploys
+// the proxy from a repo, it records the source directory in ui-source.json
+// beside the proxy. If a source file is NEWER than the deployed copy — an
+// edit made in the repo after install — the proxy serves the source
+// version, so UI changes apply on reload without re-running the installer.
+// FB_UI_SOURCE_DIR overrides the recorded path (tests, unusual layouts).
+// Resolution happens per request, so edits apply on reload like the
+// deployed files themselves.
+const UI_SOURCE_SIDECAR = 'ui-source.json';
+function uiSourceDir() {
+  if (process.env.FB_UI_SOURCE_DIR) return process.env.FB_UI_SOURCE_DIR;
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(__dirname, UI_SOURCE_SIDECAR), 'utf8'),
+    );
+    return typeof parsed.sourceDir === 'string' && parsed.sourceDir
+      ? parsed.sourceDir
+      : null;
+  } catch (e) {
+    return null;
+  }
+}
+function uiAssetPath(name) {
+  const installed = path.join(__dirname, name);
+  const sourceDir = uiSourceDir();
+  if (sourceDir) {
+    const source = path.join(sourceDir, name);
+    try {
+      if (fs.statSync(source).mtimeMs > fs.statSync(installed).mtimeMs) {
+        return source;
+      }
+    } catch (e) {
+      // Missing or unreadable source falls back to the deployed copy.
+    }
+  }
+  return installed;
+}
 
 // ---- ad broadcast cache ----
 // Last known non-empty ad fill per placement, captured from /api/ad/slot
@@ -55,7 +94,6 @@ const DEV_AD = {
 function devAdBroadcastEnabled() {
   return process.env.FB_AD_DEV_BROADCAST === '1';
 }
-const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
 // ---- mobile theming SDK ----
 // Users drop a theme.css here (or point FB_MOBILE_THEME_FILE at their own
@@ -256,6 +294,12 @@ function adSniff(kind, data) {
 // orchestrator's on-disk bundle carries that route; the proxy serves the
 // same page and forwards the call upstream).
 const SHIM = `(function () {
+  // Connected-folder grid applies in native desktop too; browser/mobile also
+  // get same rules from mobile-ui.css.
+  var folderGridStyle = document.createElement('style');
+  folderGridStyle.id = 'fb-connected-folder-grid-v2';
+  folderGridStyle.textContent = '.new-thread-project-menu{display:grid!important;box-sizing:border-box;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));width:min(560px,calc(100vw - 24px));min-width:0;max-width:calc(100vw - 24px);max-height:min(70vh,520px);overflow-y:auto;gap:6px;padding:8px}.new-thread-project-menu .project-option{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;min-width:0;min-height:72px;gap:8px;padding:10px;border:1px solid transparent;border-radius:9px;white-space:normal}.new-thread-project-menu .project-option:hover,.new-thread-project-menu .project-option[aria-checked="true"]{border-color:var(--accent-dim);background:var(--raised)}.new-thread-project-menu .project-option-text{display:flex;min-width:0;flex-direction:column;gap:3px;text-align:left}.new-thread-project-menu .project-option-text strong,.new-thread-project-menu .project-option-text span{min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:normal}.new-thread-project-menu .project-option-text span{color:var(--muted);font-size:11px;line-height:1.3}.new-thread-project-menu>.header-menu-sep,.new-thread-project-menu>.header-menu-item:not(.project-option){grid-column:1/-1}@media(max-width:700px){.new-thread-project-menu{position:fixed!important;top:calc(var(--fb-mobile-header-height) + 8px)!important;right:8px!important;bottom:8px!important;left:8px!important;z-index:59;box-sizing:border-box;grid-template-columns:repeat(2,minmax(0,1fr));width:auto!important;min-width:0!important;max-width:none!important;max-height:calc(100dvh - var(--fb-mobile-header-height) - 16px)!important;padding:6px;gap:5px}.new-thread-project-menu .project-option{grid-template-columns:1fr;justify-items:center;min-height:84px;padding:8px 5px;text-align:center}.new-thread-project-menu .project-option-text{width:100%;text-align:center}.new-thread-project-menu .header-menu-check{display:none}}';
+  (document.head || document.documentElement).appendChild(folderGridStyle);
   if (window.freebuffDesktop) return;
   var virtualPick = function () {
     return new Promise(function (resolve) {
@@ -536,7 +580,7 @@ function mobileTag(type) {
   try {
     const body = type === 'theme'
       ? fs.readFileSync(mobileThemePath(), 'utf8')
-      : fs.readFileSync(type === 'css' ? MOBILE_CSS_PATH : MOBILE_JS_PATH, 'utf8');
+      : fs.readFileSync(type === 'css' ? uiAssetPath('mobile-ui.css') : uiAssetPath('mobile-ui.js'), 'utf8');
     if (type === 'js') return `<script id="fb-mobile-ui">${body}<\/script>`;
     if (type === 'theme') return `<style id="fb-mobile-theme">${body}</style>`;
     return `<style id="fb-mobile-ui">${body}</style>`;
@@ -1272,6 +1316,9 @@ module.exports = {
   checkUiPatches,
   createProxyServer,
   patchBundle,
+  UI_SOURCE_SIDECAR,
+  uiAssetPath,
+  uiSourceDir,
 };
 
 if (require.main === module) {
