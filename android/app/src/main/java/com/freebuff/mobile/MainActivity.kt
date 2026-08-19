@@ -54,6 +54,19 @@ class MainActivity : AppCompatActivity() {
         // without POST_NOTIFICATIONS; only the notification itself is hidden.
     }
 
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) {
+            (engine as? WebViewGateEngine)?.onFilePickerResult(null)
+            (engine as? GeckoGateEngine)?.onFilePickerResult(null)
+        } else {
+            val uris = arrayOf(uri)
+            (engine as? WebViewGateEngine)?.onFilePickerResult(uris)
+            (engine as? GeckoGateEngine)?.onFilePickerResult(uris)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isForeground = true
@@ -82,6 +95,13 @@ class MainActivity : AppCompatActivity() {
         engine = GateEngineFactory.create(this)
         engine.configure {
             showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
+        }
+        engine.setFilePickerLauncher { acceptTypes, _ ->
+            val mimeTypes = acceptTypes
+                .filter { it.isNotBlank() }
+                .ifEmpty { listOf("*/*") }
+                .toTypedArray()
+            filePickerLauncher.launch(mimeTypes.first())
         }
         browserHost.addView(
             engine.view,

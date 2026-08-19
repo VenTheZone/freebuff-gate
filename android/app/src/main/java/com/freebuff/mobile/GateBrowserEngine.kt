@@ -31,4 +31,14 @@ interface GateBrowserEngine {
     fun goBack()
     fun stopLoading()
     fun destroy()
+
+    /**
+     * Registers a callback the engine invokes when the web page requests file
+     * selection (input[type=file]). The activity provides the launcher that
+     * opens the system file picker; the engine invokes [onFilesSelected] with
+     * the resulting URIs, or null if the user cancelled.
+     */
+    fun setFilePickerLauncher(
+        requestFile: (acceptTypes: Array<String>, allowMultiple: Boolean) -> Unit,
+    )
 }
