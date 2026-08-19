@@ -67,10 +67,13 @@ function delay(ms) {
 test('connected folder selector uses readable desktop and mobile grids', () => {
   const css = MOBILE_CSS.toString('utf8');
   assert.match(css, /\.new-thread-project-menu\s*\{[\s\S]*display: grid !important/);
-  assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(190px, 1fr\)\)/);
+  assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(145px, 1fr\)\)/);
   assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.new-thread-project-menu[\s\S]*position: fixed !important/);
-  assert.match(css, /max-height: calc\(100dvh - var\(--fb-mobile-header-height\) - 16px\) !important/);
+  assert.match(css, /top: 50% !important[\s\S]*transform: translate\(-50%, -50%\)/);
+  assert.match(css, /width: min\(420px, calc\(100vw - 24px\)\) !important/);
+  assert.match(css, /max-height: min\(72dvh, 460px\) !important/);
+  assert.match(css, /html body \.new-thread-project-menu[\s\S]*overflow: auto !important/);
   assert.match(css, /project-option-text[\s\S]*overflow-wrap: anywhere/);
 });
 
