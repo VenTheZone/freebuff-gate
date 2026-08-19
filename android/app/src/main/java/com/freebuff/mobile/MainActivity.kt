@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
     private var webSessionLoading = false
     private var loadedWebSessionKey: String? = null
     // E2E tunnel prototype (docs/e2e-tunnel.md §5): owns the loopback proxy +
-    // tunnel peer while the WebView is pointed at 127.0.0.1.
+    // tunnel peer while the WebView is pointed at the app-owned localhost proxy.
     private var tunnelGateway: com.freebuff.mobile.tunnel.TunnelGateway? = null
     private val pairingExecutor = Executors.newSingleThreadExecutor()
 
@@ -322,7 +322,7 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Tunnel mode (Phase 1 prototype): WebView points at the loopback proxy
-     * (127.0.0.1) whose traffic rides the encrypted tunnel to the desktop
+     * (localhost) whose traffic rides the encrypted tunnel to the desktop
      * agent. No relay session cookie — the desktop orchestrator's own cookie
      * flows back through the tunnel like a desktop browser (docs/e2e-tunnel.md
      * §5.6).

@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Loopback HTTP proxy (127.0.0.1) that the WebView is pointed at. Each incoming
+ * Loopback HTTP proxy (localhost) that the WebView is pointed at. Each incoming
  * request is serialized as a flat `http.request` tunnel message (headers ride
  * as `h:<name>` keys, matching the Kotlin SimpleJson encoder) and forwarded
  * through the [TunnelPeer] to the agent, which bridges it to the desktop UI.
@@ -47,7 +47,9 @@ class LoopbackProxy(private val peer: TunnelPeer) {
 
     fun port(): Int = server.localPort
 
-    fun baseUrl(): String = "http://127.0.0.1:${server.localPort}/"
+    // Use the hostname so Android's Network Security Config can scope the
+    // cleartext exception to this app-owned loopback origin only.
+    fun baseUrl(): String = "http://localhost:${server.localPort}/"
 
     fun close() {
         runCatching { server.close() }

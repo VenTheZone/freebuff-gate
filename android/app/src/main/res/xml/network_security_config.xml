@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!--
+        The tunnel WebView talks to the app-owned loopback proxy. Keep the
+        exception scoped to localhost; all external traffic remains HTTPS-only.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>
