@@ -8,6 +8,7 @@ state.json
 secrets/
 keys/
 *keypair*.json
+_runtime/
 *.keypair.json
 *.pem
 *.key

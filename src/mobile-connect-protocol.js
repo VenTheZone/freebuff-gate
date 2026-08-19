@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_PAIRING_TTL_MS = 10 * 60 * 1000;
-const MAX_PAIRING_TTL_MS = 15 * 60 * 1000;
+const MAX_PAIRING_TTL_MS = 60 * 60 * 1000;
 const MAX_PAIRING_ATTEMPTS = 5;
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const DEVICE_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
