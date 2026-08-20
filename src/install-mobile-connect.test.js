@@ -16,7 +16,31 @@ const {
   CREATE_REUSE,
   SCROLL_MARK,
   SETSTATE_MARK,
+  SKILL_ORIGIN_MARK,
 } = require('./freebuff_tailnet_proxy');
+
+// Stock request2() from the orchestrator bundle: the auto-run prompt
+// builder the shadow-detect patch rewrites.
+const STOCK_REQUEST2 = [
+  'function request2(ctx, segment) {',
+  '  let extra = ctx.skills.map((s) => s.name).filter((name31) => name31 !== AUTORUN_SKILL_NAME && !BUILTIN_DECISION_SKILLS.has(name31));',
+  '  return [',
+  '    bones(segment, ctx.root) || "(no new agent output)",',
+  '    extra.length ? `This project also has these skills: ${extra.join(", ")}.` : "",',
+  '    "The tab is now idle and nothing is queued. What happens next?"',
+  '  ].filter(Boolean).join(`\n\n`);',
+  '}',
+].join('\n');
+
+// Stock enqueueAutorunInputs() head: the queue-item note builder the
+// shadow-note patch rewrites so the override warning reaches the UI.
+const STOCK_ENQUEUE_AUTORUN = [
+  '  enqueueAutorunInputs(id2, decision) {',
+  '    let thread = this.threads.get(id2), note = [',
+  '      decision.why.trim(),',
+  '      decision.declined.length ? `Declined: ${decision.declined.join("; ")}` : ""',
+  '    ].filter(Boolean).join(`\n`), rejected = [], rows = [], position = this.queue.maxPosition(id2, "queued"), createdAt = Date.now();',
+].join('\n');
 
 const {
   LAUNCH_AGENT_LABEL,
@@ -289,7 +313,7 @@ function fakeDesktop(root) {
   const uiDir = path.join(orchRoot, 'ui');
   const assets = path.join(uiDir, 'assets');
   fs.mkdirSync(assets, { recursive: true });
-  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};};`;
+  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};};`;
   fs.writeFileSync(path.join(assets, 'index-ABC.js'), stockBundle);
   fs.writeFileSync(path.join(uiDir, 'index.html'), `<!doctype html><head><title>t</title></head><body></body></html>`);
   const stockOrch = [
@@ -299,6 +323,29 @@ function fakeDesktop(root) {
     '      let match12 = findRoute(routes, req.method, pathname);',
     'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
     '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+    STOCK_REQUEST2,
+    STOCK_ENQUEUE_AUTORUN,
+    'function getDefaultSkillsDirs(cwd) {',
+    '  let home = os5.homedir();',
+    '  return [',
+    '    path11.join(home, ".claude", SKILLS_DIR_NAME),',
+    '    path11.join(home, ".agents", SKILLS_DIR_NAME),',
+    '    path11.join(cwd, ".claude", SKILLS_DIR_NAME),',
+    '    path11.join(cwd, ".agents", SKILLS_DIR_NAME)',
+    '  ];',
+    '}',
+    'async function loadSkillFromDisk(projectRoot, skillName) {',
+    '  let home = os2.homedir(), skillsDirs = [',
+    '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+    '    path7.join(home, ".agents", SKILLS_DIR_NAME),',
+    '  ];',
+    '}',
+    'agentSkillsDirs: [',
+    '          join25(homedir7(), ".claude", "skills"),',
+    '          join25(homedir7(), ".agents", "skills"),',
+    '          join25(root, ".claude", "skills"),',
+    '          join25(root, ".agents", "skills")',
+    '        ]',
   ].join('\n');
   fs.writeFileSync(path.join(orchRoot, 'orchestrator.js'), stockOrch);
   return { root: path.join(root, 'desktop'), orchRoot, uiDir };
@@ -410,6 +457,29 @@ test('applyOrchestratorPatches upgrades a stale partial route block', () => {
       '      let match12 = findRoute(routes, req.method, pathname);',
       'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
       '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+      STOCK_REQUEST2,
+      STOCK_ENQUEUE_AUTORUN,
+      'function getDefaultSkillsDirs(cwd) {',
+      '  let home = os5.homedir();',
+      '  return [',
+      '    path11.join(home, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(home, ".agents", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path7.join(home, ".agents", SKILLS_DIR_NAME),',
+      '  ];',
+      '}',
+      'agentSkillsDirs: [',
+      '          join25(homedir7(), ".claude", "skills"),',
+      '          join25(homedir7(), ".agents", "skills"),',
+      '          join25(root, ".claude", "skills"),',
+      '          join25(root, ".agents", "skills")',
+      '        ]',
     ].join('\n');
     fs.writeFileSync(orchFile, legacyOrch);
 
@@ -494,11 +564,175 @@ test('ui: missing patch anchors fail loudly instead of silently regressing', asy
       /did not match any patch anchor/,
     );
 
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};`);
     fs.writeFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'const m=42;');
     assert.throws(
       () => installUiStack(options, {}, { runPlatformCommand }),
       /route anchor not found/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyOrchestratorPatches adds Pi skill dirs to all orchestrator discovery points, idempotently', () => {
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const stock = [
+      'let match12 = findRoute(routes, req.method, pathname);',
+      'return json3({ error: "upgrade required" }, 426);',
+      '      }',
+      '      let match12 = findRoute(routes, req.method, pathname);',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+      '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+      STOCK_REQUEST2,
+      STOCK_ENQUEUE_AUTORUN,
+      'function getDefaultSkillsDirs(cwd) {',
+      '  let home = os5.homedir();',
+      '  return [',
+      '    path11.join(home, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(home, ".agents", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path7.join(home, ".agents", SKILLS_DIR_NAME),',
+      '  ];',
+      '}',
+      'agentSkillsDirs: [',
+      '          join25(homedir7(), ".claude", "skills"),',
+      '          join25(homedir7(), ".agents", "skills"),',
+      '          join25(root, ".claude", "skills"),',
+      '          join25(root, ".agents", "skills")',
+      '        ]',
+    ].join('\n');
+    fs.writeFileSync(orchFile, stock);
+
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+
+    const out = fs.readFileSync(orchFile, 'utf8');
+    // The SkillStore splice keeps the closing entry (comma-less, last)
+    // structurally intact after the new Pi entries.
+    assert.equal(out.includes('          join25(root, ".pi", "skills"),\n          join25(root, ".agents", "skills")\n        ]'), true, 'pi root entry sits before the closing agentSkillsDirs entry');
+    // Pi entries appear in all three discovery points.
+    assert.equal(out.includes('path11.join(home, ".pi", "agent", SKILLS_DIR_NAME)'), true, 'home pi dir in getDefaultSkillsDirs');
+    assert.equal(out.includes('path11.join(cwd, ".pi", SKILLS_DIR_NAME)'), true, 'cwd pi dir in getDefaultSkillsDirs');
+    assert.equal(out.includes('path7.join(home, ".pi", "agent", SKILLS_DIR_NAME)'), true, 'home pi dir in loadSkillFromDisk');
+    assert.equal(out.includes('path7.join(projectRoot, ".pi", SKILLS_DIR_NAME)'), true, 'project pi dir in loadSkillFromDisk');
+    assert.equal(out.includes('join25(homedir7(), ".pi", "agent", "skills")'), true, 'home pi dir in SkillStore');
+    assert.equal(out.includes('join25(root, ".pi", "skills")'), true, 'root pi dir in SkillStore');
+    // Marked once each, no duplicates on a second run.
+    assert.equal(out.split('/* freebuff-pi-skills */').length - 1, 3, 'three insertion markers');
+    assert.equal(out.split('path11.join(home, ".agents", SKILLS_DIR_NAME)').length - 1, 1, 'agents home dir not duplicated');
+
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    const second = fs.readFileSync(orchFile, 'utf8');
+    assert.equal(second, out, 'idempotent: no changes on re-run');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyOrchestratorPatches adds shadowed-skill detection to auto-run request2', () => {
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const stock = [
+      'let match12 = findRoute(routes, req.method, pathname);',
+      'return json3({ error: "upgrade required" }, 426);',
+      '      }',
+      '      let match12 = findRoute(routes, req.method, pathname);',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+      '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+      STOCK_REQUEST2,
+      STOCK_ENQUEUE_AUTORUN,
+      'function getDefaultSkillsDirs(cwd) {',
+      '  let home = os5.homedir();',
+      '  return [',
+      '    path11.join(home, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(home, ".agents", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path7.join(home, ".agents", SKILLS_DIR_NAME),',
+      '  ];',
+      '}',
+      'agentSkillsDirs: [',
+      '          join25(homedir7(), ".claude", "skills"),',
+      '          join25(homedir7(), ".agents", "skills"),',
+      '          join25(root, ".claude", "skills"),',
+      '          join25(root, ".agents", "skills")',
+      '        ]',
+    ].join('\n');
+    fs.writeFileSync(orchFile, stock);
+
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+
+    const out = fs.readFileSync(orchFile, 'utf8');
+    assert.equal(
+      out.includes('let shadowed = ctx.skills.filter((s) => BUILTIN_DECISION_SKILLS.has(s.name) && s.source !== "managed");'),
+      true,
+      'shadow detection present',
+    );
+    assert.equal(
+      out.includes('are SHADOWED by user-installed skills'),
+      true,
+      'prompt note present',
+    );
+    assert.equal(out.includes('...notes,'), true, 'notes spread into prompt');
+    assert.equal(out.includes(STOCK_REQUEST2), false, 'stock request2 replaced');
+    assert.equal(
+      out.includes('/* freebuff-shadow-note */'),
+      true,
+      'shadow-note marker present',
+    );
+    assert.equal(
+      out.includes('this.deps.skills.list(this.root).some((s) => s.name === n && s.source !== "managed")'),
+      true,
+      'queue note shadow warning present',
+    );
+    assert.equal(
+      (out.match(/\/\* freebuff-shadow-note \*\//g) || []).length,
+      1,
+      'exactly one shadow-note block',
+    );
+
+    // Idempotent second run: no duplicate shadow block.
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    const second = fs.readFileSync(orchFile, 'utf8');
+    assert.equal(
+      (second.match(/let shadowed = ctx.skills/g) || []).length,
+      1,
+      'shadow block not duplicated',
+    );
+    assert.equal(
+      (second.match(/\/\* freebuff-shadow-note \*\//g) || []).length,
+      1,
+      'shadow-note block not duplicated',
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -545,7 +779,7 @@ test('verify: reports healthy stack, then fails loudly on each wiped patch', asy
     assert.match(report.errors[0].message, /CREATE_REUSE/);
 
     // Shim tag missing.
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};`);
     fs.writeFileSync(path.join(fake.uiDir, 'index.html'), '<!doctype html><head></head></html>');
     report = verifyUiStack(options);
     assert.equal(report.ok, false);

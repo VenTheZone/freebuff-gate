@@ -13,6 +13,8 @@
  */
 const http = require('http');
 const { spawn } = require('child_process');
+const { createPiAgentController, readJsonBody: readPiJsonBody } = require('./pi-agent-bridge');
+const { injectSkills } = require('./freebuff-skill-loader');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -222,6 +224,44 @@ function sendJson(res, status, payload) {
     'content-length': Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+// POST a fully-buffered request body to `target`, streaming the response
+// back to `res` with headers intact. On connection failure, calls `onFail`
+// (used to fall back to the orchestrator when the chat-server is down).
+function bodyWithFreebuffSkills(body, options = {}) {
+  try {
+    const parsed = JSON.parse(body.toString('utf8') || '{}');
+    return Buffer.from(JSON.stringify(injectSkills(parsed, options)));
+  } catch {
+    return body;
+  }
+}
+
+function postToTarget(target, req, body, res, onFail) {
+  const headers = { ...req.headers };
+  headers.host = target.host;
+  headers['accept-encoding'] = 'identity';
+  headers['content-length'] = body.length;
+  const preq = http.request({
+    host: target.hostname,
+    port: target.port || 80,
+    method: req.method,
+    path: req.url,
+    headers,
+  }, (pres) => {
+    res.writeHead(pres.statusCode || 200, pres.headers);
+    pres.pipe(res);
+    pres.on('error', () => res.destroy());
+  });
+  preq.on('error', (err) => {
+    if (onFail) onFail(err);
+    else {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'upstream_error' }));
+    }
+  });
+  preq.end(body);
 }
 
 // ---- perf probe ----
@@ -779,6 +819,18 @@ const OPEN_THREAD_MARK =
 const OPEN_THREAD_FIX =
   OPEN_THREAD_MARK + 'window.__fbOpenThread=Rq;';
 
+// ---- Skill origin badge (composer slash menu) ----
+// The composer's "/" menu lists the loaded skills; each row shows the name
+// and description. /api/skills already reports where each skill came from
+// (source: managed | agent | freebuff). Inject a small origin badge after
+// the skill name so a Pi-installed skill is visually distinct from a
+// Freebuff built-in: managed -> freebuff, agent -> agents (pi/agents/claude
+// dirs), freebuff -> project (project/global override), else the raw source.
+const SKILL_ORIGIN_MARK =
+  'row:ee=>g.jsxs(g.Fragment,{children:[g.jsxs("span",{className:"slash-name",children:["/",ee.name]}),g.jsx("span",{className:"slash-hint",children:ee.description??(ee.source==="managed"?"Run the Freebuff skill":"Run skill")})]})';
+const SKILL_ORIGIN_FIX =
+  'row:ee=>g.jsxs(g.Fragment,{children:[g.jsxs("span",{className:"slash-name",children:["/",ee.name]}),g.jsx("span",{className:"slash-origin"+("managed"===ee.source?" builtin":"agent"===ee.source?" agents":"freebuff"===ee.source?" project":"")},{children:("managed"===ee.source?"freebuff":"agent"===ee.source?"agents":"freebuff"===ee.source?"project":String(ee.source||"user"))}),g.jsx("span",{className:"slash-hint",children:ee.description??(ee.source==="managed"?"Run the Freebuff skill":"Run skill")})]})';
+
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
@@ -806,6 +858,8 @@ function patchBundle(body) {
   // appended a second time.
   if (out.includes(OPEN_THREAD_FIX)) { /* already applied */ }
   else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
+  if (out.includes(SKILL_ORIGIN_FIX)) { /* already applied */ }
+  else if (out.includes(SKILL_ORIGIN_MARK)) out = out.split(SKILL_ORIGIN_MARK).join(SKILL_ORIGIN_FIX);
   return out;
 }
 
@@ -943,10 +997,20 @@ function maybeProbeUiPatches(up, force) {
 function createProxyServer(options = {}) {
   const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
   const up = new URL(upstream);
+  // Local chat-server that speaks the same AI SDK /api/chat wire protocol as
+  // the orchestrator. Set FB_CHAT_UPSTREAM=off to disable the /api/chat
+  // override entirely; any other value overrides the default endpoint.
+  const chatUpRaw = options.chatUpstream ?? process.env.FB_CHAT_UPSTREAM;
+  const chatUp = chatUpRaw && chatUpRaw !== 'off'
+    ? new URL(chatUpRaw)
+    : new URL('http://127.0.0.1:8796');
+  const chatOverrideEnabled = chatUpRaw !== 'off';
   const codexAuth = createCodexDeviceAuthController({
     spawnCommand: options.codexSpawn || spawn,
     timeoutMs: options.codexTimeoutMs,
   });
+  const piAgent = createPiAgentController(options.pi || {});
+  const skillOptions = options.skills || {};
   const server = http.createServer((req, res) => {
   const headers = { ...req.headers };
   headers.host = up.host;
@@ -967,6 +1031,125 @@ function createProxyServer(options = {}) {
   }
   if (req.method === 'POST' && pathname === '/api/fb/codex/device/cancel') {
     sendJson(res, 200, codexAuth.cancel());
+    return;
+  }
+  // Pi coding-agent bridge. Pi runs locally on Desktop; Gate Mobile reaches
+  // these same routes through the existing authenticated relay and connector.
+  // Credentials stay in ~/.pi and never cross HTTP or relay boundaries.
+  const piSessionMatch = pathname.match(/^\/api\/fb\/pi\/session\/([^/]+)(?:\/(messages|models|events|prompt|model|thinking|abort|name|delete))?$/);
+  const piId = piSessionMatch ? decodeURIComponent(piSessionMatch[1]) : '';
+  const piAction = piSessionMatch && piSessionMatch[2];
+  const piErrorStatus = (error) => ({
+    pi_project_required: 400,
+    pi_invalid_json: 400,
+    pi_prompt_invalid: 400,
+    pi_model_invalid: 400,
+    pi_thinking_invalid: 400,
+    pi_provider_invalid: 400,
+    pi_provider_oauth_only: 400,
+    pi_api_key_invalid: 400,
+    pi_auth_unavailable: 500,
+    pi_auth_write_failed: 500,
+    pi_session_name_invalid: 400,
+    pi_project_forbidden: 403,
+    pi_project_missing: 404,
+    pi_project_not_directory: 400,
+    pi_session_not_found: 404,
+    pi_session_closed: 404,
+    pi_process_closed: 404,
+    pi_rpc_failed: 409,
+    pi_session_busy: 409,
+    pi_session_delete_failed: 500,
+    pi_cli_missing: 503,
+    pi_too_many_sessions: 429,
+    pi_rpc_timeout: 504,
+  }[error && error.code] || 500);
+  const piSendError = (error) => {
+    const code = error && error.code ? error.code : 'pi_failed';
+    sendJson(res, piErrorStatus(error), {
+      error: code,
+      message: error && error.detail ? error.detail : code,
+    });
+  };
+  if (req.method === 'POST' && pathname === '/api/fb/pi/auth') {
+    readPiJsonBody(req).then((body) => piAgent.setApiKey(body.provider, body.key)).then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (req.method === 'GET' && pathname === '/api/fb/pi/sessions') {
+    const query = new URL(req.url || '/', 'http://x').searchParams;
+    const requestedCwd = query.get('cwd') || '';
+    Promise.all([piAgent.list(requestedCwd), Promise.resolve().then(() => piAgent.resolveProject(requestedCwd))])
+      .then(([sessions, cwd]) => sendJson(res, 200, { sessions, cwd }))
+      .catch(piSendError);
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/fb/pi/session/open') {
+    readPiJsonBody(req).then((body) => piAgent.open(body)).then((session) => sendJson(res, 200, { session })).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && piAction === 'events' && req.method === 'GET') {
+    try {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      });
+      const unsubscribe = piAgent.subscribe(piId, (line) => {
+        if (!res.writableEnded) res.write(`data: ${line}\n\n`);
+      });
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': ping\n\n');
+      }, 15_000);
+      heartbeat.unref();
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      });
+    } catch (error) {
+      if (!res.headersSent) piSendError(error);
+      else res.end();
+    }
+    return;
+  }
+  if (piSessionMatch && req.method === 'GET' && (piAction === 'messages' || piAction === 'models')) {
+    const work = piAction === 'messages' ? piAgent.messages(piId) : piAgent.models(piId);
+    work.then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && piAction === 'delete' && req.method === 'DELETE') {
+    const query = new URL(req.url || '/', 'http://x').searchParams;
+    piAgent.deleteSession(piId, query.get('cwd') || '').then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && req.method === 'POST' && piAction) {
+    readPiJsonBody(req).then((body) => {
+      if (piAction === 'prompt') return piAgent.sendPrompt(piId, body.message, body.cwd);
+      if (piAction === 'model') return piAgent.setModel(piId, body.provider, body.modelId);
+      if (piAction === 'thinking') return piAgent.setThinking(piId, body.level);
+      if (piAction === 'compact') return piAgent.compact(piId, body.instructions);
+      if (piAction === 'name') return piAgent.renameSession(piId, body.cwd, body.name);
+      if (piAction === 'abort') return piAgent.abort(piId);
+      throw new Error('pi_action_not_found');
+    }).then((data) => sendJson(res, 200, data || { ok: true })).catch(piSendError);
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/chat') {
+    // Native Freebuff chat must receive skills too. Buffer once, inject the
+    // skill system message, then choose local chat-server or native upstream.
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = bodyWithFreebuffSkills(Buffer.concat(chunks), skillOptions);
+      if (chatOverrideEnabled) {
+        postToTarget(chatUp, req, body, res, () => {
+          postToTarget(up, req, body, res);
+        });
+      } else {
+        postToTarget(up, req, body, res);
+      }
+    });
+    req.on('error', () => res.destroy());
     return;
   }
   if (req.method === 'GET' && pathname === '/api/fb/ui-patch-status') {
@@ -1270,6 +1453,7 @@ server.on('upgrade', (req, socket, head) => {
   server.close = (cb) => {
     clearInterval(ownProbeTimer);
     codexAuth.close();
+    piAgent.close();
     return savedClose(cb);
   };
 
@@ -1291,6 +1475,8 @@ module.exports = {
   CLOSE_BTN_MARK,
   OPEN_THREAD_FIX,
   OPEN_THREAD_MARK,
+  SKILL_ORIGIN_FIX,
+  SKILL_ORIGIN_MARK,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,

@@ -4,7 +4,13 @@
   "engines": {
     "node": ">=22"
   },
+  "scripts": {
+    "chat:server": "node src/chat-server.mjs"
+  },
   "dependencies": {
-    "@noble/curves": "2.3.0"
+    "@noble/curves": "2.3.0",
+    "@openai-oauth/ai-sdk": "^2.0.0",
+    "@openai-oauth/local": "^2.0.0",
+    "ai": "^7.0.68"
   }
 }
