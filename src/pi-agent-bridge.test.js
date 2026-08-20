@@ -278,6 +278,42 @@ test('proxy exposes Pi session RPC routes over the same HTTP origin', async () =
   }
 });
 
+test('Pi controller and proxy default empty cwd to home for list and open', async () => {
+  let child;
+  const controller = createPiAgentController({
+    nodePath: process.execPath,
+    cliPath: __filename,
+    spawnCommand: () => { child = fakeChild('home-session'); return child; },
+  });
+  try {
+    const listed = await controller.list('');
+    assert.ok(Array.isArray(listed));
+    const opened = await controller.open({ cwd: '' });
+    assert.equal(opened.id, 'home-session');
+    assert.equal(opened.cwd, os.homedir());
+  } finally {
+    controller.close();
+  }
+  const proxy = createProxyServer({
+    upstream: 'http://127.0.0.1:1',
+    pi: {
+      nodePath: process.execPath,
+      cliPath: __filename,
+      spawnCommand: () => { child = fakeChild(); return child; },
+    },
+  });
+  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const port = proxy.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/fb/pi/sessions`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.sessions));
+  } finally {
+    await new Promise((resolve) => proxy.close(resolve));
+  }
+});
+
 test('listPiSessions filters exact project cwd', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-pi-agent-'));
   const project = path.join(root, 'project');

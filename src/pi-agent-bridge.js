@@ -157,7 +157,7 @@ function walkJsonl(root, out = []) {
 
 function listPiSessions(cwd, options = {}) {
   const agentDir = options.agentDir || path.join(os.homedir(), '.pi', 'agent');
-  const requested = safeProjectPath(cwd, options.allowedRoot);
+  const requested = safeProjectPath(cwd || os.homedir(), options.allowedRoot);
   return walkJsonl(sessionRoot(agentDir))
     .map(parseSessionSummary)
     .filter((session) => session && session.cwd === requested)
@@ -385,7 +385,7 @@ function createPiAgentController(options = {}) {
   }
 
   async function open(input = {}) {
-    const cwd = safeProjectPath(input.cwd, allowedRoot);
+    const cwd = safeProjectPath(input.cwd || allowedRoot, allowedRoot);
     const requested = input.sessionId ? String(input.sessionId) : '';
     const active = requested ? sessions.get(requested) : null;
     if (active && !active.closed) return sessionSnapshot(active);
@@ -458,11 +458,11 @@ function createPiAgentController(options = {}) {
   }
 
   function resolveProject(cwd) {
-    return safeProjectPath(cwd, allowedRoot);
+    return safeProjectPath(cwd || allowedRoot, allowedRoot);
   }
 
   async function list(cwd) {
-    const project = resolveProject(cwd);
+    const project = resolveProject(cwd || allowedRoot);
     const items = listPiSessions(project, { agentDir, allowedRoot });
     for (const item of items) {
       const active = sessions.get(item.id);
