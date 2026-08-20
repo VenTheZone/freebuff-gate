@@ -21,6 +21,7 @@ sidecars. Names follow `freebuff-setup-<version>-<target>`. Targets are
 `windows-x64.exe`. For example, a release contains
 `freebuff-setup-v0.2.0-linux-x64`, `freebuff-setup-v0.2.0-SHA256SUMS`, and
 `freebuff-setup-v0.2.0-manifest.json`.
+
 Local builds go under `dist/freebuff-setup-<version>/`. GitHub prereleases use
 the same artifacts from the setup-binary workflow.
 
