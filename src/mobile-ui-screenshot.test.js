@@ -64,6 +64,45 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test('Pi coding-agent panel is injected for desktop and mobile', () => {
+  const css = MOBILE_CSS.toString('utf8');
+  const js = MOBILE_JS.toString('utf8');
+  assert.match(css, /\.fb-pi-view/);
+  assert.match(css, /\.fb-pi-panel/);
+  assert.match(css, /\.fb-pi-body/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.fb-pi-panel/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.fb-pi-body \{ display: flex/);
+  assert.match(css, /html body \.fb-pi-view[\s\S]*position: fixed !important/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*overflow-x: auto/);
+  assert.doesNotMatch(css, /\.fb-pi-overlay\s*\{/);
+  assert.match(js, /\/api\/fb\/pi\/sessions/);
+  assert.match(js, /\/api\/fb\/pi\/session\/.*\/events/);
+  assert.match(js, /Pi coding agent/);
+  assert.match(js, /header-menu-item fb-pi-connect/);
+  assert.match(js, /Use Pi coding agent/);
+  assert.match(js, /document\.querySelector\('\.workspace'\)/);
+  assert.match(js, /fb-pi-scope/);
+  assert.match(js, /All authenticated/);
+  assert.doesNotMatch(js, /fb-pi-toggle/);
+  assert.match(js, /fb-pi-active/);
+  assert.match(js, /fb-mobile-report/);
+  assert.match(js, /freebuffDesktop\.pickDirectory/);
+  assert.match(js, /fb-pi-home/);
+  assert.match(js, /Choose Pi session or New/);
+  assert.match(js, /deleteSessionConfirm\.request\(item/);
+  assert.match(js, /Pi slash commands/);
+  assert.match(js, /scoped-models/);
+  assert.match(css, /\.fb-pi-home-session/);
+  assert.match(css, /html\.fb-pi-active \.fb-session-close-confirm/);
+  assert.match(css, /\.fb-pi-command-layer/);
+  assert.match(css, /\.fb-pi-active \.sponsored-ad[\s\S]*display: none !important/);
+  assert.match(js, /\/api\/fb\/pi\/session\/.*\/models/);
+  assert.match(js, /fb-pi-history-layer/);
+  assert.match(js, /fb-pi-history-search/);
+  assert.match(js, /event\.key === 'Enter' && !event\.shiftKey/);
+  assert.doesNotMatch(js, /textContent = ['"]Send['"]/);
+});
+
 test('connected folder selector uses readable desktop and mobile grids', () => {
   const css = MOBILE_CSS.toString('utf8');
   assert.match(css, /\.new-thread-project-menu\s*\{[\s\S]*display: grid !important/);
@@ -492,7 +531,30 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
   }
 
   const fixture = await createFixtureServer({ throughProxy: true });
-  const proxy = createProxyServer({ upstream: fixture.url });
+  const piSession = {
+    id: 'pi-screenshot',
+    cwd: '/workspace/freebuff',
+    name: 'Pi screenshot',
+    title: 'Pi screenshot',
+    state: 'idle',
+    model: null,
+    thinkingLevel: 'off',
+  };
+  const pi = {
+    list: async () => [piSession],
+    open: async () => piSession,
+    messages: async () => ({ messages: [] }),
+    models: async () => ({ models: [], providers: [], authProviders: [] }),
+    subscribe: () => () => {},
+    setModel: async () => ({}),
+    setThinking: async () => ({}),
+    sendPrompt: async () => ({}),
+    abort: () => ({ ok: true }),
+    renameSession: async () => ({ ok: true }),
+    deleteSession: async () => ({ ok: true }),
+    setApiKey: async () => ({ ok: true }),
+  };
+  const proxy = createProxyServer({ upstream: fixture.url, pi });
   const proxyPort = await listenServer(proxy);
   let browser;
   const outputDir =
@@ -650,6 +712,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
         nativeTriggers: document.querySelectorAll('.composer .agent-trigger').length,
         modelMenus: document.querySelectorAll('.composer-context .agent-menu').length,
         codexActions: document.querySelectorAll('.composer-context .fb-codex-connect').length,
+        piActions: document.querySelectorAll('.composer-context .fb-pi-connect').length,
         codexOptions: document.querySelectorAll('.fb-codex-model-option').length,
       }))()`,
     );
@@ -657,8 +720,56 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       nativeTriggers: 1,
       modelMenus: 1,
       codexActions: 1,
+      piActions: 1,
       codexOptions: 0,
     });
+    await evaluate(cdp, "document.querySelector('.fb-pi-connect').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-pi-view'))");
+    await waitFor(cdp, "document.querySelector('.fb-pi-project').textContent !== 'Project'");
+    await evaluate(cdp, "document.querySelector('.fb-pi-mode-new').click()");
+    await delay(100);
+    const piLayout = await evaluate(
+      cdp,
+      `(() => {
+        const box = (element) => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom }; };
+        const view = box(document.querySelector('.fb-pi-view'));
+        const chat = box(document.querySelector('.fb-pi-chat'));
+        const sessions = box(document.querySelector('.fb-pi-sessions'));
+        const messages = box(document.querySelector('.fb-pi-messages'));
+        const composer = box(document.querySelector('.fb-pi-composer'));
+        return {
+          view,
+          chat,
+          sessions,
+          messages,
+          composer,
+          position: getComputedStyle(document.querySelector('.fb-pi-view')).position,
+          project: document.querySelector('.fb-pi-project').textContent,
+        };
+      })()`,
+    );
+    assert.ok(piLayout.view.width >= 389 && piLayout.view.height >= 790 && piLayout.view.top >= 47, JSON.stringify(piLayout));
+    assert.equal(piLayout.position, 'fixed');
+    assert.ok(piLayout.chat.width >= 370, `Pi chat too narrow: ${JSON.stringify(piLayout)}`);
+    assert.ok(piLayout.messages.width >= 370 && piLayout.messages.height >= 400, `Pi message area too small: ${JSON.stringify(piLayout)}`);
+    assert.ok(piLayout.composer.width >= 370 && piLayout.composer.bottom <= 844, `Pi composer is not full width: ${JSON.stringify(piLayout)}`);
+    assert.equal(piLayout.project, '/workspace/freebuff');
+    assert.equal(await evaluate(cdp, "document.querySelector('.fb-pi-mode-toggle').getAttribute('aria-pressed')"), 'true');
+    assert.equal(await evaluate(cdp, "getComputedStyle(document.querySelector('.fb-pi-sessions')).display"), 'none');
+    assert.equal(await evaluate(cdp, "Boolean(document.querySelector('.fb-pi-mode-new'))"), true);
+    assert.equal(await evaluate(cdp, "getComputedStyle(document.querySelector('.fb-pi-head')).display"), 'flex');
+    assert.equal(await evaluate(cdp, "document.querySelector('.fb-pi-sessions-toggle').textContent"), 'Sessions');
+    await evaluate(cdp, "document.querySelector('.fb-pi-settings-toggle').click()");
+    await waitFor(cdp, "getComputedStyle(document.querySelector('.fb-pi-controls')).display !== 'none'");
+    await evaluate(cdp, "document.querySelector('.fb-pi-command-launcher').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-pi-command-palette'))");
+    assert.ok(await evaluate(cdp, "document.querySelector('.fb-pi-command-item strong').textContent === '/settings'"));
+    await evaluate(cdp, "document.querySelector('.fb-pi-command-layer header button').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-pi-command-layer')");
+    await evaluate(cdp, "document.querySelector('.fb-pi-settings-toggle').click()");
+    await evaluate(cdp, "document.querySelector('.fb-pi-mode-toggle').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-pi-view')");
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
     const codexAction = await evaluate(
       cdp,
       `(() => {
@@ -834,6 +945,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       '1 available · 2/3 used · Used by: Mobile screenshot review',
     );
     assert.equal(refreshedAvailability.reset, 'Resets Sun, 9:00 PM');
+    await delay(120);
     assert.ok(
       hasAccessibleStatus(
         await accessibilityNodes(cdp),
@@ -1437,18 +1549,18 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       cdp,
       `(() => ({
         mobileOnlyHidden: Array.from(document.querySelectorAll(
-          '.fb-ctx-fab, .fb-composer-pills',
+          '.fb-ctx-fab, .fb-composer-pills, .fb-session-switch',
         )).every((el) => getComputedStyle(el).display === 'none'),
-        sessionSwitchVisible: getComputedStyle(
+        sessionSwitchHidden: getComputedStyle(
           document.querySelector('.fb-session-switch'),
-        ).display !== 'none',
+        ).display === 'none',
         taskPosition: getComputedStyle(
           document.querySelector('.thread-bottom .todo-dock'),
         ).position,
       }))()`,
     );
     assert.equal(desktop.mobileOnlyHidden, true);
-    assert.equal(desktop.sessionSwitchVisible, true);
+    assert.equal(desktop.sessionSwitchHidden, true);
     assert.notEqual(desktop.taskPosition, 'fixed');
   } finally {
     await closeChrome(browser);
