@@ -1621,6 +1621,8 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
     assert.deepEqual(menuState.options, [
       { label: 'Default dark', checked: 'true' },
       { label: 'Cyberpunk 2077', checked: 'false' },
+      { label: 'Retro Punk', checked: 'false' },
+      { label: 'Flintstones', checked: 'false' },
     ]);
 
     // Pick Cyberpunk: attribute set, localStorage persisted, surface recolored.
@@ -1727,7 +1729,7 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
         return true;
       })()`,
     );
-    await waitFor(cdp, "document.querySelectorAll('.account-menu .fb-gate-theme-item').length === 2");
+    await waitFor(cdp, "document.querySelectorAll('.account-menu .fb-gate-theme-item').length === 4");
     const accountMenu = await evaluate(
       cdp,
       `(() => ({
@@ -1739,8 +1741,8 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
         ),
       }))()`,
     );
-    assert.deepEqual(accountMenu.labels, ['Default dark', 'Cyberpunk 2077']);
-    assert.deepEqual(accountMenu.checks, ['true', 'false']);
+    assert.deepEqual(accountMenu.labels, ['Default dark', 'Cyberpunk 2077', 'Retro Punk', 'Flintstones']);
+    assert.deepEqual(accountMenu.checks, ['true', 'false', 'false', 'false']);
 
     // New-thread theme switch gets the same two options as icon buttons.
     await evaluate(
@@ -1753,10 +1755,10 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
         return true;
       })()`,
     );
-    await waitFor(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length === 2");
+    await waitFor(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length === 4");
     assert.equal(
       await evaluate(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length"),
-      2,
+      4,
     );
     // The pill-row cyberpunk option switches the theme too.
     await evaluate(
@@ -1785,7 +1787,7 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
           ),
         }))()`,
       ),
-      { account: ['false', 'true'], switchRow: ['false', 'true'] },
+      { account: ['false', 'true', 'false', 'false'], switchRow: ['false', 'true', 'false', 'false'] },
     );
     // A native Appearance click clears the gate override so the app's own
     // Light/Dark/System switch stays authoritative.

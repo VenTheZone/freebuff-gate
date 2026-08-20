@@ -2548,6 +2548,93 @@ body {
   opacity: 1;
 }
 
+/* ─────────── Shared gate-theme chrome (all themes) ──────────────────────
+   The per-theme blocks below swap tokens + a faint ambient glow that hides
+   behind the app's opaque panels, so the three themes otherwise read as
+   "different shades of dark." This block pushes each theme's OWN --brand /
+   --accent into high-traffic chrome so the signature color is always on
+   screen, and gives the ambient glow a slow breathing drift so the surface
+   feels alive. Token-driven, so one block covers cyberpunk / retro-punk /
+   flintstones. */
+:root[data-fb-theme] {
+  scrollbar-color: var(--brand) var(--surface-2);
+}
+:root[data-fb-theme] ::selection {
+  background: color-mix(in srgb, var(--brand) 38%, transparent);
+  color: var(--text);
+}
+:root[data-fb-theme] ::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+:root[data-fb-theme] ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--brand) 55%, var(--surface-3));
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+:root[data-fb-theme] ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--brand) 78%, var(--surface-3));
+  background-clip: padding-box;
+}
+:root[data-fb-theme] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Brand wash on the tabbar so the signature color sits above the opaque
+   chrome even where panels cover the ambient glow. */
+:root[data-fb-theme] .tabbar {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--brand) 12%, transparent),
+    transparent 55%
+  );
+}
+/* Themed composer frame + active-tab underline — the two spots the eye
+   rests on most while reading. */
+:root[data-fb-theme] .composer {
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 10%, transparent),
+    0 10px 30px -18px color-mix(in srgb, var(--shadow) 70%, transparent);
+}
+:root[data-fb-theme] .tabbar .tab.active {
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--brand) 85%, transparent);
+}
+/* Let the ambient glow (sitting behind these at z-index:-1) bleed through
+   the app's own surfaces. Surfaces stay ~84% opaque so the signature color
+   reads without washing out text — lively, not blinding. The transcript /
+   composer-glass / modal regions were already transparent; this extends the
+   same glow to the opaque panels around them. */
+:root[data-fb-theme] .app,
+:root[data-fb-theme] .workspace,
+:root[data-fb-theme] .composer,
+:root[data-fb-theme] .explorer,
+:root[data-fb-theme] .tabbar {
+  background-color: color-mix(in srgb, var(--surface) 84%, transparent);
+}
+/* Slow breathing drift on the ambient glow — the only motion, so the
+   surface feels alive without fighting the content. GPU-composited. */
+:root[data-fb-theme] body::before {
+  animation: fb-ambient-drift 16s ease-in-out infinite alternate;
+  transform-origin: 50% 40%;
+  will-change: transform, opacity;
+}
+@keyframes fb-ambient-drift {
+  from {
+    transform: scale(1) translate3d(0, 0, 0);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(1.05) translate3d(0, -1%, 0);
+    opacity: 1;
+  }
+}
+/* Users who opt out of motion get a still ambient layer, no breathing. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-fb-theme] body::before {
+    animation: none;
+  }
+}
+
 /* ─────────── Cyberpunk 2077 theme (dark-side) ───────────────────────────
    Built-in theme, chosen from the header theme menu and persisted per
    browser. Scoped to :root[data-fb-theme='cyberpunk'] so the app's default
@@ -2599,19 +2686,31 @@ body {
   z-index: -1;
   pointer-events: none;
   background:
+    /* synthwave floor grid + sun on the lower horizon */
+    repeating-linear-gradient(
+      to right,
+      transparent 0 38px,
+      color-mix(in srgb, #3fd8ee 12%, transparent) 38px 40px
+    ) bottom / 100% 34% no-repeat,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 38px,
+      color-mix(in srgb, #3fd8ee 12%, transparent) 38px 40px
+    ) bottom / 100% 34% no-repeat,
+    radial-gradient(20% 15% at 50% 95%, color-mix(in srgb, #ff5fa2 14%, transparent), transparent 72%),
     radial-gradient(
       42% 36% at 8% 0%,
-      color-mix(in srgb, #18c8e6 10%, transparent),
+      color-mix(in srgb, #18c8e6 16%, transparent),
       transparent 70%
     ),
     radial-gradient(
       46% 42% at 96% 88%,
-      color-mix(in srgb, #8b2fd6 11%, transparent),
+      color-mix(in srgb, #8b2fd6 16%, transparent),
       transparent 72%
     ),
     radial-gradient(
       30% 26% at 78% 4%,
-      color-mix(in srgb, #f2d21c 6%, transparent),
+      color-mix(in srgb, #f2d21c 9%, transparent),
       transparent 70%
     );
 }
@@ -2648,6 +2747,233 @@ body {
    border; this adds the cyan under-glow without brightening anything). */
 :root[data-fb-theme='cyberpunk'] .msg.user .bubble {
   box-shadow: 0 1px 0 color-mix(in srgb, #3fd8ee 10%, transparent);
+}
+
+/* ─────────── Retro Punk theme (dark-side) ─────────────────────────────
+   Built-in theme, chosen from the header theme menu and persisted per
+   browser. Scoped to :root[data-fb-theme='retro-punk']; same token names
+   as the cyberpunk layer, injected after the app stylesheet so these win.
+   Warm near-black paper, hot-pink/acid-yellow punk accents, xerox-green
+   focus. The ambient background is a torn-poster print look: two neon
+   glows (pink upper-left, amber lower-right) plus a faint green, a
+   halftone dot grid, and a fine grime grain — all z-index:-1 so they only
+   tint the app's transparent regions, never the text or panels. */
+:root[data-fb-theme='retro-punk'] {
+  color-scheme: dark;
+  --bg: #14121a;
+  --chrome: #0e0b12;
+  --surface: #1d1924;
+  --surface-2: #251f30;
+  --surface-3: #2e2640;
+  --raised: #362c46;
+  --border: #423457;
+  --text: #f4e9f2;
+  --muted: #c0aec0;
+  --faint: #8a7493;
+  --brand: #ff2e63;
+  --brand-dim: #c01f49;
+  --accent: #9cf03a;
+  --accent-dim: #6fae2a;
+  --premium: #e0863a;
+  --green: #9fbf6a;
+  --danger: #ff4d6d;
+  --ok: #6fd07a;
+  --warn: #f0a000;
+  --shadow: #000;
+  --focus-ring: color-mix(in srgb, #9cf03a 48%, transparent);
+  --fb-m-brand: #ff2e63;
+  --fb-m-brand-ink: #1a060d;
+  --fb-m-brand-soft: color-mix(in srgb, #ff2e63 15%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #ff2e63 30%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px
+    color-mix(in srgb, #ff2e63 50%, transparent);
+}
+
+/* Neon poster glow: hot-magenta top-left, cyan bottom-right, faint green. */
+:root[data-fb-theme='retro-punk'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    /* diagonal punk tape stripes */
+    repeating-linear-gradient(
+      45deg,
+      transparent 0 64px,
+      color-mix(in srgb, #ff2e63 5%, transparent) 64px 68px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 92px,
+      color-mix(in srgb, #9cf03a 4%, transparent) 92px 96px
+    ),
+    radial-gradient(
+      44% 38% at 6% 2%,
+      color-mix(in srgb, #ff2e63 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      48% 44% at 96% 92%,
+      color-mix(in srgb, #19e3c2 16%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      28% 24% at 80% 6%,
+      color-mix(in srgb, #9cf03a 9%, transparent),
+      transparent 70%
+    );
+}
+/* Halftone dot grid + fine grime grain over the same transparent regions. */
+:root[data-fb-theme='retro-punk'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at center,
+      color-mix(in srgb, #ffffff 3%, transparent) 1px,
+      transparent 1.4px
+    ) 0 0 / 7px 7px,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 2px,
+      color-mix(in srgb, #000000 3%, transparent) 2px 3px
+    );
+}
+
+/* Hot-pink hairline under the tabbar with a faint acid-green under-glow. */
+:root[data-fb-theme='retro-punk'] .tabbar {
+  border-bottom-color: color-mix(in srgb, #ff2e63 32%, var(--border));
+  box-shadow: 0 1px 0 color-mix(in srgb, #9cf03a 12%, transparent),
+    0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
+}
+
+/* Acid-green edge on the explorer panel so it reads as a taped-in zine. */
+:root[data-fb-theme='retro-punk'] .explorer {
+  border-color: color-mix(in srgb, #9cf03a 22%, var(--border));
+}
+
+/* Soft pink rim under user bubbles. */
+:root[data-fb-theme='retro-punk'] .msg.user .bubble {
+  box-shadow: 0 1px 0 color-mix(in srgb, #ff2e63 12%, transparent);
+}
+
+/* ─────────── Flintstones theme (dark stone-age) ───────────────────────
+   Built-in theme, chosen from the header theme menu and persisted per
+   browser. Scoped to :root[data-fb-theme='flintstones']; same token names
+   as the other layers, injected after the app stylesheet so these win.
+   Dark cave/stone palette: near-black warm basalt surfaces, bone-ivory
+   text, ember-orange brand (the fire pit), ochre accents. Ambient
+   background is a stone-age cave: a lava/ember glow rising from the
+   bottom, a faint cool moonlight at top, a mottled rock speckle, and a
+   fine grit grain — all z-index:-1 so they only tint the app's transparent
+   regions, never the text or panels. */
+:root[data-fb-theme='flintstones'] {
+  color-scheme: dark;
+  --bg: #161210;
+  --chrome: #0f0b09;
+  --surface: #1f1814;
+  --surface-2: #271e18;
+  --surface-3: #322619;
+  --raised: #3b2e20;
+  --border: #4a3927;
+  --text: #f1e7d8;
+  --muted: #c4ad93;
+  --faint: #8f7559;
+  --brand: #ff7a1a;
+  --brand-dim: #c24e0a;
+  --accent: #e0b34a;
+  --accent-dim: #a07d28;
+  --premium: #d98a3a;
+  --green: #9bbf6a;
+  --danger: #ff5a44;
+  --ok: #7fce6a;
+  --warn: #f0a000;
+  --shadow: #000;
+  --focus-ring: color-mix(in srgb, #ffb347 48%, transparent);
+  --fb-m-brand: #ff7a1a;
+  --fb-m-brand-ink: #1a0d03;
+  --fb-m-brand-soft: color-mix(in srgb, #ff7a1a 15%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #ff7a1a 30%, transparent);
+  --fb-m-brand-glow: 0 4px 16px -6px
+    color-mix(in srgb, #ff7a1a 50%, transparent);
+}
+
+/* Cave glow: ember/lava rising from the bottom, faint cool moonlight top. */
+:root[data-fb-theme='flintstones'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    /* night-cave sky: starfield + moon */
+    radial-gradient(1.6px 1.6px at 18% 10%, color-mix(in srgb, #ffffff 22%, transparent), transparent 60%),
+    radial-gradient(1.6px 1.6px at 33% 20%, color-mix(in srgb, #ffffff 16%, transparent), transparent 60%),
+    radial-gradient(1.6px 1.6px at 47% 7%, color-mix(in srgb, #ffffff 20%, transparent), transparent 60%),
+    radial-gradient(1.6px 1.6px at 61% 16%, color-mix(in srgb, #ffffff 14%, transparent), transparent 60%),
+    radial-gradient(2px 2px at 74% 9%, color-mix(in srgb, #ffffff 18%, transparent), transparent 60%),
+    radial-gradient(1.4px 1.4px at 88% 22%, color-mix(in srgb, #ffffff 16%, transparent), transparent 60%),
+    radial-gradient(9% 12% at 87% 7%, color-mix(in srgb, #cfeaff 11%, transparent), transparent 70%),
+    radial-gradient(
+      52% 46% at 50% 104%,
+      color-mix(in srgb, #ff6a00 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      40% 34% at 12% 2%,
+      color-mix(in srgb, #6fb0c8 10%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      30% 26% at 84% 10%,
+      color-mix(in srgb, #e0b34a 9%, transparent),
+      transparent 70%
+    );
+}
+/* Mottled rock speckle + fine grit grain over the same transparent regions. */
+:root[data-fb-theme='flintstones'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at center,
+      color-mix(in srgb, #000000 4%, transparent) 1px,
+      transparent 1.6px
+    ) 0 0 / 9px 9px,
+    radial-gradient(
+      circle at center,
+      color-mix(in srgb, #ffffff 2%, transparent) 1px,
+      transparent 1.8px
+    ) 4px 4px / 11px 11px,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 3px,
+      color-mix(in srgb, #000000 3%, transparent) 3px 4px
+    );
+}
+
+/* Ember-orange hairline under the tabbar with a faint warm under-glow. */
+:root[data-fb-theme='flintstones'] .tabbar {
+  border-bottom-color: color-mix(in srgb, #ff7a1a 32%, var(--border));
+  box-shadow: 0 1px 0 color-mix(in srgb, #ffb347 12%, transparent),
+    0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
+}
+
+/* Ochre edge on the explorer panel so it reads as a chiseled stone slab. */
+:root[data-fb-theme='flintstones'] .explorer {
+  border-color: color-mix(in srgb, #e0b34a 22%, var(--border));
+}
+
+/* Soft ember rim under user bubbles. */
+:root[data-fb-theme='flintstones'] .msg.user .bubble {
+  box-shadow: 0 1px 0 color-mix(in srgb, #ff7a1a 12%, transparent);
 }
 
 /* Connected-folder selector: show project paths as readable cards instead

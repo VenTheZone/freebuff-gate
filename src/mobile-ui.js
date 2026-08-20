@@ -117,18 +117,19 @@
   // the app's CSS.
   var THEME_KEY = 'fb-ui:theme';
   var THEME_CYBERPUNK = 'cyberpunk';
+  var THEME_DEFAULT = 'default';
   function persistedTheme() {
     try {
-      return localStorage.getItem(THEME_KEY) === THEME_CYBERPUNK
-        ? THEME_CYBERPUNK
-        : 'default';
+      var v = localStorage.getItem(THEME_KEY);
+      return v && v !== THEME_DEFAULT ? v : THEME_DEFAULT;
     } catch (e) {
-      return 'default';
+      return THEME_DEFAULT;
     }
   }
-  if (persistedTheme() === THEME_CYBERPUNK) {
-    root.setAttribute('data-fb-theme', THEME_CYBERPUNK);
-  }
+  (function applyPersistedTheme() {
+    var pt = persistedTheme();
+    if (pt !== THEME_DEFAULT) root.setAttribute('data-fb-theme', pt);
+  })();
 
   // Active session thread id, from the active tab's .tab-select id
   // ("thread-tab-<id>"). Empty on the home screen.
@@ -3231,22 +3232,28 @@
       var THEMES = [
         { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
         { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#f2d21c' },
+        { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
+        { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
       ];
+      function themeLabel(id) {
+        for (var i = 0; i < THEMES.length; i++) {
+          if (THEMES[i].id === id) return THEMES[i].label;
+        }
+        return THEME_DEFAULT === id ? 'default dark' : id;
+      }
       function applyTheme(id, opts) {
-        if (id === THEME_CYBERPUNK) {
+        if (id && id !== THEME_DEFAULT) {
           document.documentElement.setAttribute('data-fb-theme', id);
         } else {
           document.documentElement.removeAttribute('data-fb-theme');
         }
         try {
-          if (id === THEME_CYBERPUNK) localStorage.setItem(THEME_KEY, id);
+          if (id && id !== THEME_DEFAULT) localStorage.setItem(THEME_KEY, id);
           else localStorage.removeItem(THEME_KEY);
         } catch (e) {}
         if (!opts || !opts.silent) {
           mobileLiveRegion.announce(
-            id === THEME_CYBERPUNK
-              ? 'Theme set to Cyberpunk 2077.'
-              : 'Theme set to default dark.',
+            'Theme set to ' + themeLabel(id) + '.',
             'polite',
           );
         }
@@ -3378,8 +3385,9 @@
       // Sync the theme across this device's other windows/tabs.
       window.addEventListener('storage', function (ev) {
         if (ev.key !== THEME_KEY) return;
-        if (persistedTheme() === THEME_CYBERPUNK) {
-          document.documentElement.setAttribute('data-fb-theme', THEME_CYBERPUNK);
+        var pt = persistedTheme();
+        if (pt !== THEME_DEFAULT) {
+          document.documentElement.setAttribute('data-fb-theme', pt);
         } else {
           document.documentElement.removeAttribute('data-fb-theme');
         }
@@ -3411,10 +3419,10 @@
           '</svg>';
       }
       function syncAppearancePatch() {
-        var active = persistedTheme() === THEME_CYBERPUNK;
+        var active = persistedTheme();
         document.querySelectorAll('.fb-gate-theme-item, .fb-gate-theme-option').forEach(function (el) {
           var id = el.getAttribute('data-fb-theme-id');
-          var on = (id === THEME_CYBERPUNK) === active;
+          var on = id === active;
           if (el.classList.contains('theme-option')) {
             el.classList.toggle('on', on);
             el.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -3501,7 +3509,7 @@
             target.closest('[role="group"][aria-label="Appearance"]') ||
             target.closest('.theme-switch');
           if (!inAppearance) return;
-          if (persistedTheme() === THEME_CYBERPUNK) {
+          if (persistedTheme() !== THEME_DEFAULT) {
             applyTheme('default', { silent: true });
           }
         },
