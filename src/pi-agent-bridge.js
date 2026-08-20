@@ -11,7 +11,7 @@ const MAX_PROMPT_BYTES = 128 * 1024;
 const MAX_SESSIONS = 6;
 const MAX_EVENT_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_PI_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_PI_IDLE_TIMEOUT_MS = 0;
 const PI_IDLE_TIMEOUT_ENV = 'FB_PI_IDLE_TIMEOUT_MS';
 
 function defaultPiPaths(home = os.homedir()) {
@@ -619,6 +619,15 @@ function createPiAgentController(options = {}) {
     const knownAuthProviders = new Set(authProviders.map((provider) => provider.id));
     modelProviders.forEach((provider) => {
       if (!knownAuthProviders.has(provider)) authProviders.push({ id: provider, name: provider, authTypes: ['api_key'] });
+    });
+    // Surface providers the user has configured a key for (env *_API_KEY,
+    // ~/.pi/free.json, or agent auth.json) even before the Pi CLI reports
+    // models for them, so they appear in the UI to authenticate/select.
+    configuredCredentialProviders(agentDir).forEach((provider) => {
+      if (!knownAuthProviders.has(provider)) {
+        authProviders.push({ id: provider, name: provider, authTypes: ['api_key'] });
+        knownAuthProviders.add(provider);
+      }
     });
     const providers = Array.from(new Set(modelProviders.concat(authProviders.map((provider) => provider.id))));
     const ready = new Set();
