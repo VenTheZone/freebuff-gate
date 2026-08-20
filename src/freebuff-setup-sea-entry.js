@@ -17,6 +17,7 @@ const SEA_ASSETS = Object.freeze([
   'mobile-connect-protocol.js',
   'mobile-connect-qr.js',
   'freebuff_tailnet_proxy.js',
+  'pi-agent-bridge.js',
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
