@@ -90,6 +90,11 @@ test('Pi coding-agent panel is injected for desktop and mobile', () => {
   assert.match(js, /fb-pi-home/);
   assert.match(js, /Choose Pi session or New/);
   assert.match(js, /deleteSessionConfirm\.request\(item/);
+  assert.match(js, /getDefaultSession\(cwd\)/);
+  assert.match(js, /item\.id === chosen/);
+  assert.match(js, /sessions\.some/);
+  assert.match(js, /pi_session_not_found/);
+  assert.match(js, /fb-pi-wall-select/);
   assert.match(js, /Pi slash commands/);
   assert.match(js, /scoped-models/);
   assert.match(css, /\.fb-pi-home-session/);
