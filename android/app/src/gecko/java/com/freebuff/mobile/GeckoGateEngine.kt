@@ -21,6 +21,8 @@ class GeckoGateEngine(context: Context) : GateBrowserEngine {
     private val session: GeckoSession
     private val geckoView: GeckoView
     private var canGoBackState = false
+    private var _filePickerRequest: ((Array<String>, Boolean) -> Unit)? = null
+    private var pendingFilePrompt: GeckoSession.PromptResponse? = null
 
     override val view: View get() = geckoView
 
@@ -44,6 +46,40 @@ class GeckoGateEngine(context: Context) : GateBrowserEngine {
                 onBlockedDownload()
             }
         }
+        session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onFilePrompt(
+                session: GeckoSession,
+                target: GeckoSession.PromptDelegate.FilePrompt,
+            ): GeckoSession.PromptResponse? {
+                pendingFilePrompt?.dismiss()
+                val acceptTypes = target.acceptTypes ?: emptyArray()
+                val allowMultiple = target.consumePermission != GeckoSession.PromptDelegate.FilePrompt.ConsumePermission.ALLOW_SINGLE
+                _filePickerRequest?.invoke(acceptTypes, allowMultiple)
+                return null  // deferred — activity responds via onFilePickerResult
+            }
+        }
+    }
+
+    /** Called by the activity when the system file picker returns URIs. */
+    override fun onFilePickerResult(uris: Array<android.net.Uri>?) {
+        pendingFilePrompt?.let { prompt ->
+            if (uris != null && uris.isNotEmpty()) {
+                session.promptDelegate?.onExtraPermissionResult(
+                    session,
+                    "file",
+                    uris,
+                )
+            } else {
+                prompt.dismiss()
+            }
+            pendingFilePrompt = null
+        }
+    }
+
+    override fun setFilePickerLauncher(
+        requestFile: (acceptTypes: Array<String>, allowMultiple: Boolean) -> Unit,
+    ) {
+        _filePickerRequest = requestFile
     }
 
     override fun setRestriction(allowedOrigin: String, onBlocked: (String) -> Unit) {

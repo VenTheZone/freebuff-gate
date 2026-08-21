@@ -138,11 +138,10 @@ jobs:
         working-directory: android
         run: |
           gradle --no-daemon --stacktrace \
+            :app:clean \
             :app:lintWebviewDebug \
             :app:assembleWebviewDebug \
             :app:assembleWebviewDebugAndroidTest \
-            -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
-            -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
       - name: Enable KVM for emulator
         shell: bash
@@ -150,6 +149,26 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      - name: Verify debug APK signature
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "${apksigner}"
+          test -s "${apk}"
+          "${apksigner}" verify --verbose --print-certs "${apk}"
+
+      - name: Upload signed debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebuff-mobile-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/webview/debug/app-webview-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Run Android instrumentation and relay pairing E2E on API 35 emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -164,8 +183,6 @@ jobs:
           working-directory: android
           script: >-
             gradle --no-daemon --stacktrace :app:connectedWebviewDebugAndroidTest
-            -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
-            -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
       - name: Stop ephemeral relay fixture and remove generated test inputs
         if: always()
@@ -193,25 +210,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Verify debug APK signature
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          apk="android/app/build/outputs/apk/webview/debug/app-webview-debug.apk"
-          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -n "${apksigner}"
-          test -s "${apk}"
-          "${apksigner}" verify --verbose --print-certs "${apk}"
 
-      - name: Upload signed debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: freebuff-mobile-debug-${{ github.sha }}
-          path: android/app/build/outputs/apk/webview/debug/app-webview-debug.apk
-          if-no-files-found: error
-          retention-days: 14
 
   gecko-spike:
     runs-on: ubuntu-24.04

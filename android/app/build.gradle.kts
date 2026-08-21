@@ -51,8 +51,8 @@ android {
         applicationId = "com.freebuff.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.1.12"
+        versionCode = 13
+        versionName = "0.1.13-clean"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

@@ -305,6 +305,10 @@ class RelayHub {
     this.logger = typeof options.logger === 'function' ? options.logger : () => {};
     this.cookieName = options.cookieName || COOKIE_NAME;
     this.webSessionTtlMs = options.webSessionTtlMs || WEB_SESSION_TTL_MS;
+    // The released APK path is safe by default; tunnel is opt-in.
+    this.tunnelEnabled = options.tunnelEnabled === undefined
+      ? process.env.FB_MOBILE_RELAY_TUNNEL_ENABLED === '1'
+      : Boolean(options.tunnelEnabled);
     this.connectors = new Map();
     this.httpRequests = new Map();
     this.webSockets = new Map();
@@ -1002,6 +1006,18 @@ class RelayHub {
   }
 }
 
+function mobileTransportResponse(hub, result) {
+  const payload = { ...result };
+  if (!hub.tunnelEnabled) {
+    delete payload.tunnelToken;
+    delete payload.tunnelSessionId;
+    delete payload.tunnelWsUrl;
+    return payload;
+  }
+  if (payload.tunnelToken) payload.tunnelWsUrl = `${hub.publicWsUrl}/v1/tunnel`;
+  return payload;
+}
+
 function createRelayServer(options = {}) {
   const hub = options.hub || new RelayHub(options);
   const requestHandler = (req, res) => {
@@ -1024,6 +1040,7 @@ function createRelayServer(options = {}) {
             service: 'freebuff-mobile-relay',
             protocolVersion: 1,
             connectors: hub.connectors.size,
+            tunnelEnabled: hub.tunnelEnabled,
           }, requestOptions);
           return;
         }
@@ -1062,10 +1079,9 @@ function createRelayServer(options = {}) {
             deviceName: body.deviceName,
             devicePublicKey: body.devicePublicKey,
           });
-          // The tunnel rendezvous lives on this relay; hand the phone the
-          // WSS endpoint (blind /v1/tunnel) alongside the shared token.
-          if (result && result.tunnelToken) result.tunnelWsUrl = `${hub.publicWsUrl}/v1/tunnel`;
-          sendJson(res, 200, result, requestOptions);
+          // In HTTPS-only compatibility mode the released APK receives no
+          // tunnel fields and follows the regular relay WebView path.
+          sendJson(res, 200, mobileTransportResponse(hub, result), requestOptions);
           return;
         }
         if (req.method === 'POST' && pathname === '/v1/sessions/refresh') {
@@ -1074,8 +1090,7 @@ function createRelayServer(options = {}) {
             deviceId: body.deviceId,
             deviceToken: body.deviceToken,
           });
-          if (result && result.tunnelToken) result.tunnelWsUrl = `${hub.publicWsUrl}/v1/tunnel`;
-          sendJson(res, 200, result, requestOptions);
+          sendJson(res, 200, mobileTransportResponse(hub, result), requestOptions);
           return;
         }
         if (req.method === 'GET' && pathname === '/v1/mobile/session') {
@@ -1248,6 +1263,7 @@ Required production settings:
   FB_MOBILE_RELAY_ENROLLMENT_TOKEN   installer bootstrap secret
   FB_MOBILE_RELAY_CONNECTOR_STATE_FILE  hashed issued-credential state path
   FB_MOBILE_RELAY_ADMIN_TOKEN          device admin secret
+  FB_MOBILE_RELAY_TUNNEL_ENABLED       set 1 only for clients that support the tunnel path (default: HTTPS-only)
 
 The relay terminates WSS/TLS, provisions short-lived connector tokens through
 /v1/relay/enroll, refreshes them through /v1/relay/refresh, exchanges access

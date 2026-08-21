@@ -37,7 +37,7 @@ class RestrictedWebViewClient(
                 // app's own loopback proxy origin. http is only permitted for
                 // loopback hosts AND the origin must still match exactly, so the
                 // pinning is unchanged — only the scheme relaxation for
-                // 127.0.0.1, which is app-controlled.
+                // localhost, which is app-controlled.
                 (uri.scheme.equals("http", ignoreCase = true) && isLoopbackHost(uri.host))
             schemeOk && originOf(uri) == allowedOrigin
         }.getOrDefault(false)

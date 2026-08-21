@@ -64,7 +64,7 @@ async function jsonRequest(url, options = {}) {
   return { response, body: await response.json() };
 }
 
-async function startRelay() {
+async function startRelay(options = {}) {
   const server = createRelayServer({
     stateFile: null,
     connectorToken: 'connector-secret',
@@ -73,6 +73,7 @@ async function startRelay() {
     publicWsUrl: 'ws://127.0.0.1',
     appUrl: 'http://127.0.0.1/pair',
     uiUrl: 'http://127.0.0.1',
+    tunnelEnabled: options.tunnelEnabled ?? true,
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -86,6 +87,39 @@ async function startRelay() {
     publicWsUrl: 'ws://127.0.0.1',
   };
 }
+
+test('HTTPS-only compatibility is fail-closed and reports its mode', async () => {
+  const relay = await startRelay({ tunnelEnabled: false });
+  try {
+    const health = await jsonRequest(`${relay.baseUrl}/healthz`);
+    assert.equal(health.response.status, 200);
+    assert.equal(health.body.tunnelEnabled, false);
+
+    const pairing = relay.server.hub.store.startPairing({
+      appUrl: `${relay.baseUrl}/pair`,
+      relayUrl: relay.wsUrl,
+      uiUrl: relay.baseUrl,
+    });
+    const qr = new URLSearchParams(new URL(pairing.pairingUrl).hash.slice(1));
+    const claim = await jsonRequest(`${relay.baseUrl}/v1/pairings/claim`, {
+      method: 'POST',
+      body: JSON.stringify({
+        pairingId: qr.get('pairingId'),
+        token: qr.get('token'),
+        deviceName: 'HTTPS-only phone',
+        devicePublicKey: 'ed25519:https-only',
+      }),
+    });
+    assert.equal(claim.response.status, 200);
+    assert.equal('tunnelToken' in claim.body, false);
+    assert.equal('tunnelSessionId' in claim.body, false);
+    assert.equal('tunnelWsUrl' in claim.body, false);
+    assert.equal(claim.body.uiUrl, `${relay.baseUrl}/`);
+  } finally {
+    relay.server.hub.close();
+    await new Promise((resolve) => relay.server.close(resolve));
+  }
+});
 
 test('relay enrollment issues short-lived connector credentials and refreshes them', async () => {
   const relay = createRelayServer({
@@ -393,6 +427,7 @@ test('relay stores push tokens and pushes on agent finish to idle devices only',
     uiUrl: 'http://127.0.0.1',
     store,
     now: () => current,
+    tunnelEnabled: true,
     apnsProvider: {
       configured: true,
       send: async (deviceToken, fields) => {
