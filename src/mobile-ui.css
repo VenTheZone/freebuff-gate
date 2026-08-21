@@ -3197,6 +3197,15 @@ body {
 .fb-pi-tool-state { flex: none; margin-left: auto; color: var(--muted, #999); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
 .fb-pi-tool-card.pending .fb-pi-tool-state { color: var(--fb-pi-accent); }
 .fb-pi-tool-detail { margin: 0 10px 9px 27px; padding: 8px; border-left: 1px solid var(--fb-pi-ring); background: color-mix(in srgb, var(--fb-pi-accent) 4%, transparent); color: var(--muted, #bbb); font-family: var(--fb-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.fb-pi-thinking-card { max-width: 100%; padding: 0; border-left-color: color-mix(in srgb, var(--muted, #999) 45%, var(--border, #333)); }
+.fb-pi-thinking-toggle { display: flex; width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 8px 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fb-pi-thinking-toggle:focus-visible { outline: 2px solid var(--fb-pi-ring); outline-offset: -2px; }
+.fb-pi-thinking-caret { flex: none; color: var(--muted, #999); transition: transform .12s ease; }
+.fb-pi-thinking-card.expanded .fb-pi-thinking-caret { transform: rotate(90deg); }
+.fb-pi-thinking-summary { min-width: 0; overflow: hidden; color: var(--muted, #999); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.fb-pi-thinking-state { flex: none; margin-left: auto; color: var(--muted, #999); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.fb-pi-thinking-card.thinking .fb-pi-thinking-state { color: var(--fb-pi-accent); }
+.fb-pi-thinking-detail { margin: 0 10px 9px 27px; padding: 8px; border-left: 1px solid var(--fb-pi-ring); background: color-mix(in srgb, var(--muted, #999) 6%, transparent); color: var(--muted, #bbb); font-family: var(--fb-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; font-style: italic; }
 /* Cyberpunk 2077: let the ambient neon wash + scanlines show through the
    Pi panel, paint accents in brand-yellow with cyan focus glow, and keep the
    live busy pulse so the panel feels alive instead of a dead slab. */

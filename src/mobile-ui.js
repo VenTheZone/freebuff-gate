@@ -5204,6 +5204,8 @@
       var thinkingSelect = null;
       var streamText = '';
       var streamNode = null;
+      var streamThinkingText = '';
+      var streamThinkingNode = null;
       var toolCards = Object.create(null);
       var promptPending = false;
       var piModeActive = false;
@@ -5605,6 +5607,50 @@
         }
         return addToolCard(value && value.toolName, value && value.args, result, id);
       }
+      function thinkingParts(message) {
+        if (!message || !Array.isArray(message.content)) return [];
+        return message.content.filter(function (part) { return part && part.type === 'thinking'; });
+      }
+      function thinkingText(message) {
+        return thinkingParts(message).map(function (p) { return p.thinking || ''; }).join('\n\n').trim();
+      }
+      function addThinkingCard(text) {
+        if (!messageList) return null;
+        var row = document.createElement('article');
+        row.className = 'fb-pi-message tool fb-pi-thinking-card' + (text ? '' : ' thinking');
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'fb-pi-thinking-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Expand thinking details');
+        var caret = document.createElement('span');
+        caret.className = 'fb-pi-thinking-caret';
+        caret.textContent = '▸';
+        var summary = document.createElement('span');
+        summary.className = 'fb-pi-thinking-summary';
+        summary.textContent = 'Thinking…';
+        var state = document.createElement('span');
+        state.className = 'fb-pi-thinking-state';
+        state.textContent = text ? 'done' : 'thinking';
+        toggle.appendChild(caret);
+        toggle.appendChild(summary);
+        toggle.appendChild(state);
+        var detail = document.createElement('div');
+        detail.className = 'fb-pi-thinking-detail';
+        detail.hidden = true;
+        detail.textContent = text || '';
+        toggle.addEventListener('click', function () {
+          var open = toggle.getAttribute('aria-expanded') === 'true';
+          toggle.setAttribute('aria-expanded', String(!open));
+          detail.hidden = open;
+          row.classList.toggle('expanded', !open);
+        });
+        row.appendChild(toggle);
+        row.appendChild(detail);
+        messageList.appendChild(row);
+        scrollMessages();
+        return row;
+      }
       // Accept either {messages:[...]}, {data:{messages:[...]}}, or a raw array.
       function extractMessages(payload) {
         if (Array.isArray(payload)) return payload;
@@ -5622,6 +5668,8 @@
         if (!messageList) return;
         messageList.textContent = '';
         toolCards = Object.create(null);
+        streamThinkingNode = null;
+        streamThinkingText = '';
         extractMessages(items).forEach(function (raw) {
           var item = normalizeItem(raw);
           if (!item || !item.message) return;
@@ -5633,6 +5681,8 @@
             return;
           }
           if (role === 'assistant') {
+            var assistantThinking = thinkingText(message);
+            if (assistantThinking) addThinkingCard(assistantThinking);
             var assistantText = textOfMessage(message);
             if (assistantText) addBubble('assistant', assistantText);
             toolCallParts(message).forEach(function (part) {
@@ -5676,12 +5726,30 @@
         }
         if (value.type === 'message_update' && value.assistantMessageEvent) {
           var update = value.assistantMessageEvent;
+          var handled = false;
           if (update.type === 'text_delta' && update.delta) {
             if (!streamNode) streamNode = addBubble('assistant', '', 'streaming');
             streamText += update.delta;
             streamNode.querySelector('.fb-pi-message-body').textContent = streamText;
             scrollMessages();
+            handled = true;
           }
+          if ((update.type === 'thinking_delta' || update.type === 'reasoning_delta' || update.type === 'thinking') && update.delta) {
+            if (!streamThinkingNode) streamThinkingNode = addThinkingCard('');
+            streamThinkingText += update.delta;
+            var thinkingDetail = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+            if (thinkingDetail) thinkingDetail.textContent = streamThinkingText;
+            scrollMessages();
+            handled = true;
+          } else if (update.thinking && typeof update.thinking === 'string' && update.thinking) {
+            if (!streamThinkingNode) streamThinkingNode = addThinkingCard('');
+            streamThinkingText += update.thinking;
+            var thinkingDetail2 = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+            if (thinkingDetail2) thinkingDetail2.textContent = streamThinkingText;
+            scrollMessages();
+            handled = true;
+          }
+          if (handled) return;
           return;
         }
         if (value.type === 'message_end' && value.message) {
@@ -5695,6 +5763,26 @@
               streamText = '';
             } else if (finalText) {
               addBubble('assistant', finalText);
+            }
+            var finalThinking = thinkingText(value.message);
+            if (streamThinkingNode) {
+              if (finalThinking) {
+                var thinkingDetail = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+                var thinkingState = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+                if (thinkingDetail) thinkingDetail.textContent = finalThinking;
+                if (thinkingState) thinkingState.textContent = 'done';
+                streamThinkingNode.classList.remove('thinking');
+              } else if (streamThinkingText) {
+                var thinkingState2 = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+                if (thinkingState2) thinkingState2.textContent = 'done';
+                streamThinkingNode.classList.remove('thinking');
+              } else {
+                streamThinkingNode.remove();
+              }
+              streamThinkingNode = null;
+              streamThinkingText = '';
+            } else if (finalThinking) {
+              addThinkingCard(finalThinking);
             }
             toolCallParts(value.message).forEach(function (part) {
               addToolCard(part.name, part.arguments, '', part.id);
