@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { requestJson } = require('./mobile-connect-agent');
+const { syncPiAssets } = require('./sync-pi-assets');
 
 const AGENT_FILES = Object.freeze([
   'mobile-connect-agent.js',
@@ -25,11 +26,17 @@ const SYSTEMD_SERVICE_NAME = 'freebuff-mobile-connect.service';
 const PROXY_SERVICE_NAME = 'freebuff-tailnet-proxy.service';
 const PROXY_FILES = Object.freeze([
   'freebuff_tailnet_proxy.js',
+  'pi-agent-bridge.js',
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
 ]);
 const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
+// Sidecar written next to the deployed proxy: records the directory the UI
+// files were deployed from. The running proxy reads it and serves the
+// SOURCE copy of mobile-ui.css/js when the source file is newer than the
+// deployed one, so repo edits apply on reload without re-running install.
+const UI_SOURCE_SIDECAR = 'ui-source.json';
 const LAUNCH_AGENT_LABEL = 'com.freebuff.mobile-connect';
 const WINDOWS_TASK_NAME = 'Freebuff Mobile Connect';
 const PROXY_LAUNCH_AGENT_LABEL = 'com.freebuff.tailnet-proxy';
@@ -886,6 +893,7 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
   if (missing.length > 0) throw new Error(`Missing proxy source file(s) in --source-dir: ${missing.join(', ')}`);
   if (dryRun) {
     console.log(`Would deploy tailnet proxy to ${proxyDir}`);
+    console.log(`Would record UI source dir ${path.resolve(options.sourceDir)} in ${path.join(proxyDir, UI_SOURCE_SIDECAR)}`);
     if (registration.type === 'systemd-user') console.log(`Would write and enable ${registration.file}`);
     return { changed: true, proxyDir, registration };
   }
@@ -894,6 +902,16 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
     fs.copyFileSync(path.join(options.sourceDir, file), path.join(proxyDir, file));
     try { fs.chmodSync(path.join(proxyDir, file), 0o644); } catch {}
   }
+  // Record the deploy source so the running proxy can serve newer repo
+  // versions of mobile-ui.css/js without waiting for the next install.
+  writeAtomically(
+    path.join(proxyDir, UI_SOURCE_SIDECAR),
+    `${JSON.stringify({
+      sourceDir: path.resolve(options.sourceDir),
+      deployedAt: new Date().toISOString(),
+    }, null, 2)}\n`,
+    0o644,
+  );
   if (registration.type === 'systemd-user') {
     if (fs.existsSync(registration.file) && !isManagedFile(registration.file) && !options.force) {
       throw new Error(`Refusing to overwrite unmanaged auto-start registration: ${registration.file}`);
@@ -928,8 +946,9 @@ function applyBundlePatch(bundleFile) {
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
     proxy.CLOSE_BTN_FIX,
+    proxy.SKILL_ORIGIN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'];
   const already = fixed.every((mark) => body.includes(mark));
   if (already) return { file: bundleFile, outcome: 'already-patched' };
   const patched = proxy.patchBundle(body);
@@ -943,7 +962,9 @@ function applyBundlePatch(bundleFile) {
 function applyIndexShim(indexFile) {
   let html = fs.readFileSync(indexFile, 'utf8');
   const present = html.includes('fb-desktop-shim');
-  if (present && /<script id="fb-desktop-shim">[\s\S]*?<\/script>/.test(html)) {
+  const currentShimMarker = 'fb-connected-folder-grid-v2';
+  const shimMatch = html.match(/<script id="fb-desktop-shim">[\s\S]*?<\/script>/);
+  if (present && shimMatch && shimMatch[0].includes(currentShimMarker)) {
     return { file: indexFile, outcome: 'already-patched' };
   }
   if (!html.includes('</head>')) throw new Error(`index.html has no </head> to anchor the shim: ${indexFile}`);
@@ -1058,6 +1079,112 @@ const ORCH_ROUTE_TAIL = 'let match12 = findRoute(routes, req.method, pathname);'
 const ORCH_ROUTE_ANCHOR = `return json3({ error: "upgrade required" }, 426);\n      }\n      ${ORCH_ROUTE_TAIL}`;
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
 const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
+// ---------------------------------------------------------------------------
+// Pi-compatible skill discovery patch (orchestrator).
+// ---------------------------------------------------------------------------
+// Freebuff's native skill machinery (the `skill` tool catalog, `/skillname`
+// activation, and SkillStore) only scanned `.claude`/`.agents` skill dirs, so
+// skills installed for Pi (`~/.pi/agent/skills`, `<root>/.pi/skills`) were
+// invisible to DIRECT 58060 clients. This patch adds the Pi locations to all
+// three discovery points in the orchestrator: the SDK's getDefaultSkillsDirs,
+// the agent-runtime skill handler's loadSkillFromDisk, and the SkillStore
+// store config. Each insertion is marked so the patch is idempotent.
+const PI_SKILLS_MARK = '/* freebuff-pi-skills */';
+
+// ---------------------------------------------------------------------------
+// Auto-run shadow detection (orchestrator request2).
+// ---------------------------------------------------------------------------
+// The auto-run decision agent's prompt is built by request2(). When a user
+// skill shadows a built-in decision skill (simplify, review, ...), the
+// prompt's SKILL_NOTES describe the MANAGED behavior while the queued run
+// would execute the user skill. This patch makes request2 detect shadowed
+// decision skills and append a NOTE so the decision agent flags the override
+// before enqueuing. Marker = the patched function body; stock anchor = the
+// original request2 function.
+const SHADOW_DETECT_FIX_MARK = 'let shadowed = ctx.skills.filter((s) => BUILTIN_DECISION_SKILLS.has(s.name) && s.source !== "managed");';
+const SHADOW_DETECT_STOCK =
+  'function request2(ctx, segment) {\n  let extra = ctx.skills.map((s) => s.name).filter((name31) => name31 !== AUTORUN_SKILL_NAME && !BUILTIN_DECISION_SKILLS.has(name31));\n  return [\n    bones(segment, ctx.root) || "(no new agent output)",\n    extra.length ? `This project also has these skills: ${extra.join(", ")}.` : "",\n    "The tab is now idle and nothing is queued. What happens next?"\n  ].filter(Boolean).join(`\n\n`);\n}';
+const SHADOW_DETECT_FIX =
+  'function request2(ctx, segment) {\n  let extra = ctx.skills.map((s) => s.name).filter((name31) => name31 !== AUTORUN_SKILL_NAME && !BUILTIN_DECISION_SKILLS.has(name31));\n  let shadowed = ctx.skills.filter((s) => BUILTIN_DECISION_SKILLS.has(s.name) && s.source !== "managed");\n  let notes = [];\n  if (extra.length) notes.push(`This project also has these skills: ${extra.join(", ")}.`);\n  if (shadowed.length) notes.push(`NOTE: the decision skills ${shadowed.map((s) => s.name).join(", ")} are SHADOWED by user-installed skills (${shadowed.map((s) => `${s.name}=${s.source}`).join(", ")}). The descriptions in "Skills you may name" describe the MANAGED versions; if you enqueue one of these names, the USER skill runs instead of the managed pass. The user installed it deliberately; when naming the skill also mention this override to the user, or pick a custom prompt instead.`);\n  return [\n    bones(segment, ctx.root) || "(no new agent output)",\n    ...notes,\n    "The tab is now idle and nothing is queued. What happens next?"\n  ].filter(Boolean).join(`\n\n`);\n}';
+
+// Second half of shadow detection: the request2 prompt note only reaches the
+// decision agent. This patch also surfaces the override to the USER by
+// appending a warning to the queue item's note (rendered as `.qnote` above
+// the queued row in the Gate UI) when an enqueued decision skill is shadowed.
+const SHADOW_NOTE_FIX_MARK = '/* freebuff-shadow-note */';
+const SHADOW_NOTE_STOCK =
+  'enqueueAutorunInputs(id2, decision) {\n    let thread = this.threads.get(id2), note = [\n      decision.why.trim(),\n      decision.declined.length ? `Declined: ${decision.declined.join("; ")}` : ""\n    ].filter(Boolean).join(`\n`), rejected = [], rows = [], position = this.queue.maxPosition(id2, "queued"), createdAt = Date.now();';
+const SHADOW_NOTE_FIX =
+  'enqueueAutorunInputs(id2, decision) {\n    let thread = this.threads.get(id2), note = [\n      decision.why.trim(),\n      decision.declined.length ? `Declined: ${decision.declined.join("; ")}` : ""\n    ].filter(Boolean).join(`\n`), rejected = [], rows = [], position = this.queue.maxPosition(id2, "queued"), createdAt = Date.now();\n    let shadowNote = /* freebuff-shadow-note */ decision.inputs.map((i) => i.skillName).filter(Boolean).filter((n) => BUILTIN_DECISION_SKILLS.has(n) && this.deps.skills.list(this.root).some((s) => s.name === n && s.source !== "managed"));\n    if (shadowNote.length) note = [note, `NOTE: ${shadowNote.join(", ")} is a user-installed skill that shadows the built-in ${shadowNote.length === 1 ? "decision skill" : "decision skills"}; the user version runs instead.`].filter(Boolean).join(`\n`);';
+
+// Order encodes the conflict policy (docs/planning/pi-mode/skill-conflicts.md):
+// `.pi` beats `.agents` at the same level, project beats home. The insertions
+// land the Pi dirs BEFORE the `.agents` entries in each array.
+const PI_SKILLS_PATCHES = [
+  {
+    // sdk getDefaultSkillsDirs
+    anchor: 'path11.join(home, ".agents", SKILLS_DIR_NAME),',
+    insert: [
+      '/* freebuff-pi-skills */',
+      '    path11.join(home, ".pi", "agent", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".pi", SKILLS_DIR_NAME),',
+    ],
+  },
+  {
+    // agent-runtime skill handler loadSkillFromDisk
+    anchor: 'path7.join(home, ".agents", SKILLS_DIR_NAME),',
+    insert: [
+      '/* freebuff-pi-skills */',
+      '    path7.join(home, ".pi", "agent", SKILLS_DIR_NAME),',
+      '    path7.join(projectRoot, ".pi", SKILLS_DIR_NAME),',
+    ],
+  },
+  {
+    // SkillStore.store agentSkillsDirs. The orchestrator lays this array out
+    // one entry per line with 10-space indentation, and merges the entries
+    // with Object.assign — LATER dirs override earlier ones. So the Pi dirs
+    // must go AFTER the `.agents` entries to outrank them. Anchor on the
+    // closing entry (with its trailing close bracket — the bare entry would
+    // also prefix-match the `createSkillsDir` line), splice in the Pi
+    // entries + a comma, and leave the closing entry comma-less last.
+    anchor: '          join25(root, ".agents", "skills")\n        ]',
+    insert: [
+      '          join25(root, ".agents", "skills"),',
+      '          /* freebuff-pi-skills */',
+      '          join25(homedir7(), ".pi", "agent", "skills"),',
+      '          join25(root, ".pi", "skills"),',
+    ],
+    spliceBefore: true,
+  },
+];
+
+// Inserts the Pi skill dirs into `out` at every anchor. Returns the updated
+// string plus the number of anchors actually patched (0 when already marked).
+function applyPiSkillsPatch(out) {
+  if (out.includes(PI_SKILLS_MARK)) return { out, patched: 0 };
+  let patched = 0;
+  for (const patch of PI_SKILLS_PATCHES) {
+    const insertText = patch.insert.join('\n');
+    if (!out.includes(patch.anchor)) {
+      throw new Error(`orchestrator pi-skills anchor not found; expected: ${patch.anchor.slice(0, 80)}…`);
+    }
+    if (patch.spliceBefore) {
+      // The bare closing entry also prefix-matches the `createSkillsDir` line
+      // earlier in the same block, so take the LAST occurrence, which is
+      // always the final element of agentSkillsDirs. Splice the Pi entries in
+      // front of it so its existing suffix (`,`, newline, close bracket)
+      // stays attached and remains valid inside the array.
+      const idx = out.lastIndexOf(patch.anchor);
+      if (idx < 0) throw new Error(`orchestrator pi-skills anchor not found; expected: ${patch.anchor.slice(0, 80)}…`);
+      out = `${out.slice(0, idx)}${insertText}\n${out.slice(idx)}`;
+    } else {
+      out = out.split(patch.anchor).join(`${patch.anchor}\n${insertText}`);
+    }
+    patched += 1;
+  }
+  return { out, patched };
+}
+
 // Best-effort serveSpa cache-header candidates (stock -> patched). The stock
 // string may reorder across app versions; unmatched candidates become a loud
 // warning, not a silent success.
@@ -1123,6 +1250,33 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
     }
   }
   if (bestEffort.length > 0) performed.push('cache-headers');
+  const piPatch = applyPiSkillsPatch(out);
+  out = piPatch.out;
+  if (piPatch.patched > 0) performed.push('pi-skills');
+  if (!out.includes(SHADOW_DETECT_FIX_MARK)) {
+    if (!out.includes(SHADOW_DETECT_STOCK)) {
+      throw new Error(`orchestrator shadow-detect anchor not found (app update may have renamed helpers); expected: ${SHADOW_DETECT_STOCK.slice(0, 80)}…`);
+    }
+    out = out.split(SHADOW_DETECT_STOCK).join(SHADOW_DETECT_FIX);
+    performed.push('shadow-detect');
+  }
+  if (!out.includes(SHADOW_NOTE_FIX_MARK)) {
+    if (!out.includes(SHADOW_NOTE_STOCK) && !out.includes(`  ${SHADOW_NOTE_STOCK}`)) {
+      throw new Error(`orchestrator shadow-note anchor not found (app update may have renamed helpers); expected: ${SHADOW_NOTE_STOCK.slice(0, 80)}…`);
+    }
+    // SHADOW_NOTE_STOCK is a PREFIX of SHADOW_NOTE_FIX, so split/join would
+    // match inside the replacement and duplicate the block. Replace only the
+    // first occurrence (the stock anchor in the real file), never inside the
+    // freshly inserted fix. Match both the 2-space-indented real file and the
+    // col-0 test fixture.
+    const twoSpace = `  ${SHADOW_NOTE_STOCK}`;
+    if (out.includes(twoSpace)) {
+      out = out.replace(twoSpace, `  ${SHADOW_NOTE_FIX}`);
+    } else if (out.includes(SHADOW_NOTE_STOCK)) {
+      out = out.replace(SHADOW_NOTE_STOCK, SHADOW_NOTE_FIX);
+    }
+    performed.push('shadow-note');
+  }
   writeAtomically(orchestratorFile, out, 0o644);
   return { changes: performed, bestEffort };
 }
@@ -1165,7 +1319,11 @@ async function install(options) {
     if (options.uiPatches) {
       try {
         const desktopDir = findFreebuffDesktop(options);
-        console.log(`UI patches: would deploy proxy to ${paths.proxyDir} and patch ${desktopOrchestratorDir(desktopDir)}`);
+        // installUiStack derives the proxy dir from the PROXY auto-start
+        // paths (paths.proxyDir above is the agent stack's), so resolve it
+        // the same way here for an honest dry-run report.
+        const proxyDir = options.proxyDir || proxyAutoStartPaths(options).proxyDir;
+        console.log(`UI patches: would deploy proxy to ${proxyDir} and patch ${desktopOrchestratorDir(desktopDir)}`);
       } catch (error) {
         console.log(`UI patches: SKIPPED (${error.message})`);
       }
@@ -1236,6 +1394,18 @@ async function install(options) {
     previouslyEnabled: options.previousAutoStart,
   });
 
+  let piAssets = { enabled: false };
+  const piAssetDir = path.resolve(options.sourceDir, '..', 'pi-assets');
+  if (fs.existsSync(piAssetDir)) {
+    const piAgentDir = options.piAgentDir || process.env.FB_PI_AGENT_DIR || path.join(options.home || os.homedir(), '.pi', 'agent');
+    try {
+      piAssets = { enabled: true, ...syncPiAssets({ agentDir: piAgentDir, assetDir: piAssetDir }) };
+    } catch (error) {
+      piAssets = { enabled: true, error: error.message };
+      console.warn(`Warning: Pi asset sync failed: ${error.message}`);
+    }
+  }
+
   let uiStack = { enabled: false };
   if (options.uiPatches) {
     uiStack = installUiStack(options, paths, {
@@ -1248,7 +1418,7 @@ async function install(options) {
     try { fs.writeFileSync(options.configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 }); } catch {}
   }
   printInstallSummary(options, config, paths);
-  return { changed: true, dryRun: false, config, paths, autoStart, uiStack };
+  return { changed: true, dryRun: false, config, paths, autoStart, piAssets, uiStack };
 }
 
 // Deploys the tailnet proxy (install-guide step 2) and applies the on-disk
@@ -1317,8 +1487,9 @@ function collectProblems(desktopDir, options = {}) {
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
     proxy.CLOSE_BTN_FIX,
+    proxy.SKILL_ORIGIN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'];
 
   let bundles = [];
   try {
@@ -1386,6 +1557,9 @@ function collectProblems(desktopDir, options = {}) {
     if (!src.includes('"public, max-age=31536000, immutable"')) {
       problems.push({ level: 'warn', item: 'orchestrator.cache', message: 'serveSpa immutable asset header missing (best-effort patch; re-run install to retry)' });
     }
+    if (!src.includes('/* freebuff-pi-skills */')) {
+      problems.push({ level: 'warn', item: 'orchestrator.pi-skills', message: 'Pi skill dirs not discovered by orchestrator (re-run install to apply)' });
+    }
   }
 
   // Missing proxy deployment files are warnings; stale injected UI is an
@@ -1407,10 +1581,18 @@ function collectProblems(desktopDir, options = {}) {
       return !fs.readFileSync(source).equals(fs.readFileSync(deployed));
     });
     if (staleUiFiles.length > 0) {
+      // With the ui-source.json sidecar the running proxy serves the newer
+      // SOURCE copy itself, so staleness of the deployed snapshot is a
+      // tidiness warning, not a live regression. Without the sidecar (older
+      // installs) the deployed copy is what gets served, so it stays an
+      // error that demands a re-run.
+      const hasSourceSidecar = fs.existsSync(path.join(proxyDir, UI_SOURCE_SIDECAR));
       problems.push({
-        level: 'error',
+        level: hasSourceSidecar ? 'warn' : 'error',
         item: 'proxy-ui',
-        message: `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (re-run install)`,
+        message: hasSourceSidecar
+          ? `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (proxy serves the newer source copy; re-run install to refresh the deployed snapshot)`
+          : `deployed UI asset(s) stale in ${proxyDir}: ${staleUiFiles.join(', ')} (re-run install)`,
       });
     }
   }
@@ -1555,6 +1737,11 @@ function uninstall(options) {
   if (proxyLeftRunning) {
     console.log(`Tailnet proxy ${PROXY_SERVICE_NAME} is still running; left unit and files in place.`);
   } else {
+    // Drop the deploy-source sidecar (managed state for this install); the
+    // rest of the proxy dir is intentionally preserved for the next install.
+    try { fs.unlinkSync(path.join(proxyDir, UI_SOURCE_SIDECAR)); } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
     try { fs.rmdirSync(proxyDir); } catch (error) {
       if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error;
     }
@@ -1595,6 +1782,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  SHADOW_NOTE_FIX,
+  SHADOW_NOTE_FIX_MARK,
+  SHADOW_NOTE_STOCK,
   AGENT_FILES,
   DEFAULT_AGENT_VERSION,
   DEFAULT_UPSTREAM_URL,
@@ -1605,6 +1795,7 @@ module.exports = {
   PROXY_SERVICE_NAME,
   PROXY_WINDOWS_TASK_NAME,
   SYSTEMD_SERVICE_NAME,
+  UI_SOURCE_SIDECAR,
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,

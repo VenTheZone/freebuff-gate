@@ -1,0 +1,9 @@
+{
+  "packages": [
+    "npm:pi-web-access",
+    "npm:@mjasnikovs/pi-task",
+    "npm:pi-free",
+    "npm:@dietrichgebert/ponytail",
+    "npm:pi-caveman"
+  ]
+}

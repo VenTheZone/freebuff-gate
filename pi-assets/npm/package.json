@@ -1,0 +1,11 @@
+{
+  "name": "pi-extensions",
+  "private": true,
+  "dependencies": {
+    "@dietrichgebert/ponytail": "^4.9.0",
+    "@mjasnikovs/pi-task": "^0.37.7",
+    "pi-caveman": "^1.0.8",
+    "pi-free": "^2.4.6",
+    "pi-web-access": "^0.21.0"
+  }
+}

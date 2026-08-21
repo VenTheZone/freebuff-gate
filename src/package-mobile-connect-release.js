@@ -17,6 +17,7 @@ const RELEASE_FILES = Object.freeze([
   // Tailnet proxy stack, deployed by the installer (steps 2-4): the proxy,
   // the mobile UI layer it reads per request, and the perf probe.
   'freebuff_tailnet_proxy.js',
+  'pi-agent-bridge.js',
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',

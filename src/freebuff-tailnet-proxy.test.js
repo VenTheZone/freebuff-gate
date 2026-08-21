@@ -16,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SHIM, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -74,6 +74,106 @@ test('folder picker keeps long directory names readable and discoverable', () =>
   assert.match(SHIM, /row\.title = fullName/);
   assert.match(SHIM, /row\.setAttribute\('aria-label', \(e\.dir \? 'Open folder ' : 'File '\) \+ fullName\)/);
   assert.match(SHIM, /b\.title = String\(seg\)/);
+});
+
+test('proxy routes POST /api/chat to the local chat-server and falls back to the orchestrator when it is down', async () => {
+  // Chat-server reachable: composer traffic goes to it, streaming back.
+  const chatServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('data: {"type":"text-delta","delta":"from-chat-server"}\n\n');
+    });
+  });
+  const chatPort = await listen(chatServer);
+  const proxy = createProxyServer({
+    upstream: 'http://127.0.0.1:1',
+    chatUpstream: `http://127.0.0.1:${chatPort}`,
+  });
+  const proxyPort = await listen(proxy);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 't1', messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /from-chat-server/);
+  } finally {
+    await close(proxy);
+    await close(chatServer);
+  }
+
+  // Chat-server down (connection refused): request falls back to upstream.
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: from-orchestrator');
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy2 = createProxyServer({
+    upstream: `http://127.0.0.1:${upstreamPort}`,
+    chatUpstream: 'http://127.0.0.1:1',
+  });
+  const proxy2Port = await listen(proxy2);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxy2Port}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 't2', messages: [{ role: 'user', content: 'hi' }] }),
+    });
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /from-orchestrator/);
+  } finally {
+    await close(proxy2);
+    await close(upstream);
+  }
+});
+
+test('proxy injects Freebuff skills into native orchestrator chat requests', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-native-skills-'));
+  const skillDir = path.join(root, '.agents', 'skills', 'release-safe');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), [
+    '---',
+    'name: release-safe',
+    'description: Use when preparing releases.',
+    '---',
+    'Run release checks before publishing.',
+  ].join('\n'));
+  let received = null;
+  const chatServer = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('data: ok\n\n');
+    });
+  });
+  const chatPort = await listen(chatServer);
+  const proxy = createProxyServer({
+    upstream: `http://127.0.0.1:${chatPort}`,
+    chatUpstream: 'off',
+    skills: { cwd: root, skillRoots: [path.join(root, '.agents', 'skills')] },
+  });
+  const proxyPort = await listen(proxy);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'prepare release' }] }),
+    });
+    assert.equal(res.status, 200);
+    await res.text();
+    assert.equal(received.messages[0].role, 'system');
+    assert.match(received.messages[0].content, /release-safe/);
+    assert.match(received.messages[0].content, /Instructions file: .*SKILL\.md/);
+  } finally {
+    await close(proxy);
+    await close(chatServer);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Codex device-auth endpoints track waiting and connected states', async () => {
@@ -187,6 +287,30 @@ test('patchBundle rewrites the home-tab mark and leaves unknown bytes alone', ()
   assert.equal(patchBundle('plain javascript'), 'plain javascript');
 });
 
+test('patchBundle adds a skill-origin badge to the composer slash menu rows', () => {
+  const patched = patchBundle(`head;${SKILL_ORIGIN_MARK};tail;`);
+  assert.ok(
+    patched.includes('slash-origin'),
+    'slash rows must render an origin badge span',
+  );
+  assert.ok(
+    patched.includes('"managed"===ee.source?"freebuff"'),
+    'origin label maps managed skills to freebuff',
+  );
+  assert.ok(
+    patched.includes('"agent"===ee.source?"agents"'),
+    'origin label maps agent skills to agents',
+  );
+  assert.ok(!patched.includes(`${SKILL_ORIGIN_MARK};tail;`), 'slash row is not duplicated');
+  // Idempotent: an already-patched bundle must not be patched a second time.
+  const repatched = patchBundle(patched);
+  assert.equal(
+    (repatched.match(/slash-origin/g) || []).length,
+    (patched.match(/slash-origin/g) || []).length,
+    're-patching an already-patched bundle must not duplicate the badge',
+  );
+});
+
 test('patchBundle exposes the native open-thread action to the mobile layer', () => {
   const patched = patchBundle(`head;${OPEN_THREAD_MARK};tail;`);
   assert.ok(
@@ -219,7 +343,7 @@ function createWatchUpstream(state) {
     if (pathname === '/assets/index-ABC.js') {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       res.end(state.healthy
-        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}${CLOSE_BTN_FIX}${OPEN_THREAD_FIX}`
+        ? `${CREATE_REUSE}${SETSTATE_FIX}${SCROLL_FIX}${CLOSE_FIX1}${CLOSE_FIX2}${CLOSE_FIX3}${CLOSE_BTN_FIX}${OPEN_THREAD_FIX}${SKILL_ORIGIN_FIX}`
         : 'var x = 1;');
       return;
     }
@@ -290,6 +414,61 @@ test('proxy injects a user theme after the built-in mobile css', async () => {
   } finally {
     delete process.env.FB_MOBILE_THEME_FILE;
     fs.rmSync(themeFile, { force: true });
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test('proxy serves the newer of the source and deployed mobile UI files', async () => {
+  // A deployed proxy records its deploy source dir (ui-source.json, written
+  // by the installer). When a source file is NEWER than the deployed copy —
+  // an edit made in the repo after install — the proxy serves the source
+  // version, so UI changes apply on reload without a re-install.
+  // FB_UI_SOURCE_DIR is the override seam exercised here.
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-ui-source-'));
+  const past = new Date('2020-01-01T00:00:00Z');
+  const future = new Date(Date.now() + 60 * 60 * 1000);
+  fs.writeFileSync(path.join(sourceDir, 'mobile-ui.css'), '/* source-css */');
+  fs.writeFileSync(path.join(sourceDir, 'mobile-ui.js'), '/* source-js */');
+  process.env.FB_UI_SOURCE_DIR = sourceDir;
+  const upstream = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<html><head></head><body></body></html>');
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+  const readInjected = async () => {
+    const page = await (await fetch(`http://127.0.0.1:${proxyPort}/`)).text();
+    const cssMatch = page.match(/<style id="fb-mobile-ui">([\s\S]*?)<\/style>/);
+    const jsMatch = page.match(/<script id="fb-mobile-ui">([\s\S]*?)<\/script>/);
+    assert.ok(cssMatch, 'mobile css injected');
+    assert.ok(jsMatch, 'mobile js injected');
+    return { css: cssMatch[1], js: jsMatch[1] };
+  };
+  try {
+    // Source older than the deployed copy: deployed (repo) content served.
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.css'), past, past);
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.js'), past, past);
+    let page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), false, 'old source css not served');
+    assert.equal(page.js.includes('/* source-js */'), false, 'old source js not served');
+    assert.ok(page.css.length > 1000, 'deployed mobile-ui.css served');
+    // Source newer (a repo edit after install): source content wins.
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.css'), future, future);
+    fs.utimesSync(path.join(sourceDir, 'mobile-ui.js'), future, future);
+    page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), true, 'newer source css served');
+    assert.equal(page.js.includes('/* source-js */'), true, 'newer source js served');
+    // Source removed or moved away: fall back to the deployed copy.
+    fs.rmSync(path.join(sourceDir, 'mobile-ui.css'));
+    fs.rmSync(path.join(sourceDir, 'mobile-ui.js'));
+    page = await readInjected();
+    assert.equal(page.css.includes('/* source-css */'), false, 'deployed css after source removal');
+    assert.equal(page.js.includes('/* source-js */'), false, 'deployed js after source removal');
+  } finally {
+    delete process.env.FB_UI_SOURCE_DIR;
+    fs.rmSync(sourceDir, { recursive: true, force: true });
     await close(proxy);
     await close(upstream);
   }

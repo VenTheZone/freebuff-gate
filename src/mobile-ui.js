@@ -107,6 +107,30 @@
     }
   } catch (e) {}
 
+  // Theme selection (all viewports): the header theme menu (themePicker
+  // below) switches between the app's own dark theme and the built-in
+  // Cyberpunk 2077 theme. The choice persists per browser in localStorage
+  // and is applied here, before the app paints, so a reload never flashes
+  // the wrong theme. The attribute is namespaced (data-fb-theme) and lives
+  // beside the app's own data-theme (dark/light switch), which it overrides
+  // while active — the injected stylesheet wins because it is served after
+  // the app's CSS.
+  var THEME_KEY = 'fb-ui:theme';
+  var THEME_CYBERPUNK = 'cyberpunk';
+  var THEME_DEFAULT = 'default';
+  function persistedTheme() {
+    try {
+      var v = localStorage.getItem(THEME_KEY);
+      return v && v !== THEME_DEFAULT ? v : THEME_DEFAULT;
+    } catch (e) {
+      return THEME_DEFAULT;
+    }
+  }
+  (function applyPersistedTheme() {
+    var pt = persistedTheme();
+    if (pt !== THEME_DEFAULT) root.setAttribute('data-fb-theme', pt);
+  })();
+
   // Active session thread id, from the active tab's .tab-select id
   // ("thread-tab-<id>"). Empty on the home screen.
   function activeThreadId() {
@@ -3185,6 +3209,336 @@
     });
   }
 
+  // Theme picker (all viewports): a palette button in the header opens a
+  // menu with the built-in themes — the app's default dark theme and the
+  // Cyberpunk 2077 theme. Selecting one toggles data-fb-theme on <html> (the
+  // CSS lives in mobile-ui.css) and persists the choice per browser in
+  // localStorage, so Gate Desktop and Gate Mobile on this device keep the
+  // same look across reloads. The app's own dark/light switch is untouched;
+  // the injected theme layers on top of it. Runs at every viewport — unlike
+  // the mobile-only header controls, the button stays visible on desktop.
+  var themePickerBound = false;
+  function themePicker() {
+    if (themePickerBound) return;
+    themePickerBound = true;
+    // Wait for the main tabbar (like the session switcher), not just <body>:
+    // on the real app React mounts the tabbar after parse, and binding to a
+    // not-yet-existing header would drop the button forever.
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
+      var menu = null;
+      var opener = null;
+      var THEMES = [
+        { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
+        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#f2d21c' },
+        { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
+        { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
+      ];
+      function themeLabel(id) {
+        for (var i = 0; i < THEMES.length; i++) {
+          if (THEMES[i].id === id) return THEMES[i].label;
+        }
+        return THEME_DEFAULT === id ? 'default dark' : id;
+      }
+      function applyTheme(id, opts) {
+        if (id && id !== THEME_DEFAULT) {
+          document.documentElement.setAttribute('data-fb-theme', id);
+        } else {
+          document.documentElement.removeAttribute('data-fb-theme');
+        }
+        try {
+          if (id && id !== THEME_DEFAULT) localStorage.setItem(THEME_KEY, id);
+          else localStorage.removeItem(THEME_KEY);
+        } catch (e) {}
+        if (!opts || !opts.silent) {
+          mobileLiveRegion.announce(
+            'Theme set to ' + themeLabel(id) + '.',
+            'polite',
+          );
+        }
+        syncAppearancePatch();
+      }
+      function close() {
+        if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+        menu = null;
+        if (opener) opener.classList.remove('open');
+        opener = null;
+        mobileOverlay.dismiss('theme-menu');
+      }
+      function open(btn) {
+        close();
+        opener = btn;
+        btn.classList.add('open');
+        var current = persistedTheme();
+        menu = document.createElement('div');
+        menu.className = 'fb-theme-menu';
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', 'Theme');
+        var title = document.createElement('div');
+        title.className = 'fb-theme-menu-title';
+        title.textContent = 'Theme';
+        menu.appendChild(title);
+        THEMES.forEach(function (theme) {
+          var option = document.createElement('button');
+          option.type = 'button';
+          option.className = 'fb-theme-option';
+          option.setAttribute('role', 'menuitemradio');
+          option.setAttribute('aria-checked', current === theme.id ? 'true' : 'false');
+          var swatch = document.createElement('span');
+          swatch.className = 'fb-theme-swatch';
+          swatch.style.background = theme.swatch;
+          swatch.setAttribute('aria-hidden', 'true');
+          var label = document.createElement('span');
+          label.className = 'fb-theme-label';
+          label.textContent = theme.label;
+          var check = document.createElement('span');
+          check.className = 'fb-theme-check';
+          check.setAttribute('aria-hidden', 'true');
+          check.textContent = '✓';
+          option.appendChild(swatch);
+          option.appendChild(label);
+          option.appendChild(check);
+          option.addEventListener('click', function () {
+            applyTheme(theme.id);
+            close();
+          });
+          menu.appendChild(option);
+        });
+        document.body.appendChild(menu);
+        attachSwipeDownClose(menu, close);
+        mobileOverlay.open('theme-menu', close);
+      }
+      function ensure(header) {
+        if (!header || header.querySelector('.fb-theme-toggle')) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'fb-theme-toggle';
+        btn.setAttribute('aria-label', 'Change theme');
+        btn.setAttribute('aria-haspopup', 'menu');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.title = 'Theme';
+        btn.innerHTML =
+          '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="8" cy="8" r="6.25"/>' +
+          '<path d="M8 1.75a6.25 6.25 0 0 1 0 12.5Z" fill="currentColor" stroke="none"/>' +
+          '</svg>';
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (menu) close();
+          else open(btn);
+        });
+        var anchor =
+          header.querySelector('.conn-status') ||
+          header.querySelector('.tabbar-account') ||
+          null;
+        if (anchor) header.insertBefore(btn, anchor);
+        else header.appendChild(btn);
+      }
+      ensure(tabbar);
+      ensure(document.querySelector('.tabbar.threadbar'));
+      // React re-renders the tabbar on tab/status changes (streaming tokens
+      // swap tab nodes), so re-insert the button if a re-render dropped it.
+      // Two observers: the tabbar one catches child re-renders; the parent
+      // one (childList only, cheap) catches the tabbar node itself being
+      // replaced by a remount. Desktop has no mobile bodySync fallback, so
+      // the button must recover on its own.
+      new MutationObserver(function () {
+        ensure(tabbar);
+        ensure(document.querySelector('.tabbar.threadbar'));
+      }).observe(tabbar, {
+        childList: true,
+        subtree: true,
+      });
+      var tabbarParent = tabbar.parentElement;
+      if (tabbarParent) {
+        new MutationObserver(function () {
+          var current = document.querySelector('.tabbar:not(.threadbar)');
+          if (current && current !== tabbar) {
+            tabbar = current;
+            ensure(tabbar);
+          }
+          ensure(document.querySelector('.tabbar.threadbar'));
+        }).observe(tabbarParent, { childList: true });
+      }
+      // Outside tap / Escape / resize close, matching the session menu.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          if (isCloseConfirmTarget(ev.target)) return;
+          if (
+            menu &&
+            !menu.contains(ev.target) &&
+            (!opener || !opener.contains(ev.target))
+          ) {
+            close();
+          }
+        },
+        true,
+      );
+      document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape') close();
+      });
+      window.addEventListener('resize', close);
+      // Sync the theme across this device's other windows/tabs.
+      window.addEventListener('storage', function (ev) {
+        if (ev.key !== THEME_KEY) return;
+        var pt = persistedTheme();
+        if (pt !== THEME_DEFAULT) {
+          document.documentElement.setAttribute('data-fb-theme', pt);
+        } else {
+          document.documentElement.removeAttribute('data-fb-theme');
+        }
+      });
+
+      // ---- Native Appearance surfaces ----
+      // The app's own Appearance UI (account menu group + the new-thread
+      // theme switch) only offers Light/Dark/System, so the gate themes were
+      // easy to miss. Patch both surfaces with the same Default dark /
+      // Cyberpunk 2077 options, styled as native items. The surfaces
+      // mount/unmount per open/navigation and React re-renders them after a
+      // native themePref change (wiping injected nodes), so patching is
+      // idempotent and re-runs on any non-transcript DOM change (debounced
+      // like the mobile body sync). Clicking a NATIVE option also clears the
+      // gate override, so the app's own switch stays authoritative once the
+      // user touches it.
+      function optionIcon(kind) {
+        if (kind === 'moon') {
+          return '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" ' +
+            'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+            'stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M14 9.6A6 6 0 0 1 6.4 2a6 6 0 1 0 7.6 7.6Z"/></svg>';
+        }
+        return '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="8" cy="8" r="6.25"/>' +
+          '<path d="M8 1.75a6.25 6.25 0 0 1 0 12.5Z" fill="currentColor" stroke="none"/>' +
+          '</svg>';
+      }
+      function syncAppearancePatch() {
+        var active = persistedTheme();
+        document.querySelectorAll('.fb-gate-theme-item, .fb-gate-theme-option').forEach(function (el) {
+          var id = el.getAttribute('data-fb-theme-id');
+          var on = id === active;
+          if (el.classList.contains('theme-option')) {
+            el.classList.toggle('on', on);
+            el.setAttribute('aria-pressed', on ? 'true' : 'false');
+          } else {
+            el.setAttribute('aria-checked', on ? 'true' : 'false');
+          }
+        });
+      }
+      function patchAppearance() {
+        // Account menu: the Appearance group gets a "Gate themes" section.
+        var group = document.querySelector('.account-menu [role="group"][aria-label="Appearance"]');
+        if (group && !group.querySelector('.fb-gate-theme-item')) {
+          var label = document.createElement('div');
+          label.className = 'header-menu-label';
+          label.textContent = 'Gate themes';
+          group.appendChild(label);
+          THEMES.forEach(function (theme) {
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'header-menu-item fb-gate-theme-item';
+            item.setAttribute('role', 'menuitemradio');
+            item.setAttribute('aria-checked', 'false');
+            item.setAttribute('data-fb-theme-id', theme.id);
+            item.setAttribute('aria-label', theme.label);
+            item.innerHTML =
+              optionIcon(theme.id === THEME_CYBERPUNK ? 'cyber' : 'moon') +
+              '<span>' + theme.label + '</span>' +
+              '<svg class="header-menu-check" width="14" height="14" viewBox="0 0 16 16" ' +
+              'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+              'stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3.2 3.2L13 4.5"/></svg>';
+            item.addEventListener('click', function () {
+              applyTheme(theme.id);
+            });
+            group.appendChild(item);
+          });
+        }
+        // New-thread screen: the Light/Dark/System pill row gets the same
+        // two options as icon buttons (tooltips carry the labels).
+        var sw = document.querySelector('.new-thread-theme .theme-switch');
+        if (sw && !sw.querySelector('.fb-gate-theme-option')) {
+          THEMES.forEach(function (theme) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'theme-option fb-gate-theme-option';
+            btn.setAttribute('aria-pressed', 'false');
+            btn.setAttribute('data-fb-theme-id', theme.id);
+            btn.setAttribute('data-tooltip', theme.label);
+            btn.setAttribute('aria-label', theme.label);
+            btn.title = theme.label;
+            btn.innerHTML = optionIcon(theme.id === THEME_CYBERPUNK ? 'cyber' : 'moon');
+            btn.addEventListener('click', function () {
+              applyTheme(theme.id);
+            });
+            sw.appendChild(btn);
+          });
+        }
+        syncAppearancePatch();
+      }
+      var patchTimer = null;
+      function schedulePatch() {
+        if (patchTimer) return;
+        patchTimer = setTimeout(function () {
+          patchTimer = null;
+          patchAppearance();
+        }, 80);
+      }
+      patchAppearance();
+      // A native Light/Dark/System click must clear the gate override;
+      // otherwise the cyberpunk theme silently wins over the app's switch.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          var target = ev.target && ev.target.closest
+            ? ev.target.closest('.header-menu-item, .theme-option')
+            : null;
+          if (!target) return;
+          if (
+            target.classList.contains('fb-gate-theme-item') ||
+            target.classList.contains('fb-gate-theme-option')
+          ) {
+            return;
+          }
+          var inAppearance =
+            target.closest('[role="group"][aria-label="Appearance"]') ||
+            target.closest('.theme-switch');
+          if (!inAppearance) return;
+          if (persistedTheme() !== THEME_DEFAULT) {
+            applyTheme('default', { silent: true });
+          }
+        },
+        true,
+      );
+      // Menu open / home navigation mount the Appearance surfaces; React
+      // also re-renders them after a native themePref change (wiping
+      // injected nodes), so re-patch on any non-transcript DOM change.
+      document.addEventListener(
+        'click',
+        function (ev) {
+          var target = ev.target && ev.target.closest
+            ? ev.target.closest('.account-trigger, .account-menu, .new-thread-theme, .theme-switch')
+            : null;
+          if (target) schedulePatch();
+        },
+        true,
+      );
+      var appShell = document.querySelector('.app');
+      if (appShell) {
+        new MutationObserver(function (records) {
+          if (records.some(function (record) { return !isTranscriptNode(record.target); })) {
+            schedulePatch();
+          }
+        }).observe(appShell, { childList: true, subtree: true });
+      }
+    });
+  }
+
   // Sliding tools panel (mobile): the explorer is hidden on mobile — no
   // open drawer, no collapsed rail. A header button (.fb-panel-toggle)
   // summons it as a panel that slides in from the right over the chat,
@@ -4798,6 +5152,1967 @@
   // (full copy, destination, CTA) instead of navigating the WebView. Open
   // launches the device's external browser via window.FreebuffNative
   // (Android WebView bridge) or window.open (browser/desktop); Close dismisses.
+  // Pi coding-agent panel: a shared Desktop/Mobile surface over the local
+  // Pi RPC process. It intentionally uses the existing proxy origin, so the
+  // phone never needs a second port or a Pi install of its own.
+  var piPanelBound = false;
+  function piPanel() {
+    if (piPanelBound) return;
+    piPanelBound = true;
+    waitForEl('body', function () {
+      var overlay = null;
+      var historyLayer = null;
+      var eventSource = null;
+      var cwd = '';
+      var sessionId = '';
+      var session = null;      var sessions = [];
+      var messageList = null;
+      var sessionList = null;
+      var sessionItems = null;
+      var piHome = null;
+      var piHomeItems = null;
+      var DEFAULT_MAP_KEY = 'fb-pi-default-session';
+      function defaultSessionMap() {
+        try { return JSON.parse(localStorage.getItem(DEFAULT_MAP_KEY) || '{}') || {}; }
+        catch (e) { return {}; }
+      }
+      function getDefaultSession(cwd) {
+        var map = defaultSessionMap();
+        return Object.prototype.hasOwnProperty.call(map, cwd) ? map[cwd] : '';
+      }
+      function setDefaultSession(cwd, id) {
+        if (!cwd) return;
+        var map = defaultSessionMap();
+        if (id) map[cwd] = id; else delete map[cwd];
+        localStorage.setItem(DEFAULT_MAP_KEY, JSON.stringify(map));
+      }
+      var sessionDrawerToggle = null;
+      var sessionDrawerScrim = null;
+      var settingsToggle = null;
+      var settingsScrim = null;
+      var controls = null;
+      var availableProviders = [];
+      var promptInput = null;
+      var sendButton = null;
+      var status = null;
+      var projectButton = null;
+      var projectLabel = null;
+      var sessionSwitch = null;
+      var scopeSelect = null;
+      var modelSelect = null;
+      var modelSearch = null;
+      var availableModels = [];
+      var thinkingSelect = null;
+      var wallSelect = null;
+      var wallUrl = null;
+      var wallApply = null;
+      var wallNote = null;
+      var streamText = '';
+      var streamNode = null;
+      var streamThinkingText = '';
+      var streamThinkingNode = null;
+      var toolCards = Object.create(null);
+      var toolArgBuffers = Object.create(null);
+      var contentIndexToId = Object.create(null);
+      var wallpaperStyleEl = null;
+      var wallpaperState = null;
+      var WALLPAPER_PRESETS = {
+        void: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3CradialGradient id="g" cx="50%25" cy="25%25" r="70%25"%3E%3Cstop offset="0%25" stop-color="%232a0a42"/%3E%3Cstop offset="100%25" stop-color="%2305000d"/%3E%3C/radialGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E',
+        grid: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" fill="%2306000d"/%3E%3Cpath d="M0 0h2V128H0zM0 0h128v2H0z" fill="%23140026" fill-opacity=".45"/%3E%3Cg opacity=".35"%3E%3Cpath d="M0 0h1V128H0z"/%3E%3Cpath d="M0 0h128v1H0z"/%3E%3C/g%3E%3C/svg%3E',
+        dusk: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3ClinearGradient id="g" x1="0%25" y1="0%25" x2="0%25" y2="100%25"%3E%3Cstop offset="0%25" stop-color="%231b0030"/%3E%3Cstop offset="100%25" stop-color="%2304000a"/%3E%3C/linearGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E'
+      };
+      var promptPending = false;
+      var piModeActive = false;
+      var piModeToggle = null;
+      var piModeTabbar = null;
+      var piModeBooted = false;
+      var commandLayer = null;
+      var slashSuggestionLayer = null;
+      var slashSuggestionIndex = 0;
+      var PI_SLASH_COMMANDS = [
+        ['settings', 'Open settings'],
+        ['model', 'Select model'],
+        ['models', 'Select model (web alias)'],
+        ['scoped-models', 'Choose models for cycling'],
+        ['scope-models', 'Choose models for cycling (web alias)'],
+        ['export', 'Export session'],
+        ['import', 'Import session'],
+        ['share', 'Share session'],
+        ['copy', 'Copy last agent message'],
+        ['name', 'Set session name'],
+        ['session', 'Show session info'],
+        ['changelog', 'Show changelog'],
+        ['hotkeys', 'Show keyboard shortcuts'],
+        ['fork', 'Create fork'],
+        ['clone', 'Duplicate current session'],
+        ['tree', 'Navigate session tree'],
+        ['trust', 'Save project trust'],
+        ['login', 'Configure provider login'],
+        ['logout', 'Remove provider login'],
+        ['new', 'Start new session'],
+        ['compact', 'Compact session context'],
+        ['resume', 'Resume session'],
+        ['reload', 'Reload Pi resources'],
+        ['quit', 'Close Pi mode'],
+      ];
+
+      function piModeStorage(value) {
+        try {
+          if (value === undefined) return localStorage.getItem('fb-pi-mode') === 'true';
+          localStorage.setItem('fb-pi-mode', value ? 'true' : 'false');
+        } catch (e) {}
+      }
+      function nativePiTabs() {
+        return piModeTabbar ? Array.prototype.slice.call(piModeTabbar.querySelectorAll('.tab:not(.home), .tab.home, .tab-new')) : [];
+      }
+      function applyPiModeView() {
+        if (!overlay) return;
+        overlay.classList.toggle('fb-pi-mode-view', piModeActive);
+        if (!piModeActive || !piModeTabbar) {
+          overlay.style.top = '';
+          overlay.style.bottom = '';
+          return;
+        }
+        var host = overlay.parentElement;
+        var tabRect = piModeTabbar.getBoundingClientRect();
+        var hostRect = host ? host.getBoundingClientRect() : { top: 0 };
+        overlay.style.top = Math.max(0, tabRect.bottom - hostRect.top) + 'px';
+        overlay.style.bottom = '0';
+      }
+      function hideNativePiTabs(hidden) {
+        if (!piModeTabbar) return;
+        piModeTabbar.querySelectorAll('.tab, .tab-new, .fb-session-switch, .fb-new-session, .fb-mobile-report').forEach(function (node) {
+          if (hidden) {
+            node.dataset.fbPiModeHidden = 'true';
+            node.hidden = true;
+          } else if (node.dataset.fbPiModeHidden === 'true') {
+            delete node.dataset.fbPiModeHidden;
+            node.hidden = false;
+          }
+        });
+      }
+      function renderPiModeTabs() {
+        if (!piModeTabbar || !piModeActive) return;
+        piModeTabbar.querySelectorAll('.fb-pi-mode-tab-wrap, .fb-pi-mode-new, .fb-pi-mode-home-tab').forEach(function (node) { node.remove(); });
+        var anchor = piModeTabbar.querySelector('.conn-status, .tabbar-account');
+        var home = document.createElement('button');
+        home.type = 'button';
+        home.className = 'fb-pi-mode-home-tab' + (piHome && !piHome.hidden ? ' active' : '');
+        home.textContent = 'Home';
+        home.setAttribute('aria-label', 'Open Pi home');
+        home.addEventListener('click', showPiHome);
+        piModeTabbar.insertBefore(home, anchor);
+        var add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'fb-pi-mode-new';
+        add.textContent = '+';
+        add.title = 'New Pi session';
+        add.setAttribute('aria-label', 'New Pi session');
+        add.addEventListener('click', function () { showPiChat(); loadSession(null); });
+        piModeTabbar.insertBefore(add, anchor);
+        sessions.forEach(function (item) {
+          var wrap = document.createElement('span');
+          wrap.className = 'fb-pi-mode-tab-wrap';
+          var tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = 'fb-pi-mode-tab' + (item.id === sessionId ? ' active' : '');
+          tab.textContent = historyLabel(item);
+          tab.title = historyLabel(item);
+          tab.setAttribute('aria-label', 'Open Pi session ' + historyLabel(item));
+          tab.addEventListener('click', function () { loadSession(item); });
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'fb-pi-mode-tab-close';
+          remove.textContent = '×';
+          remove.title = item.id === sessionId ? 'Switch sessions before deleting' : 'Delete session';
+          remove.disabled = item.id === sessionId;
+          remove.addEventListener('click', function (event) {
+            event.stopPropagation();
+            deletePiSession(item, remove);
+          });
+          wrap.appendChild(tab);
+          wrap.appendChild(remove);
+          piModeTabbar.insertBefore(wrap, anchor);
+        });
+      }
+      function setPiMode(open) {
+        piModeActive = !!open;
+        piModeStorage(piModeActive);
+        if (!piModeTabbar) piModeTabbar = document.querySelector('.tabbar:not(.threadbar)');
+        if (piModeToggle) {
+          piModeToggle.setAttribute('aria-pressed', String(piModeActive));
+          piModeToggle.textContent = piModeActive ? 'Pi' : 'Freebuff';
+        }
+        hideNativePiTabs(piModeActive);
+        if (piModeActive) {
+          renderPiModeTabs();
+          openPanel();
+        } else {
+          piModeTabbar && piModeTabbar.querySelectorAll('.fb-pi-mode-tab-wrap, .fb-pi-mode-new, .fb-pi-mode-home-tab').forEach(function (node) { node.remove(); });
+          closePanel();
+        }
+      }
+      function ensurePiModeToggle() {
+        piModeTabbar = document.querySelector('.tabbar:not(.threadbar)');
+        if (!piModeTabbar) return;
+        if (!piModeToggle) {
+          piModeToggle = document.createElement('button');
+          piModeToggle.type = 'button';
+          piModeToggle.className = 'fb-pi-mode-toggle';
+          piModeToggle.setAttribute('aria-pressed', 'false');
+          piModeToggle.addEventListener('click', function () { setPiMode(!piModeActive); });
+          var anchor = piModeTabbar.querySelector('.conn-status, .tabbar-account');
+          piModeTabbar.insertBefore(piModeToggle, anchor);
+        }
+        if (!piModeBooted) {
+          piModeBooted = true;
+          if (piModeStorage()) setPiMode(true);
+          else setPiMode(false);
+        }
+        if (piModeBooted) hideNativePiTabs(piModeActive);
+      }
+
+      function savedPiProject() {
+        try { return localStorage.getItem('fb-pi-project') || ''; } catch (e) { return ''; }
+      }
+      function savePiProject(value) {
+        try { localStorage.setItem('fb-pi-project', value || ''); } catch (e) {}
+      }
+      function piProjectPinned() {
+        try { return localStorage.getItem('fb-pi-project-pinned') === 'true'; } catch (e) { return false; }
+      }
+      function pinPiProject(value) {
+        savePiProject(value);
+        try { localStorage.setItem('fb-pi-project-pinned', 'true'); } catch (e) {}
+      }
+      function projectValue(project) {
+        return project && (project.path || project.projectPath || '');
+      }
+      function setProjectLabel(value) {
+        cwd = value || '';
+        if (projectLabel) {
+          projectLabel.textContent = cwd || 'Choose directory';
+          projectLabel.title = cwd;
+          projectLabel.setAttribute('aria-label', 'Working directory ' + (cwd || 'not selected'));
+        }
+      }
+      function projectPath() {
+        var active = activeThreadId();
+        var saved = savedPiProject();
+        return fetch('/api/projects', { headers: { Accept: 'application/json' } })
+          .then(function (response) { if (!response.ok) throw new Error('projects'); return response.json(); })
+          .then(function (data) {
+            var projects = Array.isArray(data && data.projects) ? data.projects : [];
+            var found = null;
+            projects.some(function (project) {
+              var threads = Array.isArray(project.threads) ? project.threads : [];
+              if (active && threads.some(function (thread) { return thread && thread.id === active; })) {
+                found = project;
+                return true;
+              }
+              return false;
+            });
+            if (piProjectPinned() && saved) return saved;
+            found = found || projects[0];
+            return projectValue(found) || saved;
+          });
+      }
+      function switchPiProject(value, selectedSession) {
+        var next = String(value || '').trim();
+        if (!next) return Promise.resolve(false);
+        pinPiProject(next);
+        closeEventStream();
+        session = null;
+        sessionId = '';
+        setProjectLabel(next);
+        setStatus('Loading sessions…', true);
+        return refreshSessions(false).then(function () {
+          var chosen = selectedSession && sessions.filter(function (item) { return item.id === selectedSession.id; })[0];
+          if (chosen) {
+            setDefaultSession(cwd, chosen.id);
+            return loadSession(chosen);
+          }
+          setStatus('Choose Pi session or New', false);
+          return true;
+        }).then(function () { return true; }).catch(function (error) {
+          setStatus(error.message || 'Pi project unavailable', false);
+          return false;
+        });
+      }
+      function openPiProjectPicker() {
+        var picker = window.freebuffDesktop && window.freebuffDesktop.pickDirectory;
+        if (!picker) {
+          setStatus('Directory picker unavailable', false);
+          return;
+        }
+        picker().then(function (picked) {
+          if (picked) return switchPiProject(picked);
+          return false;
+        }).catch(function (error) {
+          setStatus(error.message || 'Directory picker failed', false);
+        });
+      }
+      function api(pathname, options) {
+        return fetch(pathname, options).then(function (response) {
+          return response.text().then(function (raw) {
+            var payload = {};
+            try { payload = raw ? JSON.parse(raw) : {}; } catch (e) { payload = {}; }
+            if (!response.ok) throw new Error(payload.message || payload.error || 'pi_request_failed');
+            return payload;
+          });
+        });
+      }
+      function post(pathname, payload) {
+        return api(pathname, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload || {}),
+        });
+      }
+      function closeEventStream() {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+      }
+      function textOfMessage(message) {
+        if (!message) return '';
+        if (typeof message.content === 'string') return message.content;
+        if (!Array.isArray(message.content)) return '';
+        return message.content.filter(function (part) {
+          return part && part.type === 'text';
+        }).map(function (part) { return part.text || ''; }).join('');
+      }
+      // Pull tool arguments from whatever field the orchestrator sends.
+      function toolArgText(value) {
+        if (!value || typeof value !== 'object') return '';
+        var keys = ['arguments', 'toolInput', 'input', 'args', 'params', 'parameters'];
+        for (var i = 0; i < keys.length; i++) {
+          var v = value[keys[i]];
+          if (v == null) continue;
+          var s = typeof v === 'string' ? v : (function () {
+            try { return JSON.stringify(v); } catch (e) { return ''; }
+          })();
+          s = (s || '').replace(/\s+/g, ' ').trim();
+          if (s) return s.slice(0, 240);
+        }
+        return '';
+      }
+      function toolCallParts(message) {
+        if (!message || !Array.isArray(message.content)) return [];
+        return message.content.filter(function (part) {
+          return part && part.type === 'toolCall';
+        });
+      }
+      function valueText(value) {
+        if (value == null) return '';
+        if (typeof value === 'string') return value;
+        if (Array.isArray(value)) {
+          return value.map(function (part) {
+            if (!part || typeof part !== 'object') return String(part || '');
+            return part.text || part.result || part.output || part.data || '';
+          }).filter(Boolean).join('\n');
+        }
+        try { return JSON.stringify(value); } catch (e) { return String(value); }
+      }
+      function toolArgsText(args) {
+        if (args == null) return '';
+        return (typeof args === 'string' ? args : valueText(args)).replace(/\s+/g, ' ').trim().slice(0, 300);
+      }
+      function toolSummary(name, args) {
+        var label = String(name || 'tool');
+        var source = args && typeof args === 'object' ? args : null;
+        var path = source && (source.path || source.filePath || source.file || source.filename);
+        if (path) return label + ' · ' + String(path).slice(0, 140);
+        var compact = toolArgsText(args);
+        return compact ? label + ' · ' + compact.slice(0, 100) : label;
+      }
+      // Fallback summary for tool messages that carry no .content text.
+      function toolResultText(message) {
+        var t = textOfMessage(message);
+        if (t) return t.slice(0, 600);
+        var content = message && message.content;
+        if (!Array.isArray(content)) return '';
+        return content.map(function (p) {
+          if (!p || typeof p !== 'object') return '';
+          if (p.text) return String(p.text);
+          if (p.result != null) return String(p.result);
+          if (p.output != null) return String(p.output);
+          if (p.data != null) return String(p.data);
+          return '';
+        }).filter(Boolean).join('\n').slice(0, 600);
+      }
+      function scrollMessages() {
+        if (messageList) messageList.scrollTop = messageList.scrollHeight;
+      }
+      function addBubble(role, text, extra) {
+        if (!messageList) return null;
+        var row = document.createElement('article');
+        row.className = 'fb-pi-message ' + role + (extra ? ' ' + extra : '');
+        var label = document.createElement('div');
+        label.className = 'fb-pi-message-role';
+        label.textContent = role === 'user' ? 'You' : role === 'assistant' ? 'Pi' : 'Tool';
+        var body = document.createElement('div');
+        body.className = 'fb-pi-message-body';
+        body.textContent = text || '';
+        row.appendChild(label);
+        row.appendChild(body);
+        messageList.appendChild(row);
+        scrollMessages();
+        return row;
+      }
+      function addToolCard(name, args, result, toolCallId) {
+        if (!messageList) return null;
+        var existing = toolCallId && toolCards[toolCallId];
+        if (existing) {
+          var existingDetail = existing.querySelector('.fb-pi-tool-detail');
+          var existingState = existing.querySelector('.fb-pi-tool-state');
+          if (result && existingDetail) existingDetail.textContent = result;
+          if (result && existingState) existingState.textContent = 'done';
+          if (result) existing.classList.remove('pending');
+          return existing;
+        }
+        var row = document.createElement('article');
+        row.className = 'fb-pi-message tool fb-pi-tool-card' + (result ? '' : ' pending');
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'fb-pi-tool-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Expand ' + (name || 'tool') + ' details');
+        var caret = document.createElement('span');
+        caret.className = 'fb-pi-tool-caret';
+        caret.textContent = '▸';
+        var summary = document.createElement('span');
+        summary.className = 'fb-pi-tool-summary';
+        summary.textContent = toolSummary(name, args);
+        var state = document.createElement('span');
+        state.className = 'fb-pi-tool-state';
+        state.textContent = result ? 'done' : 'running';
+        toggle.appendChild(caret);
+        toggle.appendChild(summary);
+        toggle.appendChild(state);
+        var detail = document.createElement('div');
+        detail.className = 'fb-pi-tool-detail';
+        detail.hidden = true;
+        detail.textContent = result || '';
+        toggle.addEventListener('click', function () {
+          var open = toggle.getAttribute('aria-expanded') === 'true';
+          toggle.setAttribute('aria-expanded', String(!open));
+          detail.hidden = open;
+          row.classList.toggle('expanded', !open);
+        });
+        row.appendChild(toggle);
+        row.appendChild(detail);
+        messageList.appendChild(row);
+        if (toolCallId) toolCards[toolCallId] = row;
+        scrollMessages();
+        return row;
+      }
+      function updateToolCard(value, result) {
+        var id = value && value.toolCallId;
+        var row = id && toolCards[id];
+        if (row) {
+          var detail = row.querySelector('.fb-pi-tool-detail');
+          var state = row.querySelector('.fb-pi-tool-state');
+          if (result && detail) detail.textContent = result;
+          if (result && state) state.textContent = 'done';
+          if (result) row.classList.remove('pending');
+          return row;
+        }
+        return addToolCard(value && value.toolName, value && value.args, result, id);
+      }
+      function thinkingParts(message) {
+        if (!message || !Array.isArray(message.content)) return [];
+        return message.content.filter(function (part) { return part && part.type === 'thinking'; });
+      }
+      function thinkingText(message) {
+        return thinkingParts(message).map(function (p) { return p.thinking || ''; }).join('\n\n').trim();
+      }
+      function addThinkingCard(text) {
+        if (!messageList) return null;
+        var row = document.createElement('article');
+        row.className = 'fb-pi-message tool fb-pi-thinking-card' + (text ? '' : ' thinking');
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'fb-pi-thinking-toggle';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Expand thinking details');
+        var caret = document.createElement('span');
+        caret.className = 'fb-pi-thinking-caret';
+        caret.textContent = '▸';
+        var summary = document.createElement('span');
+        summary.className = 'fb-pi-thinking-summary';
+        summary.textContent = 'Thinking…';
+        var state = document.createElement('span');
+        state.className = 'fb-pi-thinking-state';
+        state.textContent = text ? 'done' : 'thinking';
+        toggle.appendChild(caret);
+        toggle.appendChild(summary);
+        toggle.appendChild(state);
+        var detail = document.createElement('div');
+        detail.className = 'fb-pi-thinking-detail';
+        detail.hidden = true;
+        detail.textContent = text || '';
+        toggle.addEventListener('click', function () {
+          var open = toggle.getAttribute('aria-expanded') === 'true';
+          toggle.setAttribute('aria-expanded', String(!open));
+          detail.hidden = open;
+          row.classList.toggle('expanded', !open);
+        });
+        row.appendChild(toggle);
+        row.appendChild(detail);
+        messageList.appendChild(row);
+        scrollMessages();
+        return row;
+      }
+      // Accept either {messages:[...]}, {data:{messages:[...]}}, or a raw array.
+      function extractMessages(payload) {
+        if (Array.isArray(payload)) return payload;
+        if (payload && Array.isArray(payload.messages)) return payload.messages;
+        if (payload && payload.data) return extractMessages(payload.data);
+        return [];
+      }
+      // Each item may be {message:{role,content}} or a flat {role,content}.
+      function normalizeItem(item) {
+        if (!item || item.message) return item;
+        if (item.role) return { message: item };
+        return null;
+      }
+      function renderMessages(items) {
+        if (!messageList) return;
+        messageList.textContent = '';
+        toolCards = Object.create(null);
+        toolArgBuffers = Object.create(null);
+        contentIndexToId = Object.create(null);
+        streamThinkingNode = null;
+        streamThinkingText = '';
+        extractMessages(items).forEach(function (raw) {
+          var item = normalizeItem(raw);
+          if (!item || !item.message) return;
+          var message = item.message;
+          var role = message.role;
+          if (role === 'user') {
+            var userText = textOfMessage(message);
+            if (userText) addBubble('user', userText);
+            return;
+          }
+          if (role === 'assistant') {
+            var assistantThinking = thinkingText(message);
+            if (assistantThinking) addThinkingCard(assistantThinking);
+            var assistantText = textOfMessage(message);
+            if (assistantText) addBubble('assistant', assistantText);
+            toolCallParts(message).forEach(function (part) {
+              addToolCard(part.name, part.arguments, '', part.id);
+            });
+            return;
+          }
+          if (role === 'tool' || role === 'toolResult') {
+            addToolCard(message.toolName || message.name || 'tool', '', toolResultText(message), message.toolCallId);
+          }
+        });
+        streamNode = null;
+        streamText = '';
+      }
+      function setStatus(text, busy) {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.toggle('busy', !!busy);
+      }
+      function handleEvent(value) {
+        if (!value) return;
+        if (value.type === 'pi_session_state') {
+          session = value.session || session;
+          var state = value.state || (session && session.state) || 'idle';
+          if (state === 'closed') {
+            setStatus(value.error === 'pi_idle_timeout' ? 'Idle · send message to resume' : 'Closed · reopen to continue', false);
+            closeEventStream();
+          } else {
+            setStatus(state === 'running' ? 'Running' : state === 'failed' ? 'Failed' : 'Ready', state === 'running');
+          }
+          return;
+        }
+        if (value.type === 'agent_start' || value.type === 'turn_start') {
+          setStatus('Running', true);
+          return;
+        }
+        if (value.type === 'agent_settled' || value.type === 'agent_end') {
+          setStatus('Ready', false);
+          refreshSessions(false).catch(function () {});
+          return;
+        }
+        if (value.type === 'message_update' && value.assistantMessageEvent) {
+          var update = value.assistantMessageEvent;
+          var handled = false;
+          if (update.type === 'text_delta' && update.delta) {
+            if (!streamNode) streamNode = addBubble('assistant', '', 'streaming');
+            streamText += update.delta;
+            streamNode.querySelector('.fb-pi-message-body').textContent = streamText;
+            scrollMessages();
+            handled = true;
+          }
+          if ((update.type === 'thinking_delta' || update.type === 'reasoning_delta' || update.type === 'thinking') && update.delta) {
+            if (!streamThinkingNode) streamThinkingNode = addThinkingCard('');
+            streamThinkingText += update.delta;
+            var thinkingDetail = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+            if (thinkingDetail) thinkingDetail.textContent = streamThinkingText;
+            scrollMessages();
+            handled = true;
+          } else if (update.thinking && typeof update.thinking === 'string' && update.thinking) {
+            if (!streamThinkingNode) streamThinkingNode = addThinkingCard('');
+            streamThinkingText += update.thinking;
+            var thinkingDetail2 = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+            if (thinkingDetail2) thinkingDetail2.textContent = streamThinkingText;
+            scrollMessages();
+            handled = true;
+          }
+          if (update.type === 'thinking_start' || update.type === 'reasoning_start') {
+            if (!streamThinkingNode) { streamThinkingNode = addThinkingCard(''); streamThinkingText = ''; }
+            handled = true;
+          }
+          if (update.type === 'thinking_end' || update.type === 'reasoning_end') {
+            if (streamThinkingNode) {
+              var state = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+              if (state) state.textContent = 'done';
+              streamThinkingNode.classList.remove('thinking');
+            }
+            handled = true;
+          }
+          if (update.type === 'toolcall_start' && typeof update.contentIndex === 'number' && update.id) {
+            contentIndexToId[update.contentIndex] = update.id;
+            addToolCard(update.toolName || 'tool', '', '', update.id);
+            toolArgBuffers[update.contentIndex] = '';
+            var startCard = toolCards[update.id];
+            if (startCard) {
+              var startState = startCard.querySelector('.fb-pi-tool-state');
+              if (startState) startState.textContent = 'args…';
+              var startDetail = startCard.querySelector('.fb-pi-tool-detail');
+              if (startDetail) { startDetail.textContent = ''; startDetail.hidden = false; }
+              startCard.classList.add('streaming', 'expanded');
+            }
+            handled = true;
+          }
+          if ((update.type === 'toolcall_delta') && typeof update.contentIndex === 'number' && typeof update.delta === 'string') {
+            var idx = update.contentIndex;
+            toolArgBuffers[idx] = (toolArgBuffers[idx] || '') + update.delta;
+            var card = toolCards[contentIndexToId[idx]];
+            if (card) {
+              var detail = card.querySelector('.fb-pi-tool-detail');
+              if (detail && !detail.hidden) detail.textContent = toolArgBuffers[idx];
+            }
+            handled = true;
+          }
+          if ((update.type === 'toolcall_end') && typeof update.contentIndex === 'number' && update.toolCall) {
+            var id = contentIndexToId[update.contentIndex];
+            var endCard = toolCards[id];
+            if (endCard) {
+              var endState = endCard.querySelector('.fb-pi-tool-state');
+              if (endState) endState.textContent = 'pending';
+              endCard.classList.remove('streaming');
+            }
+            delete toolArgBuffers[update.contentIndex];
+            delete contentIndexToId[update.contentIndex];
+            handled = true;
+          }
+          if (handled) return;
+          return;
+        }
+        if (value.type === 'message_end' && value.message) {
+          if (value.message.role === 'assistant') {
+            var finalText = textOfMessage(value.message);
+            if (streamNode) {
+              if (finalText) streamNode.querySelector('.fb-pi-message-body').textContent = finalText;
+              else streamNode.remove();
+              streamNode.classList.remove('streaming');
+              streamNode = null;
+              streamText = '';
+            } else if (finalText) {
+              addBubble('assistant', finalText);
+            }
+            var finalThinking = thinkingText(value.message);
+            if (streamThinkingNode) {
+              if (finalThinking) {
+                var thinkingDetail = streamThinkingNode.querySelector('.fb-pi-thinking-detail');
+                var thinkingState = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+                if (thinkingDetail) thinkingDetail.textContent = finalThinking;
+                if (thinkingState) thinkingState.textContent = 'done';
+                streamThinkingNode.classList.remove('thinking');
+              } else if (streamThinkingText) {
+                var thinkingState2 = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+                if (thinkingState2) thinkingState2.textContent = 'done';
+                streamThinkingNode.classList.remove('thinking');
+              } else {
+                streamThinkingNode.remove();
+              }
+              streamThinkingNode = null;
+              streamThinkingText = '';
+            } else if (finalThinking) {
+              addThinkingCard(finalThinking);
+            }
+            toolCallParts(value.message).forEach(function (part) {
+              addToolCard(part.name, part.arguments, '', part.id);
+            });
+          } else if (value.message.role === 'tool' || value.message.role === 'toolResult') {
+            updateToolCard(value.message, toolResultText(value.message));
+          }
+          return;
+        }
+        if (value.type === 'tool_execution_start') {
+          addToolCard(value.toolName || 'tool', value.args || toolArgText(value), '', value.toolCallId);
+          setStatus('Running', true);
+          return;
+        }
+        if (value.type === 'tool_execution_update') {
+          updateToolCard(value, valueText(value.partialResult));
+          return;
+        }
+        if (value.type === 'tool_execution_end') {
+          updateToolCard(value, valueText(value.result));
+          setStatus('Running', true);
+        }
+      }
+      function connectEvents() {
+        closeEventStream();
+        if (!sessionId) return;
+        eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events');
+        eventSource.onmessage = function (event) {
+          try { handleEvent(JSON.parse(event.data)); } catch (e) {}
+        };
+        eventSource.onerror = function () {
+          if (session && session.state !== 'running') setStatus('Pi connection lost', false);
+        };
+      }
+      function enhancePiSelect(select) {
+        if (!select || select.dataset.fbPiEnhanced === 'true') return;
+        select.dataset.fbPiEnhanced = 'true';
+        var wrap = document.createElement('div');
+        wrap.className = 'fb-pi-select-wrap';
+        select.parentNode.insertBefore(wrap, select);
+        wrap.appendChild(select);
+        select.classList.add('fb-pi-native-select');
+        select.tabIndex = -1;
+        var trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'fb-pi-select-trigger';
+        trigger.setAttribute('aria-haspopup', 'listbox');
+        trigger.setAttribute('aria-expanded', 'false');
+        var menu = document.createElement('div');
+        menu.className = 'fb-pi-select-menu';
+        menu.setAttribute('role', 'listbox');
+        menu.hidden = true;
+        wrap.insertBefore(trigger, select);
+        wrap.appendChild(menu);
+        function close() { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+        function sync() {
+          var option = select.options[select.selectedIndex];
+          trigger.textContent = option ? option.textContent : 'Choose…';
+          menu.textContent = '';
+          Array.prototype.forEach.call(select.options, function (item) {
+            var choice = document.createElement('button');
+            choice.type = 'button';
+            choice.className = 'fb-pi-select-option' + (item.value === select.value ? ' active' : '');
+            choice.setAttribute('role', 'option');
+            choice.setAttribute('aria-selected', String(item.value === select.value));
+            choice.textContent = item.textContent;
+            choice.addEventListener('click', function () {
+              select.value = item.value;
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+              close();
+              sync();
+            });
+            menu.appendChild(choice);
+          });
+        }
+        trigger.addEventListener('click', function (event) {
+          event.stopPropagation();
+          var open = menu.hidden;
+          document.querySelectorAll('.fb-pi-select-menu').forEach(function (other) { other.hidden = true; });
+          menu.hidden = !open;
+          trigger.setAttribute('aria-expanded', String(open));
+          sync();
+        });
+        document.addEventListener('click', function (event) { if (!wrap.contains(event.target)) close(); });
+        select.addEventListener('change', sync);
+        select._fbPiSync = sync;
+        sync();
+      }
+      function renderAuthProviders() {
+        if (!controls) return;
+        var select = controls.querySelector('.fb-pi-login-provider');
+        if (!select) return;
+        var current = select.value;
+        var method = controls.querySelector('.fb-pi-login-method');
+        var authType = method && method.value === 'account' ? 'oauth' : 'api_key';
+        select.textContent = '';
+        var matching = availableProviders.filter(function (provider) {
+          return !provider.authTypes || provider.authTypes.indexOf(authType) !== -1;
+        });
+        if (!matching.length) {
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = 'No Pi providers found';
+          empty.disabled = true;
+          empty.selected = true;
+          select.appendChild(empty);
+        }
+        matching.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (provider) {
+          var option = document.createElement('option');
+          option.value = provider.id;
+          var kinds = provider.authTypes && provider.authTypes.length ? provider.authTypes : ['api_key'];
+          option.textContent = provider.name + ' (' + provider.id + ') · ' + kinds.join('/');
+          option.dataset.authTypes = kinds.join(',');
+          select.appendChild(option);
+        });
+        if (current && Array.from(select.options).some(function (option) { return option.value === current; })) select.value = current;
+        if (select._fbPiSync) select._fbPiSync();
+      }
+      function populateModels(models, providers, authProviders) {
+        var providerCatalog = Array.isArray(authProviders) ? authProviders : [];
+        var knownById = {};
+        providerCatalog.forEach(function (provider) { if (provider && provider.id) knownById[provider.id] = provider; });
+        var baseList = Array.isArray(providers) && providers.length
+          ? providers
+          : Object.keys(knownById);
+        availableProviders = baseList.filter(Boolean).map(function (provider) {
+          var id = typeof provider === 'string' ? provider : (provider && provider.id);
+          var known = knownById[id];
+          return {
+            id: id,
+            name: (known && known.name) || (provider && provider.name) || id,
+            authTypes: (known && Array.isArray(known.authTypes) && known.authTypes.length)
+              ? known.authTypes.slice()
+              : ['api_key'],
+          };
+        });
+        renderAuthProviders();
+        availableModels = Array.isArray(models) ? models.filter(function (model) {
+          return model && model.provider && model.id;
+        }) : [];
+        if (scopeSelect) {
+          var current = scopeSelect.value || '*';
+          scopeSelect.textContent = '';
+          var all = document.createElement('option');
+          all.value = '*';
+          all.textContent = 'All authenticated';
+          scopeSelect.appendChild(all);
+          Array.from(new Set(availableModels.map(function (model) { return model.provider; }))).sort().forEach(function (provider) {
+            var option = document.createElement('option');
+            option.value = provider;
+            option.textContent = provider;
+            scopeSelect.appendChild(option);
+          });
+          scopeSelect.value = Array.from(scopeSelect.options).some(function (option) { return option.value === current; }) ? current : '*';
+        }
+        renderModelOptions();
+      }
+      function renderModelOptions() {
+        if (!modelSelect) return;
+        var query = modelSearch ? modelSearch.value.trim().toLowerCase() : '';
+        var scope = scopeSelect ? scopeSelect.value : '*';
+        var current = session && session.model && session.model.provider && session.model.id
+          ? session.model.provider + '/' + session.model.id
+          : '';
+        modelSelect.textContent = '';
+        availableModels.filter(function (model) {
+          var haystack = String(model.name || model.id).toLowerCase() + ' ' + String(model.provider).toLowerCase();
+          return (scope === '*' || model.provider === scope) && (!query || haystack.indexOf(query) >= 0);
+        }).forEach(function (model) {
+          var option = document.createElement('option');
+          option.value = model.provider + '/' + model.id;
+          option.textContent = (model.name || model.id) + ' · ' + model.provider;
+          modelSelect.appendChild(option);
+        });
+        if (current && Array.from(modelSelect.options).some(function (option) { return option.value === current; })) {
+          modelSelect.value = current;
+        }
+        if (modelSelect._fbPiSync) modelSelect._fbPiSync();
+        if (scopeSelect && scopeSelect._fbPiSync) scopeSelect._fbPiSync();
+      }
+      function loadSession(item) {
+        showPiChat();
+        if (promptInput) promptInput.disabled = true;
+        if (sendButton) sendButton.disabled = true;
+        return post('/api/fb/pi/session/open', { cwd: cwd, sessionId: item && item.id || '' })
+          .then(function (payload) {
+            session = payload.session;
+            sessionId = session.id;
+            setDefaultSession(cwd, sessionId);
+            setStatus('Loading', true);
+            connectEvents();
+            return Promise.all([
+              api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/messages'),
+              api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/models'),
+            ]);
+          })
+          .then(function (values) {
+            renderMessages(values[0]);
+            populateModels(values[1].models, values[1].providers, values[1].authProviders);
+            // Restore last selected model/thinking (server may not persist them).
+            var savedModel = localStorage.getItem('fb-pi-model');
+            if (savedModel && Array.from(modelSelect.options).some(function (o) { return o.value === savedModel; })) {
+              modelSelect.value = savedModel;
+              modelSelect.dispatchEvent(new Event('change'));
+            }
+            var savedThinking = localStorage.getItem('fb-pi-thinking');
+            if (savedThinking && Array.from(thinkingSelect.options).some(function (o) { return o.value === savedThinking; })) {
+              thinkingSelect.value = savedThinking;
+              thinkingSelect.dispatchEvent(new Event('change'));
+            }
+            if (promptInput) promptInput.disabled = false;
+            if (sendButton) sendButton.disabled = false;
+            var current = sessions.filter(function (item) { return item.id === sessionId; })[0];
+            if (!current) {
+              sessions.unshift({ id: sessionId, cwd: cwd, name: session.name, title: session.name || 'New Pi session', updatedAt: Date.now() });
+            }
+            setStatus('Ready', false);
+            renderSessionList();
+          })
+          .catch(function (error) {
+            if (item && item.id === getDefaultSession(cwd)) setDefaultSession(cwd, '');
+            if (promptInput) promptInput.disabled = true;
+            if (sendButton) sendButton.disabled = true;
+            var msg = (error && error.message) || 'Pi unavailable';
+            if (/pi_session_not_found|pi_too_many_sessions|pi_session_busy/i.test(msg)) {
+              if (item && !item.id) {
+                setProjectLabel(cwd);
+                showPiHome();
+              } else {
+                refreshSessions(false).then(function () { showPiHome(); }).catch(function () {});
+              }
+            }
+            setStatus(msg, false);
+          });
+      }
+      function setSettingsDrawer(open) {
+        if (!controls) return;
+        if (open) setSessionDrawer(false);
+        controls.classList.toggle('settings-open', !!open);
+        controls.setAttribute('aria-hidden', String(!open));
+        if (settingsScrim) settingsScrim.hidden = !open;
+        if (settingsToggle) settingsToggle.setAttribute('aria-expanded', String(!!open));
+      }
+      function setSessionDrawer(open) {
+        if (!sessionList) return;
+        if (open) setSettingsDrawer(false);
+        sessionList.classList.toggle('drawer-open', !!open);
+        sessionList.setAttribute('aria-hidden', String(!open));
+        if (sessionDrawerScrim) sessionDrawerScrim.hidden = !open;
+        if (sessionDrawerToggle) sessionDrawerToggle.setAttribute('aria-expanded', String(!!open));
+      }
+      function closeCommandLayer() {
+        if (commandLayer && commandLayer.parentNode) commandLayer.parentNode.removeChild(commandLayer);
+        commandLayer = null;
+      }
+      function showCommandNotice(title, message) {
+        closeCommandLayer();
+        var layer = document.createElement('div');
+        layer.className = 'fb-pi-command-layer';
+        var card = document.createElement('section');
+        card.className = 'fb-pi-command-card';
+        card.innerHTML = '<header><strong></strong><button type="button" aria-label="Close command result">×</button></header><p></p><button type="button" class="fb-pi-command-ok">Close</button>';
+        card.querySelector('strong').textContent = title;
+        card.querySelector('p').textContent = message;
+        card.querySelector('header button').addEventListener('click', closeCommandLayer);
+        card.querySelector('.fb-pi-command-ok').addEventListener('click', closeCommandLayer);
+        layer.appendChild(card);
+        layer.addEventListener('click', function (event) { if (event.target === layer) closeCommandLayer(); });
+        document.body.appendChild(layer);
+        commandLayer = layer;
+      }
+      function closeSlashSuggestions() {
+        if (slashSuggestionLayer && slashSuggestionLayer.parentNode) slashSuggestionLayer.parentNode.removeChild(slashSuggestionLayer);
+        slashSuggestionLayer = null;
+        slashSuggestionIndex = 0;
+      }
+      function renderSlashSuggestions() {
+        closeSlashSuggestions();
+        if (!promptInput || !promptInput.value.trim().startsWith('/')) return;
+        var raw = promptInput.value.trim().slice(1);
+        if (raw.indexOf(' ') >= 0 || raw.indexOf('\\t') >= 0) return;
+        var query = raw.toLowerCase();
+        var matches = PI_SLASH_COMMANDS.filter(function (item) { return item[0].indexOf(query) === 0; });
+        if (!matches.length) return;
+        var layer = document.createElement('div');
+        layer.className = 'fb-pi-slash-suggestions';
+        matches.forEach(function (item, index) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'fb-pi-slash-suggestion' + (index === 0 ? ' active' : '');
+          button.innerHTML = '<strong></strong><span></span>';
+          button.querySelector('strong').textContent = '/' + item[0];
+          button.querySelector('span').textContent = item[1];
+          button.addEventListener('mousedown', function (event) { event.preventDefault(); });
+          button.addEventListener('click', function () { runPiSlashCommand(item[0]); });
+          layer.appendChild(button);
+        });
+        promptInput.parentNode.appendChild(layer);
+        slashSuggestionLayer = layer;
+        slashSuggestionIndex = 0;
+      }
+      function chooseSlashSuggestion() {
+        if (!slashSuggestionLayer) return false;
+        var options = slashSuggestionLayer.querySelectorAll('.fb-pi-slash-suggestion');
+        var selected = options[slashSuggestionIndex];
+        if (!selected) return false;
+        var command = selected.querySelector('strong').textContent;
+        runPiSlashCommand(command);
+        return true;
+      }
+      function runPiSlashCommand(name, argument) {
+        closeSlashSuggestions();
+        if (promptInput) promptInput.value = '';
+        var command = String(name || '').replace(/^\//, '');
+        var args = String(argument || '').trim();
+        if (command === 'settings') {
+          setSettingsDrawer(true);
+          return;
+        }
+        if (command === 'model' || command === 'models' || command === 'scoped-models' || command === 'scope-models') {
+          setSettingsDrawer(true);
+          setTimeout(function () {
+            var target = command.indexOf('scoped') >= 0 || command.indexOf('scope') >= 0 ? scopeSelect : modelSelect;
+            if (target) target.focus();
+          }, 0);
+          return;
+        }
+        if (command === 'login') {
+          setSettingsDrawer(true);
+          var method = controls && controls.querySelector('.fb-pi-login-method');
+          var provider = controls && controls.querySelector('.fb-pi-login-provider');
+          if (method) { method.value = 'account'; method.dispatchEvent(new Event('change')); }
+          if (provider && args && Array.from(provider.options).some(function (option) { return option.value === args; })) provider.value = args;
+          if (provider) provider.dispatchEvent(new Event('change'));
+          return;
+        }
+        if (command === 'session' || command === 'resume') {
+          setSessionDrawer(true);
+          return;
+        }
+        if (command === 'new') {
+          closeCommandLayer();
+          loadSession(null);
+          return;
+        }
+        if (command === 'name') {
+          var nextName = window.prompt('Pi session name', session && session.name || '');
+          if (nextName && sessionId) {
+            post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/name', { cwd: cwd, name: nextName.trim() })
+              .then(function () { return refreshSessions(false); })
+              .catch(function (error) { setStatus(error.message || 'Rename failed', false); });
+          }
+          return;
+        }
+        if (command === 'compact') {
+          if (!sessionId) return;
+          var instructions = args || window.prompt('Compaction instructions (optional)', '') || '';
+          setStatus('Compacting…', true);
+          post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/compact', { instructions: instructions })
+            .then(function () { setStatus('Compacted', false); return api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/messages'); })
+            .then(renderMessages)
+            .catch(function (error) { setStatus(error.message || 'Compact failed', false); });
+          return;
+        }
+        if (command === 'copy') {
+          var messages = messageList ? Array.prototype.slice.call(messageList.querySelectorAll('.fb-pi-message.assistant .fb-pi-message-body')) : [];
+          var last = messages.length ? messages[messages.length - 1].textContent : '';
+          if (last && navigator.clipboard) navigator.clipboard.writeText(last).then(function () { setStatus('Copied', false); });
+          else setStatus('No assistant message to copy', false);
+          return;
+        }
+        if (command === 'quit') {
+          setPiMode(false);
+          return;
+        }
+        var detail = PI_SLASH_COMMANDS.filter(function (item) { return item[0] === command; })[0];
+        showCommandNotice('/' + command, detail ? detail[1] + '. Use native Pi terminal for this command.' : 'Unknown Pi command.');
+      }
+      function openPiCommandPalette() {
+        if (commandLayer) { closeCommandLayer(); return; }
+        var layer = document.createElement('div');
+        layer.className = 'fb-pi-command-layer';
+        var card = document.createElement('section');
+        card.className = 'fb-pi-command-card fb-pi-command-palette';
+        var head = document.createElement('header');
+        var title = document.createElement('strong');
+        title.textContent = 'Pi slash commands';
+        var close = document.createElement('button');
+        close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', 'Close slash commands');
+        close.addEventListener('click', closeCommandLayer);
+        head.appendChild(title); head.appendChild(close);
+        var search = document.createElement('input');
+        search.type = 'search'; search.placeholder = 'Search commands…'; search.setAttribute('aria-label', 'Search Pi slash commands');
+        var list = document.createElement('div');
+        list.className = 'fb-pi-command-list';
+        function render() {
+          var query = search.value.trim().toLowerCase();
+          list.textContent = '';
+          PI_SLASH_COMMANDS.forEach(function (item) {
+            if (query && (item[0] + ' ' + item[1]).toLowerCase().indexOf(query) < 0) return;
+            var button = document.createElement('button');
+            button.type = 'button'; button.className = 'fb-pi-command-item';
+            button.innerHTML = '<strong></strong><span></span>';
+            button.querySelector('strong').textContent = '/' + item[0];
+            button.querySelector('span').textContent = item[1];
+            button.addEventListener('click', function () { closeCommandLayer(); runPiSlashCommand(item[0]); });
+            list.appendChild(button);
+          });
+        }
+        search.addEventListener('input', render);
+        card.appendChild(head); card.appendChild(search); card.appendChild(list); layer.appendChild(card);
+        layer.addEventListener('click', function (event) { if (event.target === layer) closeCommandLayer(); });
+        document.body.appendChild(layer); commandLayer = layer; render(); search.focus();
+      }
+      function deletePiSession(item, trigger) {
+        if (!item) return Promise.resolve(false);
+        if (item.id === sessionId && session && session.state === 'running') {
+          setStatus('Stop session before deleting it', false);
+          return Promise.resolve(false);
+        }
+        return new Promise(function (resolve) {
+          deleteSessionConfirm.request(item, function () {
+            var deletingCurrent = item.id === sessionId;
+            if (trigger) trigger.disabled = true;
+            if (deletingCurrent) {
+              closeEventStream();
+              session = null;
+              sessionId = '';
+              if (promptInput) promptInput.disabled = true;
+            }
+            api('/api/fb/pi/session/' + encodeURIComponent(item.id) + '/delete?cwd=' + encodeURIComponent(item.cwd || cwd), { method: 'DELETE' })
+              .then(function () {
+                if (item.id === getDefaultSession(cwd)) setDefaultSession(cwd, '');
+                setStatus('Session deleted', false);
+                return refreshSessions(false);
+              })
+              .then(function () { resolve(true); })
+              .catch(function (error) {
+                if (trigger) trigger.disabled = false;
+                setStatus(error.message || 'Delete failed', false);
+                refreshSessions(false).then(function () { resolve(false); }).catch(function () { resolve(false); });
+              });
+          }, 'pi-session-history');
+        });
+      }
+      function renderSessionList() {
+        if (!sessionItems) { renderPiModeTabs(); return; }
+        sessionItems.textContent = '';
+        var fresh = document.createElement('button');
+        fresh.type = 'button';
+        fresh.className = 'fb-pi-new-session';
+        fresh.textContent = '+ New Pi session';
+        fresh.addEventListener('click', function () { setSessionDrawer(false); loadSession(null); });
+        sessionItems.appendChild(fresh);
+        sessions.forEach(function (item) {
+          var row = document.createElement('div');
+          row.className = 'fb-pi-session-row';
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'fb-pi-session' + (item.id === sessionId ? ' active' : '');
+          var title = document.createElement('strong');
+          title.textContent = item.title || 'Untitled Pi session';
+          var meta = document.createElement('span');
+          meta.textContent = item.name || new Date(item.updatedAt).toLocaleString();
+          button.appendChild(title);
+          button.appendChild(meta);
+          button.addEventListener('click', function () { setSessionDrawer(false); loadSession(item); });
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'fb-pi-session-delete';
+          remove.textContent = '×';
+          remove.setAttribute('aria-label', 'Delete ' + historyLabel(item));
+          remove.title = item.id === sessionId ? 'Switch sessions before deleting' : 'Delete session';
+          remove.disabled = item.id === sessionId;
+          remove.addEventListener('click', function (event) {
+            event.stopPropagation();
+            var wasDefault = item.id === getDefaultSession(cwd);
+            deletePiSession(item, remove).then(function (deleted) {
+              if (deleted && wasDefault) setDefaultSession(cwd, '');
+            });
+          });
+          row.appendChild(button);
+          row.appendChild(remove);
+          sessionItems.appendChild(row);
+        });
+        renderPiModeTabs();
+        renderSessionSwitch();
+        if (piHome && !piHome.hidden) renderPiHome();
+      }
+      function renderSessionSwitch() {
+        if (!sessionSwitch) return;
+        var current = sessionSwitch.value;
+        sessionSwitch.textContent = '';
+        var newOpt = document.createElement('option');
+        newOpt.value = '__new';
+        newOpt.textContent = '+ New session';
+        sessionSwitch.appendChild(newOpt);
+        sessions.forEach(function (item) {
+          var opt = document.createElement('option');
+          opt.value = item.id;
+          var label = historyLabel(item);
+          if (item.id === sessionId) label = '● ' + label;
+          opt.textContent = label;
+          opt.title = item.cwd || '';
+          sessionSwitch.appendChild(opt);
+        });
+        var hasCurrent = Array.from(sessionSwitch.options).some(function (o) { return o.value === sessionId; });
+        sessionSwitch.value = hasCurrent ? sessionId : (sessions.length ? sessions[0].id : '__new');
+        // keep native select visible; also sync enhanced trigger if later enhanced
+        if (sessionSwitch._fbPiSync) sessionSwitch._fbPiSync();
+        // hide if only New and not yet booted? always show when Pi active
+        sessionSwitch.hidden = false;
+        if (current !== sessionSwitch.value && sessionSwitch._fbPiSync) sessionSwitch._fbPiSync();
+      }
+      function closeHistoryManager() {
+        if (historyLayer && historyLayer.parentNode) historyLayer.parentNode.removeChild(historyLayer);
+        historyLayer = null;
+      }
+      function historyLabel(item) {
+        return item.name || item.title || 'Untitled Pi session';
+      }
+      function renderHistoryRows() {
+        if (!historyLayer) return;
+        var list = historyLayer.querySelector('.fb-pi-history-list');
+        var search = historyLayer.querySelector('.fb-pi-history-search');
+        if (!list) return;
+        var query = search ? search.value.trim().toLowerCase() : '';
+        list.textContent = '';
+        var shown = 0;
+        sessions.forEach(function (item) {
+          var haystack = [historyLabel(item), item.cwd, item.file].join(' ').toLowerCase();
+          if (query && haystack.indexOf(query) < 0) return;
+          shown += 1;
+          var row = document.createElement('article');
+          row.className = 'fb-pi-history-row' + (item.id === sessionId ? ' active' : '');
+          row.setAttribute('data-session-id', item.id);
+          var info = document.createElement('div');
+          info.className = 'fb-pi-history-info';
+          var title = document.createElement('strong');
+          title.className = 'fb-pi-history-title';
+          title.textContent = historyLabel(item);
+          var meta = document.createElement('span');
+          meta.className = 'fb-pi-history-meta';
+          meta.textContent = new Date(item.updatedAt).toLocaleString() + ' · ' + (item.messageCount || 0) + ' messages';
+          var pathLabel = document.createElement('span');
+          pathLabel.className = 'fb-pi-history-path';
+          pathLabel.textContent = item.cwd;
+          pathLabel.title = item.cwd;
+          info.appendChild(title);
+          info.appendChild(meta);
+          info.appendChild(pathLabel);
+          var actions = document.createElement('div');
+          actions.className = 'fb-pi-history-actions';
+          var open = document.createElement('button');
+          open.type = 'button';
+          open.className = 'fb-pi-history-open';
+          open.textContent = item.id === sessionId ? 'Selected' : 'Open';
+          open.disabled = item.id === sessionId;
+          open.addEventListener('click', function () {
+            closeHistoryManager();
+            loadSession(item);
+          });
+          var rename = document.createElement('button');
+          rename.type = 'button';
+          rename.className = 'fb-pi-history-rename';
+          rename.textContent = 'Rename';
+          rename.addEventListener('click', function () { beginHistoryRename(item, row); });
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'fb-pi-history-delete';
+          remove.textContent = item.id === sessionId ? 'Current' : 'Delete';
+          remove.disabled = item.id === sessionId;
+          remove.title = item.id === sessionId ? 'Switch sessions before deleting' : 'Delete session';
+          remove.addEventListener('click', function () {
+            var wasDefault = item.id === getDefaultSession(cwd);
+            deletePiSession(item, remove).then(function (deleted) {
+              if (deleted && wasDefault) setDefaultSession(cwd, '');
+            });
+          });
+          actions.appendChild(open);
+          actions.appendChild(rename);
+          actions.appendChild(remove);
+          row.appendChild(info);
+          row.appendChild(actions);
+          list.appendChild(row);
+        });
+        if (!shown) {
+          var empty = document.createElement('p');
+          empty.className = 'fb-pi-history-empty';
+          empty.textContent = query ? 'No Pi sessions match that search.' : 'No Pi sessions in this project.';
+          list.appendChild(empty);
+        }
+      }
+      function beginHistoryRename(item, row) {
+        var info = row.querySelector('.fb-pi-history-info');
+        var actions = row.querySelector('.fb-pi-history-actions');
+        if (!info || !actions || row.querySelector('.fb-pi-history-edit')) return;
+        info.textContent = '';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'fb-pi-history-edit';
+        input.maxLength = 120;
+        input.value = item.name || '';
+        input.placeholder = item.title || 'Session name';
+        info.appendChild(input);
+        actions.textContent = '';
+        var save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        save.addEventListener('click', function () {
+          save.disabled = true;
+          api('/api/fb/pi/session/' + encodeURIComponent(item.id) + '/name', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ cwd: item.cwd, name: input.value }),
+          }).then(function () {
+            return refreshSessions(false);
+          }).catch(function (error) {
+            save.disabled = false;
+            setStatus(error.message || 'Rename failed', false);
+          });
+        });
+        cancel.addEventListener('click', renderHistoryRows);
+        actions.appendChild(save);
+        actions.appendChild(cancel);
+        input.focus();
+      }
+      function openHistoryManager() {
+        if (historyLayer || !overlay) return;
+        historyLayer = document.createElement('div');
+        historyLayer.className = 'fb-pi-history-layer';
+        historyLayer.setAttribute('role', 'dialog');
+        historyLayer.setAttribute('aria-modal', 'true');
+        historyLayer.setAttribute('aria-labelledby', 'fb-pi-history-title');
+        var dialog = document.createElement('section');
+        dialog.className = 'fb-pi-history-dialog';
+        var head = document.createElement('header');
+        head.className = 'fb-pi-history-head';
+        var heading = document.createElement('div');
+        var title = document.createElement('h3');
+        title.id = 'fb-pi-history-title';
+        title.textContent = 'Pi session history';
+        var scope = document.createElement('span');
+        scope.className = 'fb-pi-history-scope';
+        scope.textContent = cwd;
+        scope.title = cwd;
+        heading.appendChild(title);
+        heading.appendChild(scope);
+        var headActions = document.createElement('div');
+        headActions.className = 'fb-pi-history-head-actions';
+        var fresh = document.createElement('button');
+        fresh.type = 'button';
+        fresh.className = 'fb-pi-history-new';
+        fresh.textContent = '+ New session';
+        fresh.addEventListener('click', function () {
+          closeHistoryManager();
+          loadSession(null);
+        });
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'fb-pi-history-close';
+        close.setAttribute('aria-label', 'Close Pi session history');
+        close.textContent = '×';
+        close.addEventListener('click', closeHistoryManager);
+        headActions.appendChild(fresh);
+        headActions.appendChild(close);
+        head.appendChild(heading);
+        head.appendChild(headActions);
+        var search = document.createElement('input');
+        search.type = 'search';
+        search.className = 'fb-pi-history-search';
+        search.placeholder = 'Search sessions…';
+        search.setAttribute('aria-label', 'Search Pi session history');
+        search.addEventListener('input', renderHistoryRows);
+        var list = document.createElement('div');
+        list.className = 'fb-pi-history-list';
+        dialog.appendChild(head);
+        dialog.appendChild(search);
+        dialog.appendChild(list);
+        historyLayer.appendChild(dialog);
+        historyLayer.addEventListener('click', function (event) {
+          if (event.target === historyLayer) closeHistoryManager();
+        });
+        overlay.appendChild(historyLayer);
+        renderHistoryRows();
+        search.focus();
+      }
+      function pickInitialSession() {
+        var saved = getDefaultSession(cwd);
+        if (!saved) return null;
+        return sessions.filter(function (s) { return s.id === saved; })[0] || null;
+      }
+      function refreshSessions(selectFirst) {
+        return api('/api/fb/pi/sessions?cwd=' + encodeURIComponent(cwd))
+          .then(function (payload) {
+            if (payload.cwd && payload.cwd !== cwd) {
+              setProjectLabel(payload.cwd);
+              savePiProject(payload.cwd);
+            }
+            sessions = payload.sessions || [];
+            renderSessionList();
+            renderHistoryRows();
+            if (!selectFirst) return null;
+            var chosen = pickInitialSession();
+            if (chosen) { setDefaultSession(cwd, chosen.id); return loadSession(chosen); }
+            if (getDefaultSession(cwd)) setDefaultSession(cwd, '');
+            setStatus('Choose session or New', false);
+            return null;
+          });
+      }
+      function showPiHome() {
+        if (!piHome || !overlay) return;
+        if (sessionList) setSessionDrawer(false);
+        var chat = overlay.querySelector('.fb-pi-chat');
+        if (chat) chat.classList.add('fb-pi-home-active');
+        piHome.hidden = false;
+        renderPiHome();
+        renderPiModeTabs();
+      }
+      function showPiChat() {
+        if (!piHome || !overlay) return;
+        piHome.hidden = true;
+        var chat = overlay.querySelector('.fb-pi-chat');
+        if (chat) chat.classList.remove('fb-pi-home-active');
+      }
+      function renderPiHome() {
+        if (!piHomeItems) return;
+        piHomeItems.textContent = '';
+        var homeCwd = piHome.querySelector('.fb-pi-home-cwd');
+        if (homeCwd) { homeCwd.textContent = cwd || 'No directory selected'; homeCwd.title = cwd; }
+        var fresh = document.createElement('button');
+        fresh.type = 'button';
+        fresh.className = 'fb-pi-home-new';
+        fresh.textContent = '+ New Pi session';
+        fresh.addEventListener('click', function () { showPiChat(); loadSession(null); });
+        piHomeItems.appendChild(fresh);
+        if (!sessions.length) {
+          var empty = document.createElement('p');
+          empty.className = 'fb-pi-home-empty';
+          empty.textContent = cwd ? 'No Pi sessions in this directory yet.' : 'Choose directory to begin.';
+          piHomeItems.appendChild(empty);
+        }
+        sessions.forEach(function (item) {
+          var row = document.createElement('article');
+          row.className = 'fb-pi-home-session' + (item.id === sessionId ? ' active' : '');
+          var open = document.createElement('button');
+          open.type = 'button';
+          open.className = 'fb-pi-home-session-open';
+          open.innerHTML = '<strong></strong><span></span>';
+          open.querySelector('strong').textContent = historyLabel(item);
+          open.querySelector('span').textContent = item.name || new Date(item.updatedAt).toLocaleString();
+          open.addEventListener('click', function () { showPiChat(); loadSession(item); });
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'fb-pi-home-session-delete';
+          remove.textContent = 'Delete';
+          remove.addEventListener('click', function () {
+            deletePiSession(item, remove).then(renderPiHome);
+          });
+          row.appendChild(open);
+          row.appendChild(remove);
+          piHomeItems.appendChild(row);
+        });
+      }
+      function closePanel() {
+        setSessionDrawer(false);
+        setSettingsDrawer(false);
+        closeEventStream();
+        historyLayer = null;
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        overlay = null;
+        document.documentElement.classList.remove('fb-pi-active');
+      }
+      function sendPrompt() {
+        if (promptPending || !sessionId || !promptInput) return;
+        var text = promptInput.value.trim();
+        if (!text) return;
+        promptPending = true;
+        promptInput.value = '';
+        addBubble('user', text);
+        if (sendButton) sendButton.disabled = true;
+        var reopen = !session || session.state === 'closed';
+        var request = Promise.resolve();
+        if (reopen) {
+          closeEventStream();
+          request = post('/api/fb/pi/session/open', { cwd: cwd, sessionId: sessionId })
+            .then(function (payload) {
+              session = payload.session;
+              sessionId = session.id;
+              connectEvents();
+            });
+        }
+        request
+          .then(function () {
+            return post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/prompt', { message: text, cwd: cwd });
+          })
+          .catch(function (error) { addBubble('tool', error.message || 'Prompt failed', 'error'); })
+          .finally(function () { promptPending = false; if (sendButton) sendButton.disabled = false; promptInput.focus(); });
+      }
+      function build() {
+        overlay = document.createElement('div');
+        overlay.className = 'fb-pi-view';
+        var panel = document.createElement('section');
+        panel.className = 'fb-pi-panel';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-labelledby', 'fb-pi-title');
+        var head = document.createElement('header');
+        head.className = 'fb-pi-head';
+        head.innerHTML = '<div class="fb-pi-heading"><button type="button" class="fb-pi-back" aria-label="Return to Freebuff">←</button><div class="fb-pi-mark">π</div><div><h2 id="fb-pi-title">Pi coding agent</h2><button type="button" class="fb-pi-project-button" aria-label="Choose Pi working directory"><span class="fb-pi-project">Choose directory</span><span class="fb-pi-project-chevron">⌄</span></button><span class="fb-pi-status">Ready</span></div></div>' +
+          '<div class="fb-pi-head-actions"><button type="button" class="fb-pi-sessions-toggle" aria-label="Open Pi sessions" aria-expanded="false">Sessions</button><button type="button" class="fb-pi-settings-toggle" aria-label="Open Pi settings" aria-expanded="false">Settings</button><button type="button" class="fb-pi-close" aria-label="Close Pi workspace">×</button></div>';
+        status = head.querySelector('.fb-pi-status');
+        projectButton = head.querySelector('.fb-pi-project-button');
+        projectLabel = head.querySelector('.fb-pi-project');
+        projectButton.addEventListener('click', openPiProjectPicker);
+        // Quick-switch active session dropdown (no home roundtrip)
+        sessionSwitch = document.createElement('select');
+        sessionSwitch.className = 'fb-pi-session-switch';
+        sessionSwitch.setAttribute('aria-label', 'Switch Pi session');
+        var headingInner = head.querySelector('.fb-pi-heading > div:nth-child(3)');
+        if (headingInner) {
+          headingInner.appendChild(sessionSwitch);
+        } else {
+          head.querySelector('.fb-pi-heading').appendChild(sessionSwitch);
+        }
+        sessionSwitch.addEventListener('change', function () {
+          var id = sessionSwitch.value;
+          if (id === '__new') {
+            loadSession(null);
+            return;
+          }
+          var item = sessions.find(function (s) { return s.id === id; });
+          if (item) loadSession(item);
+          else showPiHome();
+        });
+        sessionDrawerToggle = head.querySelector('.fb-pi-sessions-toggle');
+        settingsToggle = head.querySelector('.fb-pi-settings-toggle');
+        head.querySelector('.fb-pi-back').addEventListener('click', closePanel);
+        sessionDrawerToggle.addEventListener('click', showPiHome);
+        settingsToggle.addEventListener('click', function () {
+          setSettingsDrawer(!controls.classList.contains('settings-open'));
+        });
+        head.querySelector('.fb-pi-close').addEventListener('click', closePanel);
+        var body = document.createElement('div');
+        body.className = 'fb-pi-body';
+        sessionList = document.createElement('aside');
+        sessionList.className = 'fb-pi-sessions';
+        var sessionHead = document.createElement('div');
+        sessionHead.className = 'fb-pi-sessions-head';
+        sessionHead.innerHTML = '<strong>Sessions</strong><span>Pi workspace</span><button type="button" class="fb-pi-session-drawer-close" aria-label="Close Pi sessions">×</button>';
+        sessionHead.querySelector('.fb-pi-session-drawer-close').addEventListener('click', function () { setSessionDrawer(false); });
+        sessionDrawerScrim = document.createElement('button');
+        sessionDrawerScrim.type = 'button';
+        sessionDrawerScrim.className = 'fb-pi-session-scrim';
+        sessionDrawerScrim.setAttribute('aria-label', 'Close Pi sessions');
+        sessionDrawerScrim.hidden = true;
+        sessionDrawerScrim.addEventListener('click', function () { setSessionDrawer(false); });
+        sessionItems = document.createElement('div');
+        sessionItems.className = 'fb-pi-session-items';
+        sessionList.appendChild(sessionHead);
+        sessionList.appendChild(sessionItems);
+        var chat = document.createElement('main');
+        chat.className = 'fb-pi-chat fb-pi-home-active';
+        piHome = document.createElement('section');
+        piHome.className = 'fb-pi-home';
+        var homeHead = document.createElement('div');
+        homeHead.className = 'fb-pi-home-head';
+        homeHead.innerHTML = '<div><span class="fb-pi-home-kicker">PI WORKSPACE</span><h3>Choose a session</h3><p class="fb-pi-home-cwd"></p></div><button type="button" class="fb-pi-home-directory">Change directory</button>';
+        homeHead.querySelector('.fb-pi-home-directory').addEventListener('click', openPiProjectPicker);
+        piHomeItems = document.createElement('div');
+        piHomeItems.className = 'fb-pi-home-items';
+        piHome.appendChild(homeHead);
+        piHome.appendChild(piHomeItems);
+        chat.appendChild(piHome);
+        messageList = document.createElement('div');
+        messageList.className = 'fb-pi-messages';
+        controls = document.createElement('div');
+        controls.className = 'fb-pi-controls';
+        scopeSelect = document.createElement('select');
+        scopeSelect.className = 'fb-pi-scope';
+        scopeSelect.setAttribute('aria-label', 'Pi model scope');
+        var allScope = document.createElement('option');
+        allScope.value = '*';
+        allScope.textContent = 'All authenticated';
+        scopeSelect.appendChild(allScope);
+        scopeSelect.addEventListener('change', renderModelOptions);
+        modelSearch = document.createElement('input');
+        modelSearch.type = 'search';
+        modelSearch.className = 'fb-pi-model-search';
+        modelSearch.placeholder = 'Search authenticated models…';
+        modelSearch.setAttribute('aria-label', 'Search authenticated Pi models');
+        modelSearch.addEventListener('input', renderModelOptions);
+        modelSelect = document.createElement('select');
+        modelSelect.className = 'fb-pi-model';
+        modelSelect.setAttribute('aria-label', 'Pi model');
+        thinkingSelect = document.createElement('select');
+        thinkingSelect.className = 'fb-pi-thinking';
+        thinkingSelect.setAttribute('aria-label', 'Pi thinking level');
+        ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].forEach(function (level) {
+          var option = document.createElement('option');
+          option.value = level;
+          option.textContent = level;
+          thinkingSelect.appendChild(option);
+        });
+        controls.appendChild(scopeSelect);
+        controls.appendChild(modelSearch);
+        controls.appendChild(modelSelect);
+        controls.appendChild(thinkingSelect);
+        var commandLauncher = document.createElement('button');
+        commandLauncher.type = 'button';
+        commandLauncher.className = 'fb-pi-command-launcher';
+        commandLauncher.textContent = 'Slash commands';
+        commandLauncher.setAttribute('aria-label', 'Open Pi slash commands');
+        commandLauncher.addEventListener('click', openPiCommandPalette);
+        controls.appendChild(commandLauncher);
+        var authSection = document.createElement('div');
+        authSection.className = 'fb-pi-auth';
+        var authTitle = document.createElement('strong');
+        authTitle.textContent = 'LOGIN';
+        var authMethod = document.createElement('select');
+        authMethod.className = 'fb-pi-login-method';
+        authMethod.setAttribute('aria-label', 'Pi login method');
+        var apiOption = document.createElement('option');
+        apiOption.value = 'api_key';
+        apiOption.textContent = 'Add API key';
+        var accountOption = document.createElement('option');
+        accountOption.value = 'account';
+        accountOption.textContent = 'Pi account login';
+        authMethod.appendChild(apiOption);
+        authMethod.appendChild(accountOption);
+        var authProvider = document.createElement('select');
+        authProvider.className = 'fb-pi-login-provider';
+        authProvider.setAttribute('aria-label', 'API provider');
+        var authKey = document.createElement('input');
+        authKey.type = 'password';
+        authKey.className = 'fb-pi-login-key';
+        authKey.placeholder = 'Paste API key';
+        authKey.setAttribute('aria-label', 'API key');
+        var authNote = document.createElement('p');
+        authNote.className = 'fb-pi-login-note';
+        authNote.hidden = true;
+        authNote.textContent = 'Pi account login uses subscription OAuth. Run /login in Pi Desktop terminal to complete provider sign-in.';
+        var authSave = document.createElement('button');
+        authSave.type = 'button';
+        authSave.className = 'fb-pi-login-save';
+        authSave.textContent = 'Save API key';
+        function syncAuthTarget() {
+          var account = authMethod.value === 'account';
+          var kinds = (authProvider.selectedOptions[0] && authProvider.selectedOptions[0].dataset.authTypes || 'api_key').split(',');
+          var keyAllowed = kinds.indexOf('api_key') !== -1;
+          authProvider.hidden = false;
+          authKey.hidden = account || !keyAllowed;
+          authSave.hidden = account || !keyAllowed;
+          if (account) {
+            authNote.textContent = 'Pi account login uses subscription OAuth. Run /login in Pi Desktop terminal to complete provider sign-in.';
+            authNote.hidden = false;
+          } else if (!keyAllowed) {
+            authNote.textContent = 'This provider uses account login (subscription OAuth), not an API key. Run /login ' + authProvider.value + ' in Pi Desktop terminal.';
+            authNote.hidden = false;
+          } else {
+            authNote.hidden = true;
+          }
+        }
+        authMethod.addEventListener('change', function () { renderAuthProviders(); syncAuthTarget(); });
+        authProvider.addEventListener('change', syncAuthTarget);
+        authSave.addEventListener('click', function () {
+          if (!authProvider.value || !authKey.value.trim()) {
+            setStatus('Select provider and enter API key', false);
+            return;
+          }
+          authSave.disabled = true;
+          post('/api/fb/pi/auth', { provider: authProvider.value, key: authKey.value.trim() })
+            .then(function () {
+              authKey.value = '';
+              return api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/models');
+            })
+            .then(function (payload) {
+              populateModels(payload.models, payload.providers, payload.authProviders);
+              setStatus('API key saved', false);
+            })
+            .catch(function (error) { setStatus(error.message || 'API key save failed', false); })
+            .finally(function () { authSave.disabled = false; });
+        });
+        authSection.appendChild(authTitle);
+        authSection.appendChild(authMethod);
+        authSection.appendChild(authProvider);
+        authSection.appendChild(authKey);
+        authSection.appendChild(authNote);
+        authSection.appendChild(authSave);
+        controls.appendChild(authSection);
+        var wallpaperSection = document.createElement('div');
+        wallpaperSection.className = 'fb-pi-wallpaper';
+        wallpaperSection.style.gridColumn = '1 / -1';
+        wallpaperSection.style.display = 'grid';
+        wallpaperSection.style.gridTemplateColumns = '100px minmax(0, 1fr) auto';
+        wallpaperSection.style.alignItems = 'center';
+        wallpaperSection.style.overflow = 'visible';
+        wallpaperSection.style.gap = '6px';
+        wallpaperSection.style.padding = '6px 8px';
+        wallpaperSection.style.borderTop = '1px solid var(--border,#333)';
+        var wallTitle = document.createElement('strong');
+        wallTitle.textContent = 'WALLPAPER';
+        wallTitle.style.fontSize = '10px';
+        wallTitle.style.textTransform = 'uppercase';
+        wallTitle.style.letterSpacing = '.04em';
+        wallTitle.style.color = 'var(--muted,#999)';
+        wallSelect = document.createElement('select');
+        wallSelect.className = 'fb-pi-wall-select';
+        wallSelect.setAttribute('aria-label', 'Wallpaper');
+        var wallOptions = [
+          ['off', 'Off'],
+          ['void', 'Void'],
+          ['grid', 'Grid'],
+          ['dusk', 'Dusk'],
+          ['url', 'URL image…']
+        ];
+        wallOptions.forEach(function (opt) {
+          var o = document.createElement('option');
+          o.value = opt[0];
+          o.textContent = opt[1];
+          wallSelect.appendChild(o);
+        });
+        wallUrl = document.createElement('input');
+        wallUrl.type = 'url';
+        wallUrl.className = 'fb-pi-wall-url';
+        wallUrl.placeholder = 'https://… .gif/.png/.jpg';
+        wallUrl.setAttribute('aria-label', 'Wallpaper image URL');
+        wallApply = document.createElement('button');
+        wallApply.type = 'button';
+        wallApply.className = 'fb-pi-wall-apply';
+        wallApply.textContent = 'Apply';
+        wallApply.style.minHeight = '26px';
+        wallApply.style.fontSize = '10px';
+        wallNote = document.createElement('p');
+        wallNote.className = 'fb-pi-wall-note';
+        wallNote.style.gridColumn = '1 / -1';
+        wallNote.style.margin = '4px 0 0';
+        wallNote.style.fontSize = '10px';
+        wallNote.style.color = 'var(--muted,#999)';
+        wallNote.hidden = true;
+        wallUrl.hidden = true;
+        wallApply.hidden = true;
+        wallSelect.addEventListener('change', function () {
+          var pick = wallSelect.value;
+          if (pick === 'off') {
+            wallpaperState = { mode: 'dim', url: '', preset: 'off' };
+            applyWallpaper();
+            wallUrl.value = '';
+            wallNote.hidden = true;
+            return;
+          }
+          if (pick === 'url') {
+            wallUrl.hidden = false;
+            wallApply.hidden = false;
+            wallUrl.focus();
+            wallNote.textContent = 'Paste image URL, then Apply.';
+            wallNote.hidden = false;
+            return;
+          }
+          // preset
+          wallUrl.hidden = true;
+          wallApply.hidden = true;
+          wallpaperState = { mode: 'dim', url: WALLPAPER_PRESETS[pick] || '', preset: pick };
+          applyWallpaper();
+          wallNote.textContent = pick + ' wallpaper applied.';
+          wallNote.hidden = false;
+        });
+        wallApply.addEventListener('click', function () {
+          var url = wallUrl.value.trim();
+          if (!url) { wallpaperState = { mode: 'dim', url: '', preset: 'off' }; wallSelect.value = 'off'; applyWallpaper(); wallNote.hidden = true; return; }
+          validateImageUrl(url, function (ok) {
+            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: 'url' }; applyWallpaper(); wallNote.textContent = 'Wallpaper applied.'; wallNote.hidden = false; }
+            else { wallNote.textContent = 'Image could not be loaded.'; wallNote.hidden = false; }
+          });
+        });
+        wallpaperSection.appendChild(wallTitle);
+        wallpaperSection.appendChild(wallSelect);
+        wallpaperSection.appendChild(wallUrl);
+        wallpaperSection.appendChild(wallApply);
+        wallpaperSection.appendChild(wallNote);
+        controls.appendChild(wallpaperSection);
+        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider].forEach(enhancePiSelect);
+        settingsScrim = document.createElement('button');
+        settingsScrim.type = 'button';
+        settingsScrim.className = 'fb-pi-settings-scrim';
+        settingsScrim.setAttribute('aria-label', 'Close Pi settings');
+        settingsScrim.hidden = true;
+        settingsScrim.addEventListener('click', function () { setSettingsDrawer(false); });
+        var form = document.createElement('form');
+        form.className = 'fb-pi-composer';
+        promptInput = document.createElement('textarea');
+        promptInput.disabled = true;
+        promptInput.rows = 2;
+        promptInput.placeholder = 'Ask Pi to work in this project…';
+        promptInput.setAttribute('aria-label', 'Message Pi');
+        sendButton = null;
+        var abortButton = document.createElement('button');
+        abortButton.type = 'button';
+        abortButton.className = 'fb-pi-abort';
+        abortButton.textContent = 'Stop';
+        abortButton.addEventListener('click', function () { if (sessionId) post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/abort', {}); });
+        form.appendChild(promptInput);
+        form.appendChild(abortButton);
+        chat.appendChild(controls);
+        chat.appendChild(messageList);
+        chat.appendChild(form);
+        body.appendChild(sessionDrawerScrim);
+        body.appendChild(sessionList);
+        body.appendChild(settingsScrim);
+        body.appendChild(chat);
+        setSessionDrawer(false);
+        setSettingsDrawer(false);
+        panel.appendChild(head);
+        panel.appendChild(body);
+        overlay.appendChild(panel);
+        promptInput.addEventListener('input', renderSlashSuggestions);
+        promptInput.addEventListener('keydown', function (event) {
+          if (slashSuggestionLayer && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+            event.preventDefault();
+            var options = slashSuggestionLayer.querySelectorAll('.fb-pi-slash-suggestion');
+            slashSuggestionIndex = (slashSuggestionIndex + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length;
+            options.forEach(function (option, index) { option.classList.toggle('active', index === slashSuggestionIndex); });
+            return;
+          }
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            if (chooseSlashSuggestion()) return;
+            var match = promptInput.value.trim().match(/^\/([a-z][a-z-]*)(?:\\s+(.+))?$/i);
+            if (match && PI_SLASH_COMMANDS.some(function (item) { return item[0] === match[1].toLowerCase(); })) {
+              runPiSlashCommand(match[1], match[2]);
+              return;
+            }
+            sendPrompt();
+          }
+          if (event.key === 'Escape') closeSlashSuggestions();
+        });
+        modelSelect.addEventListener('change', function () {
+          if (!modelSelect.value) return;
+          localStorage.setItem('fb-pi-model', modelSelect.value);
+          if (!sessionId) return;
+          var split = modelSelect.value.indexOf('/');
+          post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/model', {
+            provider: modelSelect.value.slice(0, split),
+            modelId: modelSelect.value.slice(split + 1),
+          }).catch(function (error) { setStatus(error.message || 'Model change failed', false); });
+        });
+        thinkingSelect.addEventListener('change', function () {
+          if (!thinkingSelect.value) return;
+          localStorage.setItem('fb-pi-thinking', thinkingSelect.value);
+          if (sessionId) post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/thinking', { level: thinkingSelect.value }).catch(function (error) { setStatus(error.message || 'Thinking change failed', false); });
+        });
+        return overlay;
+      }
+      var WALLPAPER_DEFAULT = { mode: 'dim', url: '', preset: 'off' };
+      function loadWallpaper() {
+        if (!controls) return;
+        try { wallpaperState = JSON.parse(localStorage.getItem('fb-pi-wallpaper') || 'null'); } catch (e) { wallpaperState = null; }
+        if (!wallpaperState || typeof wallpaperState !== 'object' || !wallpaperState.preset) {
+          wallpaperState = WALLPAPER_DEFAULT;
+        } else {
+          wallpaperState.mode = wallpaperState.mode || 'dim';
+          wallpaperState.url = wallpaperState.url || (WALLPAPER_PRESETS[wallpaperState.preset] || '');
+        }
+        if (wallSelect) wallSelect.value = wallpaperState.preset || 'off';
+        var showUrl = wallSelect && wallSelect.value === 'url';
+        if (wallUrl) {
+          wallUrl.hidden = !showUrl;
+          wallUrl.value = showUrl ? (wallpaperState.url || '') : '';
+        }
+        if (wallApply) wallApply.hidden = !showUrl;
+        if (wallNote) wallNote.hidden = true;
+        applyWallpaper();
+      }
+      function persistWallpaper() {
+        try { localStorage.setItem('fb-pi-wallpaper', JSON.stringify(wallpaperState || { mode: 'off', url: '' })); } catch (e) {}
+      }
+      function validateImageUrl(url, cb) {
+        try {
+          var parsed = new URL(url);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'data:') { cb(false); return; }
+        } catch (e) { cb(false); return; }
+        var img = new Image();
+        img.onload = function () { cb(true); };
+        img.onerror = function () { cb(false); };
+        img.src = url;
+      }
+      function applyWallpaper() {
+        var state = wallpaperState || { mode: 'off', url: '' };
+        var url = state.mode === 'off' ? '' : (state.url || '');
+        if (wallpaperStyleEl) wallpaperStyleEl.remove();
+        if (!overlay) return;
+        if (url) {
+          overlay.classList.add('fb-pi-wall');
+          overlay.style.setProperty('--fb-wallpaper-dim', state.mode === 'vivid' ? '.14' : '.22');
+          wallpaperStyleEl = document.createElement('style');
+          wallpaperStyleEl.id = 'fb-pi-wall-style';
+          wallpaperStyleEl.textContent =
+            '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }' +
+            '.fb-pi-view.fb-pi-wall::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--fb-wallpaper-dim,.22)); pointer-events:none; }' +
+            '.fb-pi-view.fb-pi-wall .fb-pi-messages, .fb-pi-view.fb-pi-wall .fb-pi-panel, .fb-pi-view.fb-pi-wall .fb-pi-head, .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 62%, transparent) !important; }' +
+            '.fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 58%, transparent) !important; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }' +
+            '.fb-pi-view.fb-pi-wall .fb-pi-message.user { background: color-mix(in srgb, var(--fb-pi-accent) 18%, color-mix(in srgb, var(--surface-2,#1a1a1a) 42%, transparent)) !important; }' +
+            ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-messages, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-panel, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-head, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 48%, transparent) !important; }' +
+            ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 42%, transparent) !important; }';
+          document.head.appendChild(wallpaperStyleEl);
+          overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '%22') + '")');
+        } else {
+          overlay.classList.remove('fb-pi-wall');
+          overlay.style.removeProperty('--fb-wallpaper-url');
+          overlay.style.removeProperty('--fb-wallpaper-dim');
+          wallpaperStyleEl = null;
+        }
+        persistWallpaper();
+      }
+      function openPanel() {
+        if (overlay) return;
+        document.documentElement.classList.add('fb-pi-active');
+        overlay = build();
+        var host = document.querySelector('.workspace') || document.querySelector('.app') || document.body;
+        host.appendChild(overlay);
+        applyPiModeView();
+        loadWallpaper();
+        setStatus('Finding project…', true);
+        projectPath().then(function (value) {
+          setProjectLabel(value || '');
+          if (!cwd) throw new Error('Project path unavailable');
+          savePiProject(cwd);
+          return refreshSessions(false).then(function () {
+            var chosen = getDefaultSession(cwd);
+            if (chosen && sessions.some(function (item) { return item.id === chosen; })) return loadSession({ id: chosen });
+            if (chosen) setDefaultSession(cwd, '');
+            showPiHome();
+          });
+        }).catch(function (error) { setStatus(error.message || 'Pi unavailable', false); });
+      }
+      function syncMenus() {
+        ensurePiModeToggle();
+        document.querySelectorAll('.agent-menu').forEach(function (menu) {
+          if (menu.querySelector('.fb-pi-connect')) return;
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'header-menu-item fb-pi-connect';
+          button.setAttribute('role', 'menuitem');
+          button.innerHTML = '<span class="fb-pi-menu-icon" aria-hidden="true">π</span><span>Use Pi coding agent</span><small>Sessions, models, and tools</small>';
+          button.addEventListener('mousedown', function (event) { event.stopPropagation(); });
+          button.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+            setPiMode(true);
+          });
+          menu.appendChild(button);
+        });
+      }
+      new MutationObserver(syncMenus).observe(document.body, { childList: true, subtree: true });
+      syncMenus();
+      ensurePiModeToggle();
+      window.addEventListener('resize', applyPiModeView);
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && overlay) setPiMode(false);
+      });
+    });
+  }
+
   function bindAdOverlay() {
     // Ad-network redirect hosts (e.g. srv.buysellads.com) are not the real
     // destination and just look like junk in the popup. Hide the destination
@@ -4903,6 +7218,7 @@
   }
   bindAdOverlay();
   codexConnect();
+  piPanel();
 
   threadWindowBack();
   browserReloadCleanup();
@@ -4910,6 +7226,7 @@
   homeThreadHistory();
   bindMessageCompact();
   sessionSwitcher();
+  themePicker();
   copyFeedback();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();

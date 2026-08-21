@@ -13,6 +13,8 @@
  */
 const http = require('http');
 const { spawn } = require('child_process');
+const { createPiAgentController, readJsonBody: readPiJsonBody } = require('./pi-agent-bridge');
+const { injectSkills } = require('./freebuff-skill-loader');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -22,7 +24,46 @@ const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
 
 const REPO = __dirname;
-const MOBILE_CSS_PATH = path.join(REPO, 'mobile-ui.css');
+
+// ---- UI source fallback ----
+// The deployed proxy serves the mobile layer files (mobile-ui.css /
+// mobile-ui.js) from its own directory. When the installer/setup deploys
+// the proxy from a repo, it records the source directory in ui-source.json
+// beside the proxy. If a source file is NEWER than the deployed copy — an
+// edit made in the repo after install — the proxy serves the source
+// version, so UI changes apply on reload without re-running the installer.
+// FB_UI_SOURCE_DIR overrides the recorded path (tests, unusual layouts).
+// Resolution happens per request, so edits apply on reload like the
+// deployed files themselves.
+const UI_SOURCE_SIDECAR = 'ui-source.json';
+function uiSourceDir() {
+  if (process.env.FB_UI_SOURCE_DIR) return process.env.FB_UI_SOURCE_DIR;
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(__dirname, UI_SOURCE_SIDECAR), 'utf8'),
+    );
+    return typeof parsed.sourceDir === 'string' && parsed.sourceDir
+      ? parsed.sourceDir
+      : null;
+  } catch (e) {
+    return null;
+  }
+}
+function uiAssetPath(name) {
+  const installed = path.join(__dirname, name);
+  const sourceDir = uiSourceDir();
+  if (sourceDir) {
+    const source = path.join(sourceDir, name);
+    try {
+      if (fs.statSync(source).mtimeMs > fs.statSync(installed).mtimeMs) {
+        return source;
+      }
+    } catch (e) {
+      // Missing or unreadable source falls back to the deployed copy.
+    }
+  }
+  return installed;
+}
 
 // ---- ad broadcast cache ----
 // Last known non-empty ad fill per placement, captured from /api/ad/slot
@@ -55,7 +96,6 @@ const DEV_AD = {
 function devAdBroadcastEnabled() {
   return process.env.FB_AD_DEV_BROADCAST === '1';
 }
-const MOBILE_JS_PATH = path.join(REPO, 'mobile-ui.js');
 const PERF_PROBE_PATH = path.join(REPO, 'perf-probe.js');
 // ---- mobile theming SDK ----
 // Users drop a theme.css here (or point FB_MOBILE_THEME_FILE at their own
@@ -186,6 +226,44 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
+// POST a fully-buffered request body to `target`, streaming the response
+// back to `res` with headers intact. On connection failure, calls `onFail`
+// (used to fall back to the orchestrator when the chat-server is down).
+function bodyWithFreebuffSkills(body, options = {}) {
+  try {
+    const parsed = JSON.parse(body.toString('utf8') || '{}');
+    return Buffer.from(JSON.stringify(injectSkills(parsed, options)));
+  } catch {
+    return body;
+  }
+}
+
+function postToTarget(target, req, body, res, onFail) {
+  const headers = { ...req.headers };
+  headers.host = target.host;
+  headers['accept-encoding'] = 'identity';
+  headers['content-length'] = body.length;
+  const preq = http.request({
+    host: target.hostname,
+    port: target.port || 80,
+    method: req.method,
+    path: req.url,
+    headers,
+  }, (pres) => {
+    res.writeHead(pres.statusCode || 200, pres.headers);
+    pres.pipe(res);
+    pres.on('error', () => res.destroy());
+  });
+  preq.on('error', (err) => {
+    if (onFail) onFail(err);
+    else {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'upstream_error' }));
+    }
+  });
+  preq.end(body);
+}
+
 // ---- perf probe ----
 // In-page Navigation/Resource Timing probe (src/perf-probe.js). Dormant unless
 // the URL carries ?fbperf=1 (or #fbperf). The probe POSTs its waterfall to
@@ -256,6 +334,12 @@ function adSniff(kind, data) {
 // orchestrator's on-disk bundle carries that route; the proxy serves the
 // same page and forwards the call upstream).
 const SHIM = `(function () {
+  // Connected-folder grid applies in native desktop too; browser/mobile also
+  // get same rules from mobile-ui.css.
+  var folderGridStyle = document.createElement('style');
+  folderGridStyle.id = 'fb-connected-folder-grid-v2';
+  folderGridStyle.textContent = '.new-thread-project-menu{display:grid!important;box-sizing:border-box;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));width:min(460px,calc(100vw - 24px));min-width:0;max-width:calc(100vw - 24px);min-height:0;max-height:min(64vh,460px)!important;overflow-x:hidden;overflow-y:auto!important;align-content:start;gap:5px;padding:6px}.new-thread-project-menu .project-option{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;min-width:0;min-height:60px;gap:6px;padding:7px;border:1px solid transparent;border-radius:8px;max-width:100%;overflow:hidden;white-space:normal}.new-thread-project-menu .project-option:hover,.new-thread-project-menu .project-option[aria-checked="true"]{border-color:var(--accent-dim);background:var(--raised)}.new-thread-project-menu .project-option-text{display:flex;min-width:0;flex-direction:column;gap:3px;text-align:left}.new-thread-project-menu .project-option-text strong,.new-thread-project-menu .project-option-text span{min-width:0;overflow-wrap:anywhere;word-break:break-word;white-space:normal}.new-thread-project-menu .project-option-text span{color:var(--muted);font-size:11px;line-height:1.3}.new-thread-project-menu>.header-menu-sep,.new-thread-project-menu>.header-menu-item:not(.project-option){grid-column:1/-1}@media(max-width:700px){.new-thread-project-menu{position:fixed!important;top:50%!important;right:auto!important;bottom:auto!important;left:50%!important;transform:translate(-50%,-50%)!important;z-index:59;box-sizing:border-box;grid-template-columns:repeat(2,minmax(0,1fr));width:min(420px,calc(100vw - 24px))!important;min-width:0!important;max-width:calc(100vw - 24px)!important;height:auto!important;max-height:min(72dvh,460px)!important;overflow-x:hidden!important;overflow-y:auto!important;align-content:start;padding:5px;gap:4px}.new-thread-project-menu .project-option{grid-template-columns:1fr;justify-items:center;min-height:68px;padding:6px 4px;text-align:center}.new-thread-project-menu .project-option-text{width:100%;text-align:center}.new-thread-project-menu .header-menu-check{display:none}}';
+  (document.head || document.documentElement).appendChild(folderGridStyle);
   if (window.freebuffDesktop) return;
   var virtualPick = function () {
     return new Promise(function (resolve) {
@@ -536,7 +620,7 @@ function mobileTag(type) {
   try {
     const body = type === 'theme'
       ? fs.readFileSync(mobileThemePath(), 'utf8')
-      : fs.readFileSync(type === 'css' ? MOBILE_CSS_PATH : MOBILE_JS_PATH, 'utf8');
+      : fs.readFileSync(type === 'css' ? uiAssetPath('mobile-ui.css') : uiAssetPath('mobile-ui.js'), 'utf8');
     if (type === 'js') return `<script id="fb-mobile-ui">${body}<\/script>`;
     if (type === 'theme') return `<style id="fb-mobile-theme">${body}</style>`;
     return `<style id="fb-mobile-ui">${body}</style>`;
@@ -735,6 +819,18 @@ const OPEN_THREAD_MARK =
 const OPEN_THREAD_FIX =
   OPEN_THREAD_MARK + 'window.__fbOpenThread=Rq;';
 
+// ---- Skill origin badge (composer slash menu) ----
+// The composer's "/" menu lists the loaded skills; each row shows the name
+// and description. /api/skills already reports where each skill came from
+// (source: managed | agent | freebuff). Inject a small origin badge after
+// the skill name so a Pi-installed skill is visually distinct from a
+// Freebuff built-in: managed -> freebuff, agent -> agents (pi/agents/claude
+// dirs), freebuff -> project (project/global override), else the raw source.
+const SKILL_ORIGIN_MARK =
+  'row:ee=>g.jsxs(g.Fragment,{children:[g.jsxs("span",{className:"slash-name",children:["/",ee.name]}),g.jsx("span",{className:"slash-hint",children:ee.description??(ee.source==="managed"?"Run the Freebuff skill":"Run skill")})]})';
+const SKILL_ORIGIN_FIX =
+  'row:ee=>g.jsxs(g.Fragment,{children:[g.jsxs("span",{className:"slash-name",children:["/",ee.name]}),g.jsx("span",{className:"slash-origin"+("managed"===ee.source?" builtin":"agent"===ee.source?" agents":"freebuff"===ee.source?" project":"")},{children:("managed"===ee.source?"freebuff":"agent"===ee.source?"agents":"freebuff"===ee.source?"project":String(ee.source||"user"))}),g.jsx("span",{className:"slash-hint",children:ee.description??(ee.source==="managed"?"Run the Freebuff skill":"Run skill")})]})';
+
 function patchBundle(body) {
   let out = body;
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
@@ -762,6 +858,8 @@ function patchBundle(body) {
   // appended a second time.
   if (out.includes(OPEN_THREAD_FIX)) { /* already applied */ }
   else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
+  if (out.includes(SKILL_ORIGIN_FIX)) { /* already applied */ }
+  else if (out.includes(SKILL_ORIGIN_MARK)) out = out.split(SKILL_ORIGIN_MARK).join(SKILL_ORIGIN_FIX);
   return out;
 }
 
@@ -899,10 +997,20 @@ function maybeProbeUiPatches(up, force) {
 function createProxyServer(options = {}) {
   const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
   const up = new URL(upstream);
+  // Local chat-server that speaks the same AI SDK /api/chat wire protocol as
+  // the orchestrator. Set FB_CHAT_UPSTREAM=off to disable the /api/chat
+  // override entirely; any other value overrides the default endpoint.
+  const chatUpRaw = options.chatUpstream ?? process.env.FB_CHAT_UPSTREAM;
+  const chatUp = chatUpRaw && chatUpRaw !== 'off'
+    ? new URL(chatUpRaw)
+    : new URL('http://127.0.0.1:8796');
+  const chatOverrideEnabled = chatUpRaw !== 'off';
   const codexAuth = createCodexDeviceAuthController({
     spawnCommand: options.codexSpawn || spawn,
     timeoutMs: options.codexTimeoutMs,
   });
+  const piAgent = createPiAgentController(options.pi || {});
+  const skillOptions = options.skills || {};
   const server = http.createServer((req, res) => {
   const headers = { ...req.headers };
   headers.host = up.host;
@@ -923,6 +1031,125 @@ function createProxyServer(options = {}) {
   }
   if (req.method === 'POST' && pathname === '/api/fb/codex/device/cancel') {
     sendJson(res, 200, codexAuth.cancel());
+    return;
+  }
+  // Pi coding-agent bridge. Pi runs locally on Desktop; Gate Mobile reaches
+  // these same routes through the existing authenticated relay and connector.
+  // Credentials stay in ~/.pi and never cross HTTP or relay boundaries.
+  const piSessionMatch = pathname.match(/^\/api\/fb\/pi\/session\/([^/]+)(?:\/(messages|models|events|prompt|model|thinking|abort|name|delete))?$/);
+  const piId = piSessionMatch ? decodeURIComponent(piSessionMatch[1]) : '';
+  const piAction = piSessionMatch && piSessionMatch[2];
+  const piErrorStatus = (error) => ({
+    pi_project_required: 400,
+    pi_invalid_json: 400,
+    pi_prompt_invalid: 400,
+    pi_model_invalid: 400,
+    pi_thinking_invalid: 400,
+    pi_provider_invalid: 400,
+    pi_provider_oauth_only: 400,
+    pi_api_key_invalid: 400,
+    pi_auth_unavailable: 500,
+    pi_auth_write_failed: 500,
+    pi_session_name_invalid: 400,
+    pi_project_forbidden: 403,
+    pi_project_missing: 404,
+    pi_project_not_directory: 400,
+    pi_session_not_found: 404,
+    pi_session_closed: 404,
+    pi_process_closed: 404,
+    pi_rpc_failed: 409,
+    pi_session_busy: 409,
+    pi_session_delete_failed: 500,
+    pi_cli_missing: 503,
+    pi_too_many_sessions: 429,
+    pi_rpc_timeout: 504,
+  }[error && error.code] || 500);
+  const piSendError = (error) => {
+    const code = error && error.code ? error.code : 'pi_failed';
+    sendJson(res, piErrorStatus(error), {
+      error: code,
+      message: error && error.detail ? error.detail : code,
+    });
+  };
+  if (req.method === 'POST' && pathname === '/api/fb/pi/auth') {
+    readPiJsonBody(req).then((body) => piAgent.setApiKey(body.provider, body.key)).then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (req.method === 'GET' && pathname === '/api/fb/pi/sessions') {
+    const query = new URL(req.url || '/', 'http://x').searchParams;
+    const requestedCwd = query.get('cwd') || '';
+    Promise.all([piAgent.list(requestedCwd), Promise.resolve().then(() => piAgent.resolveProject(requestedCwd))])
+      .then(([sessions, cwd]) => sendJson(res, 200, { sessions, cwd }))
+      .catch(piSendError);
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/fb/pi/session/open') {
+    readPiJsonBody(req).then((body) => piAgent.open(body)).then((session) => sendJson(res, 200, { session })).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && piAction === 'events' && req.method === 'GET') {
+    try {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      });
+      const unsubscribe = piAgent.subscribe(piId, (line) => {
+        if (!res.writableEnded) res.write(`data: ${line}\n\n`);
+      });
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': ping\n\n');
+      }, 15_000);
+      heartbeat.unref();
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      });
+    } catch (error) {
+      if (!res.headersSent) piSendError(error);
+      else res.end();
+    }
+    return;
+  }
+  if (piSessionMatch && req.method === 'GET' && (piAction === 'messages' || piAction === 'models')) {
+    const work = piAction === 'messages' ? piAgent.messages(piId) : piAgent.models(piId);
+    work.then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && piAction === 'delete' && req.method === 'DELETE') {
+    const query = new URL(req.url || '/', 'http://x').searchParams;
+    piAgent.deleteSession(piId, query.get('cwd') || '').then((data) => sendJson(res, 200, data)).catch(piSendError);
+    return;
+  }
+  if (piSessionMatch && req.method === 'POST' && piAction) {
+    readPiJsonBody(req).then((body) => {
+      if (piAction === 'prompt') return piAgent.sendPrompt(piId, body.message, body.cwd);
+      if (piAction === 'model') return piAgent.setModel(piId, body.provider, body.modelId);
+      if (piAction === 'thinking') return piAgent.setThinking(piId, body.level);
+      if (piAction === 'compact') return piAgent.compact(piId, body.instructions);
+      if (piAction === 'name') return piAgent.renameSession(piId, body.cwd, body.name);
+      if (piAction === 'abort') return piAgent.abort(piId);
+      throw new Error('pi_action_not_found');
+    }).then((data) => sendJson(res, 200, data || { ok: true })).catch(piSendError);
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/chat') {
+    // Native Freebuff chat must receive skills too. Buffer once, inject the
+    // skill system message, then choose local chat-server or native upstream.
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const body = bodyWithFreebuffSkills(Buffer.concat(chunks), skillOptions);
+      if (chatOverrideEnabled) {
+        postToTarget(chatUp, req, body, res, () => {
+          postToTarget(up, req, body, res);
+        });
+      } else {
+        postToTarget(up, req, body, res);
+      }
+    });
+    req.on('error', () => res.destroy());
     return;
   }
   if (req.method === 'GET' && pathname === '/api/fb/ui-patch-status') {
@@ -1226,6 +1453,7 @@ server.on('upgrade', (req, socket, head) => {
   server.close = (cb) => {
     clearInterval(ownProbeTimer);
     codexAuth.close();
+    piAgent.close();
     return savedClose(cb);
   };
 
@@ -1247,6 +1475,8 @@ module.exports = {
   CLOSE_BTN_MARK,
   OPEN_THREAD_FIX,
   OPEN_THREAD_MARK,
+  SKILL_ORIGIN_FIX,
+  SKILL_ORIGIN_MARK,
   CLOSE_MARK1,
   CLOSE_MARK2,
   CLOSE_MARK3,
@@ -1272,6 +1502,9 @@ module.exports = {
   checkUiPatches,
   createProxyServer,
   patchBundle,
+  UI_SOURCE_SIDECAR,
+  uiAssetPath,
+  uiSourceDir,
 };
 
 if (require.main === module) {

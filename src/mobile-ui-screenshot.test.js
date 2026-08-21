@@ -64,6 +64,63 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test('Pi coding-agent panel is injected for desktop and mobile', () => {
+  const css = MOBILE_CSS.toString('utf8');
+  const js = MOBILE_JS.toString('utf8');
+  assert.match(css, /\.fb-pi-view/);
+  assert.match(css, /\.fb-pi-panel/);
+  assert.match(css, /\.fb-pi-body/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.fb-pi-panel/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.fb-pi-body \{ display: flex/);
+  assert.match(css, /html body \.fb-pi-view[\s\S]*position: fixed !important/);
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]*overflow-x: auto/);
+  assert.doesNotMatch(css, /\.fb-pi-overlay\s*\{/);
+  assert.match(js, /\/api\/fb\/pi\/sessions/);
+  assert.match(js, /\/api\/fb\/pi\/session\/.*\/events/);
+  assert.match(js, /Pi coding agent/);
+  assert.match(js, /header-menu-item fb-pi-connect/);
+  assert.match(js, /Use Pi coding agent/);
+  assert.match(js, /document\.querySelector\('\.workspace'\)/);
+  assert.match(js, /fb-pi-scope/);
+  assert.match(js, /All authenticated/);
+  assert.doesNotMatch(js, /fb-pi-toggle/);
+  assert.match(js, /fb-pi-active/);
+  assert.match(js, /fb-mobile-report/);
+  assert.match(js, /freebuffDesktop\.pickDirectory/);
+  assert.match(js, /fb-pi-home/);
+  assert.match(js, /Choose Pi session or New/);
+  assert.match(js, /deleteSessionConfirm\.request\(item/);
+  assert.match(js, /getDefaultSession\(cwd\)/);
+  assert.match(js, /item\.id === chosen/);
+  assert.match(js, /sessions\.some/);
+  assert.match(js, /pi_session_not_found/);
+  assert.match(js, /fb-pi-wall-select/);
+  assert.match(js, /Pi slash commands/);
+  assert.match(js, /scoped-models/);
+  assert.match(css, /\.fb-pi-home-session/);
+  assert.match(css, /html\.fb-pi-active \.fb-session-close-confirm/);
+  assert.match(css, /\.fb-pi-command-layer/);
+  assert.match(css, /\.fb-pi-active \.sponsored-ad[\s\S]*display: none !important/);
+  assert.match(js, /\/api\/fb\/pi\/session\/.*\/models/);
+  assert.match(js, /fb-pi-history-layer/);
+  assert.match(js, /fb-pi-history-search/);
+  assert.match(js, /event\.key === 'Enter' && !event\.shiftKey/);
+  assert.doesNotMatch(js, /textContent = ['"]Send['"]/);
+});
+
+test('connected folder selector uses readable desktop and mobile grids', () => {
+  const css = MOBILE_CSS.toString('utf8');
+  assert.match(css, /\.new-thread-project-menu\s*\{[\s\S]*display: grid !important/);
+  assert.match(css, /grid-template-columns: repeat\(auto-fill, minmax\(145px, 1fr\)\)/);
+  assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.new-thread-project-menu[\s\S]*position: fixed !important/);
+  assert.match(css, /top: 50% !important[\s\S]*transform: translate\(-50%, -50%\)/);
+  assert.match(css, /width: min\(420px, calc\(100vw - 24px\)\) !important/);
+  assert.match(css, /max-height: min\(72dvh, 460px\) !important/);
+  assert.match(css, /html body \.new-thread-project-menu[\s\S]*overflow: auto !important/);
+  assert.match(css, /project-option-text[\s\S]*overflow-wrap: anywhere/);
+});
+
 function isExecutable(file) {
   try {
     return fs.statSync(file).isFile() && (fs.statSync(file).mode & 0o111) !== 0;
@@ -479,7 +536,30 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
   }
 
   const fixture = await createFixtureServer({ throughProxy: true });
-  const proxy = createProxyServer({ upstream: fixture.url });
+  const piSession = {
+    id: 'pi-screenshot',
+    cwd: '/workspace/freebuff',
+    name: 'Pi screenshot',
+    title: 'Pi screenshot',
+    state: 'idle',
+    model: null,
+    thinkingLevel: 'off',
+  };
+  const pi = {
+    list: async () => [piSession],
+    open: async () => piSession,
+    messages: async () => ({ messages: [] }),
+    models: async () => ({ models: [], providers: [], authProviders: [] }),
+    subscribe: () => () => {},
+    setModel: async () => ({}),
+    setThinking: async () => ({}),
+    sendPrompt: async () => ({}),
+    abort: () => ({ ok: true }),
+    renameSession: async () => ({ ok: true }),
+    deleteSession: async () => ({ ok: true }),
+    setApiKey: async () => ({ ok: true }),
+  };
+  const proxy = createProxyServer({ upstream: fixture.url, pi });
   const proxyPort = await listenServer(proxy);
   let browser;
   const outputDir =
@@ -637,6 +717,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
         nativeTriggers: document.querySelectorAll('.composer .agent-trigger').length,
         modelMenus: document.querySelectorAll('.composer-context .agent-menu').length,
         codexActions: document.querySelectorAll('.composer-context .fb-codex-connect').length,
+        piActions: document.querySelectorAll('.composer-context .fb-pi-connect').length,
         codexOptions: document.querySelectorAll('.fb-codex-model-option').length,
       }))()`,
     );
@@ -644,8 +725,56 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       nativeTriggers: 1,
       modelMenus: 1,
       codexActions: 1,
+      piActions: 1,
       codexOptions: 0,
     });
+    await evaluate(cdp, "document.querySelector('.fb-pi-connect').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-pi-view'))");
+    await waitFor(cdp, "document.querySelector('.fb-pi-project').textContent !== 'Project'");
+    await evaluate(cdp, "document.querySelector('.fb-pi-mode-new').click()");
+    await delay(100);
+    const piLayout = await evaluate(
+      cdp,
+      `(() => {
+        const box = (element) => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height, top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom }; };
+        const view = box(document.querySelector('.fb-pi-view'));
+        const chat = box(document.querySelector('.fb-pi-chat'));
+        const sessions = box(document.querySelector('.fb-pi-sessions'));
+        const messages = box(document.querySelector('.fb-pi-messages'));
+        const composer = box(document.querySelector('.fb-pi-composer'));
+        return {
+          view,
+          chat,
+          sessions,
+          messages,
+          composer,
+          position: getComputedStyle(document.querySelector('.fb-pi-view')).position,
+          project: document.querySelector('.fb-pi-project').textContent,
+        };
+      })()`,
+    );
+    assert.ok(piLayout.view.width >= 389 && piLayout.view.height >= 790 && piLayout.view.top >= 47, JSON.stringify(piLayout));
+    assert.equal(piLayout.position, 'fixed');
+    assert.ok(piLayout.chat.width >= 370, `Pi chat too narrow: ${JSON.stringify(piLayout)}`);
+    assert.ok(piLayout.messages.width >= 370 && piLayout.messages.height >= 400, `Pi message area too small: ${JSON.stringify(piLayout)}`);
+    assert.ok(piLayout.composer.width >= 370 && piLayout.composer.bottom <= 844, `Pi composer is not full width: ${JSON.stringify(piLayout)}`);
+    assert.equal(piLayout.project, '/workspace/freebuff');
+    assert.equal(await evaluate(cdp, "document.querySelector('.fb-pi-mode-toggle').getAttribute('aria-pressed')"), 'true');
+    assert.equal(await evaluate(cdp, "getComputedStyle(document.querySelector('.fb-pi-sessions')).display"), 'none');
+    assert.equal(await evaluate(cdp, "Boolean(document.querySelector('.fb-pi-mode-new'))"), true);
+    assert.equal(await evaluate(cdp, "getComputedStyle(document.querySelector('.fb-pi-head')).display"), 'flex');
+    assert.equal(await evaluate(cdp, "document.querySelector('.fb-pi-sessions-toggle').textContent"), 'Sessions');
+    await evaluate(cdp, "document.querySelector('.fb-pi-settings-toggle').click()");
+    await waitFor(cdp, "getComputedStyle(document.querySelector('.fb-pi-controls')).display !== 'none'");
+    await evaluate(cdp, "document.querySelector('.fb-pi-command-launcher').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-pi-command-palette'))");
+    assert.ok(await evaluate(cdp, "document.querySelector('.fb-pi-command-item strong').textContent === '/settings'"));
+    await evaluate(cdp, "document.querySelector('.fb-pi-command-layer header button').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-pi-command-layer')");
+    await evaluate(cdp, "document.querySelector('.fb-pi-settings-toggle').click()");
+    await evaluate(cdp, "document.querySelector('.fb-pi-mode-toggle').click()");
+    await waitFor(cdp, "!document.querySelector('.fb-pi-view')");
+    await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
     const codexAction = await evaluate(
       cdp,
       `(() => {
@@ -821,6 +950,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       '1 available · 2/3 used · Used by: Mobile screenshot review',
     );
     assert.equal(refreshedAvailability.reset, 'Resets Sun, 9:00 PM');
+    await delay(120);
     assert.ok(
       hasAccessibleStatus(
         await accessibilityNodes(cdp),
@@ -1424,19 +1554,282 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
       cdp,
       `(() => ({
         mobileOnlyHidden: Array.from(document.querySelectorAll(
-          '.fb-ctx-fab, .fb-composer-pills',
+          '.fb-ctx-fab, .fb-composer-pills, .fb-session-switch',
         )).every((el) => getComputedStyle(el).display === 'none'),
-        sessionSwitchVisible: getComputedStyle(
+        sessionSwitchHidden: getComputedStyle(
           document.querySelector('.fb-session-switch'),
-        ).display !== 'none',
+        ).display === 'none',
         taskPosition: getComputedStyle(
           document.querySelector('.thread-bottom .todo-dock'),
         ).position,
       }))()`,
     );
     assert.equal(desktop.mobileOnlyHidden, true);
-    assert.equal(desktop.sessionSwitchVisible, true);
+    assert.equal(desktop.sessionSwitchHidden, true);
     assert.notEqual(desktop.taskPosition, 'fixed');
+  } finally {
+    await closeChrome(browser);
+    await new Promise((resolve) => proxy.close(resolve));
+    await new Promise((resolve) => fixture.server.close(resolve));
+  }
+});
+
+test('theme menu switches between default dark and Cyberpunk 2077 and persists', async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    if (process.env.CI) {
+      assert.fail('Chrome executable not found; CI screenshot coverage cannot run');
+    }
+    t.skip('Chrome executable not found; set FB_CHROME_BIN to run locally');
+    return;
+  }
+
+  const fixture = await createFixtureServer({ throughProxy: true });
+  const proxy = createProxyServer({ upstream: fixture.url });
+  const proxyPort = await listenServer(proxy);
+  let browser;
+  try {
+    browser = await launchChrome(chromePath);
+    const { cdp } = browser;
+    await cdp.send('Page.enable');
+    await cdp.send('Runtime.enable');
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+      screenWidth: 390,
+      screenHeight: 844,
+    });
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${proxyPort}/` });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+
+    // Default state: no data-fb-theme, menu has both options, default checked.
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    const menuState = await evaluate(
+      cdp,
+      `(() => ({
+        options: Array.from(document.querySelectorAll('.fb-theme-option')).map(
+          (option) => ({
+            label: option.querySelector('.fb-theme-label').textContent,
+            checked: option.getAttribute('aria-checked'),
+          }),
+        ),
+        expanded: document.querySelector('.fb-theme-toggle').getAttribute('aria-expanded'),
+      }))()`,
+    );
+    assert.deepEqual(menuState.options, [
+      { label: 'Default dark', checked: 'true' },
+      { label: 'Cyberpunk 2077', checked: 'false' },
+      { label: 'Retro Punk', checked: 'false' },
+      { label: 'Flintstones', checked: 'false' },
+    ]);
+
+    // Pick Cyberpunk: attribute set, localStorage persisted, surface recolored.
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.fb-theme-option'))
+          .find((el) => el.textContent.includes('Cyberpunk 2077'));
+        option.click();
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "!document.querySelector('.fb-theme-menu')");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "getComputedStyle(document.body).backgroundColor"),
+      'rgb(18, 14, 27)',
+    );
+    // Ambient background layer present (cyberpunk-specific).
+    const ambient = await evaluate(
+      cdp,
+      "getComputedStyle(document.body, '::before').backgroundImage",
+    );
+    assert.ok(ambient.includes('radial-gradient'), 'ambient neon wash missing');
+
+    // Reload: the persisted theme applies before paint, no menu needed.
+    await cdp.send('Page.reload', { ignoreCache: true });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    assert.equal(
+      await evaluate(cdp, "getComputedStyle(document.body).backgroundColor"),
+      'rgb(18, 14, 27)',
+    );
+
+    // Switch back to default: attribute and storage cleared.
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.fb-theme-option'))
+          .find((el) => el.textContent.includes('Default dark'));
+        option.click();
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "!document.querySelector('.fb-theme-menu')");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    assert.equal(
+      await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"),
+      null,
+    );
+
+    // Desktop viewport: the toggle stays visible (it is not mobile-only).
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: 1280,
+      screenHeight: 800,
+    });
+    await delay(180);
+    const desktopToggle = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.fb-theme-toggle');
+        return {
+          present: Boolean(button),
+          visible: button && getComputedStyle(button).display !== 'none',
+        };
+      })()`,
+    );
+    assert.deepEqual(desktopToggle, { present: true, visible: true });
+
+    // The app's own Appearance surfaces (account menu + new-thread theme
+    // switch) mount/unmount per open/navigation; the injected gate options
+    // must appear there too, styled as native items.
+    await evaluate(
+      cdp,
+      `(() => {
+        const menu = document.createElement('div');
+        menu.className = 'account-menu';
+        menu.innerHTML = '<div role="group" aria-label="Appearance">' +
+          '<div class="header-menu-label">Appearance</div>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="true">Light</button>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="false">Dark</button>' +
+          '<button type="button" class="header-menu-item" role="menuitemradio" aria-checked="false">Match system</button>' +
+          '</div>';
+        document.querySelector('.app').appendChild(menu);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "document.querySelectorAll('.account-menu .fb-gate-theme-item').length === 4");
+    const accountMenu = await evaluate(
+      cdp,
+      `(() => ({
+        labels: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+          (item) => item.textContent.trim(),
+        ),
+        checks: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+          (item) => item.getAttribute('aria-checked'),
+        ),
+      }))()`,
+    );
+    assert.deepEqual(accountMenu.labels, ['Default dark', 'Cyberpunk 2077', 'Retro Punk', 'Flintstones']);
+    assert.deepEqual(accountMenu.checks, ['true', 'false', 'false', 'false']);
+
+    // New-thread theme switch gets the same two options as icon buttons.
+    await evaluate(
+      cdp,
+      `(() => {
+        const wrap = document.createElement('div');
+        wrap.className = 'new-thread-theme';
+        wrap.innerHTML = '<div class="theme-switch"></div>';
+        document.querySelector('.app').appendChild(wrap);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length === 4");
+    assert.equal(
+      await evaluate(cdp, "document.querySelectorAll('.new-thread-theme .fb-gate-theme-option').length"),
+      4,
+    );
+    // The pill-row cyberpunk option switches the theme too.
+    await evaluate(
+      cdp,
+      `(() => {
+        const option = Array.from(document.querySelectorAll('.new-thread-theme .fb-gate-theme-option'))
+          .find((el) => el.getAttribute('data-fb-theme-id') === 'cyberpunk');
+        option.click();
+        return true;
+      })()`,
+    );
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      'cyberpunk',
+    );
+    // Checked state re-syncs on the mounted surfaces.
+    assert.deepEqual(
+      await evaluate(
+        cdp,
+        `(() => ({
+          account: Array.from(document.querySelectorAll('.account-menu .fb-gate-theme-item')).map(
+            (item) => item.getAttribute('aria-checked'),
+          ),
+          switchRow: Array.from(document.querySelectorAll('.new-thread-theme .fb-gate-theme-option')).map(
+            (option) => option.getAttribute('aria-pressed'),
+          ),
+        }))()`,
+      ),
+      { account: ['false', 'true', 'false', 'false'], switchRow: ['false', 'true', 'false', 'false'] },
+    );
+    // A native Appearance click clears the gate override so the app's own
+    // Light/Dark/System switch stays authoritative.
+    await evaluate(
+      cdp,
+      `(() => {
+        const dark = Array.from(document.querySelectorAll('.account-menu .header-menu-item'))
+          .find((item) => !item.classList.contains('fb-gate-theme-item') && item.textContent.includes('Dark'));
+        dark.click();
+        return true;
+      })()`,
+    );
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    assert.equal(await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"), null);
+
+    // A React remount that replaces the tabbar node must not lose the button
+    // (the mobile bodySync fallback does not run on desktop).
+    await evaluate(
+      cdp,
+      `(() => {
+        const old = document.querySelector('.tabbar:not(.threadbar)');
+        const fresh = old.cloneNode(false);
+        const conn = document.createElement('div');
+        conn.className = 'conn-status';
+        fresh.appendChild(conn);
+        old.replaceWith(fresh);
+        return true;
+      })()`,
+    );
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+    assert.equal(
+      await evaluate(cdp, "document.querySelector('.fb-theme-toggle').parentElement.className"),
+      'tabbar',
+    );
   } finally {
     await closeChrome(browser);
     await new Promise((resolve) => proxy.close(resolve));

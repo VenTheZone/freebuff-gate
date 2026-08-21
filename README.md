@@ -12,10 +12,20 @@ Freebuff Gate adapts the **Freebuff Desktop** UI for two uses:
   proxy injects the mobile layer, and the Freebuff Gate Android/iOS apps
   provide the companion clients.
 
-The project also includes folder-selection support. Freebuff Desktop can open
-native folder dialogs. Browsers cannot, so the browser port uses web APIs. Its
-configuration lives in (`freebuff-gate/.freebuff-gate.json`), with a reference
-implementation in (`src/folder-select.js`).
+The project also includes folder selection. Freebuff Desktop can open native
+folder dialogs; browsers cannot, so the browser port uses web APIs. Its
+configuration lives in `freebuff-gate/.freebuff-gate.json`, with a reference
+implementation in `src/folder-select.js`.
+
+## What you get
+
+| You want to... | Start here |
+| --- | --- |
+| Open the Freebuff UI in a browser on this machine | [docs/install.md](docs/install.md): install guide with the setup wizard and one-command installers |
+| Use it on a phone or tablet | [docs/mobile.md](docs/mobile.md): mobile adaptation, then the Android/iOS apps under `android/` and `ios/` |
+| Run your own relay for phones | [docker/relay/README.md](docker/relay/README.md): self-hosted Caddy or Tailscale deployment |
+| Install the companion without reading anything | `install-mobile-connect.sh` (Desktop companion), `install-release-apk.sh` (Android APK) |
+| See what every file does | the Contents table below |
 
 ## Contents
 
@@ -24,7 +34,7 @@ implementation in (`src/folder-select.js`).
 | `.freebuff-gate.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
-| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets (injected by the tailnet proxy). |
+| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets, plus the built-in theme picker styles and the Cyberpunk 2077 theme (injected by the tailnet proxy; see `docs/mobile.md`). |
 | `src/mobile-ui.js` | Tiny Gate Mobile helpers: viewport meta patch + dynamic viewport height. |
 | `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for Gate Mobile screenshot regression. |
 | `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for Gate Mobile. |
@@ -40,7 +50,7 @@ implementation in (`src/folder-select.js`).
 | `src/mobile-connect-websocket.js` | Dependency-free relay WebSocket server framing. |
 | `src/mobile-connect-relay.js` | Managed relay HTTP/SSE/WebSocket forwarding and cookie exchange. |
 | `src/mobile-connect-agent.js` | Desktop outbound WSS connector and local UI bridge. |
-| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify). |
+| `src/install-mobile-connect.js` | Cross-platform installer for the Desktop mobile-connect companion (agent, proxy deploy, on-disk UI patches, verify; records the deploy source in `ui-source.json` so the proxy serves newer repo UI files without a re-install). |
 | `src/install-mobile-connect.test.js` | Installer safety, config, launcher, uninstall, UI-stack, and verify tests. |
 | `src/freebuff-gate-setup.js` | Interactive setup wizard: detects the Desktop install, installs/upgrades the proxy + UI patches, re-applies the tailnet forward, verifies health. |
 | `src/freebuff-gate-setup.test.js` | Wizard state/plan/parse and release-asset staging tests. |
@@ -96,20 +106,20 @@ The gateway provides secure pairing for the managed Freebuff relay. It keeps
 Tailscale, IPv6, port forwarding, and firewall setup out of the normal user
 flow.
 
-Start local gateway on loopback:
+Start the local gateway on loopback:
 
 ```bash
 node src/mobile-connect-gateway.js serve
 ```
 
-Create one-use pairing payload:
+Create a one-use pairing payload:
 
 ```bash
 node src/mobile-connect-gateway.js pair --ttl 600
 ```
 
-The command renders an ANSI QR code plus an HTTPS pairing URL whose token lives
-in the URL fragment; the token alone is the pairing secret, so keep the pairing
+The command renders an ANSI QR code plus an HTTPS pairing URL. The token lives
+in the URL fragment and is the pairing secret by itself, so keep the pairing
 URL private. The Android scanner reads the QR directly; `--no-qr` keeps
 URL-only output for CI or piped logs. The Android scanner scaffold lives under
 `android/`.
@@ -130,24 +140,25 @@ Gateway behavior:
 - Persisted state stores only hashes of pairing/device/access secrets. State is
   written atomically with restrictive permissions outside the repository by
   default (`~/.config/freebuff/mobile-connect.json`).
-- Successful claim returns a device refresh credential and short-lived access
-  credential. Normal reconnect refreshes access without another QR scan.
+- A successful claim returns a device refresh credential and a short-lived
+  access credential. Normal reconnect refreshes access without another QR scan.
 - `devices` and `revoke` are admin-only. Revocation immediately blocks refresh.
 - `FB_MOBILE_RELAY_URL` and UI URL are returned as connection metadata. The
   managed relay implementation lives in `src/mobile-connect-relay.js` and
   forwards HTTP/SSE/WebSocket traffic over the desktop agent's outbound WSS.
 - `POST /v1/relay/enroll` accepts a relay-side bootstrap token and returns a
-  15-minute connector token plus 90-day refresh token; only token hashes are
-  persisted by relay.
-- `POST /v1/relay/refresh` rotates connector token without reinstalling Desktop.
+  15-minute connector token plus a 90-day refresh token; the relay persists
+  only token hashes.
+- `POST /v1/relay/refresh` rotates the connector token without reinstalling
+  Desktop.
 - `GET /v1/mobile/session` exchanges the app access token for a Secure,
   HttpOnly, SameSite session cookie before WebView navigation.
 
 Configure non-secret names in `.env.example`. Never put provider credentials,
-permanent tokens, connector enrollment tokens, or Tailscale auth keys in QR data
-or source control.
+permanent tokens, connector enrollment tokens, or Tailscale auth keys in QR
+data or source control.
 
-Run managed relay locally:
+Run the managed relay locally:
 
 ```bash
 FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
@@ -163,7 +174,7 @@ FB_MOBILE_RELAY_CONNECTOR_TOKEN=local-secret \
 node src/mobile-connect-agent.js pair --relay-http-url http://127.0.0.1:8795
 ```
 
-Production relay must terminate HTTPS/WSS at a trusted public origin. The
+A production relay must terminate HTTPS/WSS at a trusted public origin. The
 relay operator can read proxied payloads; WSS protects network transit, not
 relay end-to-end confidentiality. The desktop agent currently uses Node 22's
 built-in WebSocket client; native Freebuff CLI integration remains separate.
@@ -176,20 +187,22 @@ installs per-user agent and proxy registrations without administrator access.
 
 Targets: Linux x64/arm64, macOS x64/arm64, and Windows x64. Run the matching
 `freebuff-setup-vX.Y.Z-<target>` artifact. `--no-browser` uses terminal setup;
-`--dry-run` inspects without changes; `--version` prints artifact version.
-Artifacts include JSON manifest and SHA-256 sidecar. Prerelease artifacts are
-currently unsigned; signing remains release gate before production distribution.
+`--dry-run` inspects without changes; `--version` prints the artifact version.
+Artifacts include a JSON manifest and SHA-256 sidecar. Prerelease artifacts are
+currently unsigned; signing remains a release gate before production
+distribution.
 
-Build on matching native runner:
+Build on a matching native runner:
 
 ```bash
 node src/package-freebuff-setup.js --version v0.2.0 --target linux-x64 --output dist
 node src/package-freebuff-setup.js --metadata --version v0.2.0 --output dist
 ```
 
-Wizard currently uses existing local setup and advanced Tailscale path.
-Freebuff-hosted relay onboarding stays unavailable until hosted control-plane
-deployment is live; wizard reports that state instead of claiming readiness.
+The wizard currently uses the existing local setup and the advanced Tailscale
+path. Freebuff-hosted relay onboarding stays unavailable until the hosted
+control-plane deployment is live; the wizard reports that state instead of
+claiming readiness.
 
 ## npm distribution
 
@@ -243,70 +256,43 @@ lives in `docker/relay/backup.sh`. Full self-hosting guide:
 
 ## Freebuff Desktop mobile-connect installer
 
-Install companion connector without modifying compiled Freebuff Desktop files:
+The installer adds the companion connector without modifying compiled Freebuff
+Desktop files.
 
 ### One-command release install
 
-After a tagged release, users can install the verified companion with one
-command:
+After a tagged release, one command installs the verified companion:
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.0/install-mobile-connect.sh \\
-  | bash -s -- \\
-      --relay-http-url https://relay.example.com \\
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.0/install-mobile-connect.sh \
+  | bash -s -- \
+      --relay-http-url https://relay.example.com \
       --enrollment-token '<relay-bootstrap-token>'
 ```
 
 Pin the release tag instead of using a moving `main` URL. Before downloading
-code the bootstrap locates the Freebuff Desktop install, checks Node 22+,
-`curl`, and `sha256sum`/`shasum`, and offers to install anything missing
-(`--check` for a report only, `-y` to install unprompted, `--no-prompt` to
-fail instead of asking, `--skip-checks` to bypass). It then fetches versioned
-agent files from the same release, validates the release manifest, verifies
-SHA-256 checksums, and only then runs the existing Node installer. It does not
-elevate privileges.
+anything, the bootstrap locates the Freebuff Desktop install, checks for
+Node 22+, `curl`, and `sha256sum`/`shasum`, and offers to install anything
+missing. Useful flags:
 
-The bootstrap also accepts `--version v1.2.3` and
-`--release-base-url https://mirror.example.com/freebuff/v1.2.3` for private
-release mirrors. Keep enrollment tokens out of shell history when possible.
+- `--check`: report only
+- `-y`: install missing dependencies without prompting
+- `--no-prompt`: fail instead of asking
+- `--skip-checks`: bypass discovery and checks
 
-Build release assets locally:
+It then fetches versioned agent files from the same release, validates the
+release manifest, verifies SHA-256 checksums, and only then runs the Node
+installer. It never elevates privileges.
 
-```bash
-node src/package-mobile-connect-release.js --version v0.2.0 --archive
-```
+`--version v1.2.3` and
+`--release-base-url https://mirror.example.com/freebuff/v1.2.3` point the
+bootstrap at a private release mirror. Keep enrollment tokens out of shell
+history when possible.
 
-The command writes `dist/freebuff-mobile-connect-v0.2.0/` with the
-bootstrap, versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a
-`.tar.gz` archive. Publish those assets with GitHub CLI after reviewing them:
+### Preferred one-time provisioning
 
-```bash
-gh release create v0.2.0 \\
-  dist/freebuff-mobile-connect-v0.2.0/* \\
-  --title "Freebuff mobile-connect v0.2.0" \\
-  --generate-notes
-```
-
-Tag pushes do not run a separate packaging workflow; the release assets are
-built and uploaded locally (the command above) or from any CI that publishes
-the release.
-
-```bash
-node src/install-mobile-connect.js install \
-  --relay-http-url https://relay.example.com \
-  --relay-ws-url wss://relay.example.com
-```
-
-Installer copies only required Node agent files, creates a launcher named
-`freebuff-mobile-connect`, and writes relay/UI configuration under user
-config/data directories. With UI patches enabled (`--ui-patches` is default)
-it also deploys the tailnet proxy + systemd unit and re-applies the on-disk
-bundle/shim/orchestrator patches idempotently, so `curl | bash` builds the
-whole browser port. After a Freebuff Desktop update, run
-`node src/install-mobile-connect.js verify` (or `install-mobile-connect.sh --verify`)
-to check the on-disk markers and exit non-zero on regressions; the proxy also
-auto-verifies itself on a timer and writes `~/.local/share/freebuff/ui-patch-status.json`.
-Preferred one-time provisioning:
+For a direct install (no bootstrap), run the Node installer with an enrollment
+token:
 
 ```bash
 node src/install-mobile-connect.js install \
@@ -314,10 +300,26 @@ node src/install-mobile-connect.js install \
   --enrollment-token '<relay-bootstrap-token>'
 ```
 
-Installer stores issued connector and refresh tokens only in a protected local
-credential file. It never stores provider credentials or bootstrap token. Keep
-bootstrap token server-side and rotate it after provisioning. After
-provisioning, no connector environment variable is needed:
+The installer copies only the required Node agent files, creates a launcher
+named `freebuff-mobile-connect`, and writes relay/UI configuration under the
+user config/data directories. UI patches are on by default (`--ui-patches`):
+it also deploys the tailnet proxy + systemd unit and re-applies the on-disk
+bundle/shim/orchestrator patches idempotently, so the `curl | bash` path
+builds the whole browser port.
+
+`--relay-ws-url` is derived from the HTTPS URL when omitted:
+
+```bash
+node src/install-mobile-connect.js install \
+  --relay-http-url https://relay.example.com \
+  --relay-ws-url wss://relay.example.com
+```
+
+Issued connector and refresh tokens are stored only in a protected local
+credential file. Provider credentials and the bootstrap token are never
+stored. Keep the bootstrap token server-side and rotate it after
+provisioning. After provisioning, no connector environment variable is
+needed:
 
 ```bash
 freebuff-mobile-connect serve
@@ -327,14 +329,50 @@ freebuff-mobile-connect pair
 Legacy shared-token mode remains available with
 `FB_MOBILE_RELAY_CONNECTOR_TOKEN`.
 
+### Verify after a Desktop update
+
+Freebuff Desktop updates overwrite the patched UI files. Run
+
+```bash
+node src/install-mobile-connect.js verify
+```
+
+(or `install-mobile-connect.sh --verify`) to check the on-disk markers; it
+exits non-zero when any are missing. Re-run the install command to re-apply.
+The proxy also auto-verifies itself on a timer and writes
+`~/.local/share/freebuff/ui-patch-status.json`.
+
+### Build and publish a release
+
+Build release assets locally:
+
+```bash
+node src/package-mobile-connect-release.js --version v0.2.0 --archive
+```
+
+The command writes `dist/freebuff-mobile-connect-v0.2.0/` with the bootstrap,
+versioned JavaScript files, JSON manifest, SHA-256 sidecar, and a `.tar.gz`
+archive. Publish those assets with GitHub CLI after reviewing them:
+
+```bash
+gh release create v0.2.0 \
+  dist/freebuff-mobile-connect-v0.2.0/* \
+  --title "Freebuff mobile-connect v0.2.0" \
+  --generate-notes
+```
+
+Tag pushes do not run a separate packaging workflow; the release assets are
+built and uploaded locally (the command above) or from any CI that publishes
+the release.
+
 ### Optional Desktop auto-start
 
 Auto-start is disabled by default. Enable it explicitly during install:
 
 ```bash
-node src/install-mobile-connect.js install \\
-  --relay-http-url https://relay.example.com \\
-  --enrollment-token '<relay-bootstrap-token>' \\
+node src/install-mobile-connect.js install \
+  --relay-http-url https://relay.example.com \
+  --enrollment-token '<relay-bootstrap-token>' \
   --auto-start
 ```
 
@@ -343,7 +381,7 @@ The installer creates a per-user registration without administrator access:
 - Linux: `~/.config/systemd/user/freebuff-mobile-connect.service`, enabled and
   restarted with `systemctl --user`.
 - macOS: `~/Library/LaunchAgents/com.freebuff.mobile-connect.plist`, loaded with
-  `launchctl` for current GUI user.
+  `launchctl` for the current GUI user.
 - Windows: `Freebuff Mobile Connect` Task Scheduler task, `ONLOGON` trigger at
   `LIMITED` run level.
 
@@ -352,14 +390,12 @@ existing auto-start choice; new installs stay off. `uninstall` disables and
 removes only the managed registration. `--dry-run` never calls systemd,
 launchctl, or Task Scheduler.
 
-`--relay-ws-url` is derived from HTTPS URL when omitted. Desktop UI defaults to
-`http://127.0.0.1:58061`; override with `--upstream-url`. Use
-`--dry-run` before writing, `uninstall` to remove installed agent files, and
-`uninstall --purge` only when config/state should also be removed. The installer refuses insecure non-loopback relay URLs, refuses unmanaged
-destination collisions, rotates short-lived connector tokens through the
-relay, and never stores provider credentials. Node 22 is required because the
-agent uses a built-in WebSocket. Keep the bootstrap token out of shell history
-where possible; rotate it after provisioning.
+The Desktop UI defaults to `http://127.0.0.1:58061`; override with
+`--upstream-url`. Use `--dry-run` before writing, `uninstall` to remove
+installed agent files, and `uninstall --purge` only when config/state should
+also be removed. The installer refuses insecure non-loopback relay URLs and
+unmanaged destination collisions. Node 22 is required because the agent uses a
+built-in WebSocket.
 
 This is a companion process, not a patch to Freebuff's compiled native CLI.
 Run it beside Desktop until Freebuff exposes a supported connector/plugin
@@ -373,7 +409,12 @@ node --test src/package-mobile-connect-release.test.js src/install-mobile-connec
 
 ## Android + iOS mobile app scaffold
 
-`android/` contains a Kotlin Android shell around the gateway contract; `ios/` holds the iOS companion (XcodeGen project). The Android APK is published automatically to the `mobile-debug-latest` GitHub release (debug key, checksum sidecar) on every push to main; `mobile-gecko-latest` carries the GeckoView/Firefox-engine spike build. See `android/README.md` and `docs/install.md`.
+`android/` contains a Kotlin Android shell around the gateway contract; `ios/`
+holds the iOS companion (XcodeGen project). The Android APK is published
+automatically to the `mobile-debug-latest` GitHub release (debug key, checksum
+sidecar) on every push to main; `mobile-gecko-latest` carries the
+GeckoView/Firefox-engine spike build. See `android/README.md` and
+`docs/install.md`.
 
 The Android shell provides:
 
@@ -394,29 +435,31 @@ The Android shell provides:
 
 A clean checkout needs Android SDK and Gradle; use Android Studio, CI, or the
 project-local tools described in `android/README.md`. This workspace built the
-debug APK with local Gradle 8.9 and API 35 tools. Generic debug builds can be
-used with any HTTPS relay URL carried by a terminal QR; they still require a
-reachable relay and a private, unexpired pairing URL. `.github/workflows/android.yml`
-installs
-Java 17, Android API 35/build tools, Gradle 8.9, runs lint plus debug assembly,
-boots API 35 Google APIs x86_64 emulator for instrumentation tests, verifies the
-AGP-generated debug signature, smoke-tests the published artifact, and publishes
-the APK + checksum to the `mobile-debug-latest` GitHub release on main. Before
-building, CI creates a one-day self-signed certificate trusted only by the debug
-variant, starts an ephemeral HTTPS relay plus desktop connector and test page,
-then `MobilePairingE2EInstrumentedTest` performs claim, access refresh, cookie
+debug APK with local Gradle 8.9 and API 35 tools. Generic debug builds work
+with any HTTPS relay URL carried by a terminal QR; they still require a
+reachable relay and a private, unexpired pairing URL.
+
+`.github/workflows/android.yml` installs Java 17, Android API 35/build tools,
+and Gradle 8.9, runs lint plus debug assembly, and boots an API 35 Google APIs
+x86_64 emulator for instrumentation tests. Before building, CI creates a
+one-day self-signed certificate trusted only by the debug variant, then starts
+an ephemeral HTTPS relay plus desktop connector and test page.
+`MobilePairingE2EInstrumentedTest` then performs claim, access refresh, cookie
 exchange, and authenticated WebView load through the emulator's `10.0.2.2`
-host mapping. Managed relay deployment still needs a real HTTPS/WSS public origin
-and connector enrollment token. The same workflow also runs Node 22 relay/agent
-integration tests and uploads TAP output.
+host mapping. The workflow verifies the AGP-generated debug signature,
+smoke-tests the published artifact, and publishes the APK + checksum to the
+`mobile-debug-latest` GitHub release on main. Managed relay deployment still
+needs a real HTTPS/WSS public origin and connector enrollment token. The same
+workflow also runs Node 22 relay/agent integration tests and uploads TAP
+output.
 
 ## Folder selection
 
-The deployed picker is a server-side file browser. The tailnet proxy shim opens
-a dialog listing the server's folders through the orchestrator's
-`/api/fb/dirlist` route; users do not need to type paths or use a local picker.
-See `docs/install.md` for setup details. `src/folder-select.js` is the older
-client-side reference implementation (File System Access API with
+The deployed picker is a server-side file browser. The tailnet proxy shim
+opens a dialog listing the server's folders through the orchestrator's
+`/api/fb/dirlist` route; users do not need to type paths or use a local
+picker. See `docs/install.md` for setup details. `src/folder-select.js` is the
+older client-side reference implementation (File System Access API with
 `webkitdirectory` fallback, IndexedDB handle persistence, last-folder restore,
 virtual paths) and documents the `folderSelection` block in
 `.freebuff-gate.json`, which the live server-side picker ignores.

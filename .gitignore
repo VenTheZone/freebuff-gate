@@ -37,6 +37,13 @@ logs/
 *.log
 .freebuff/
 
+# ── Pi bundle secrets/runtime ─────────────────────────────────
+pi-assets/**/auth.json
+pi-assets/**/free.json
+pi-assets/**/models*.json
+pi-assets/**/provider-cache.json
+pi-assets/**/sessions/
+
 # ── Build / dependencies ──────────────────────────────────────
 .tools/
 node_modules/
