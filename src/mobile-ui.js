@@ -5749,6 +5749,18 @@
             scrollMessages();
             handled = true;
           }
+          if ((update.type === 'thinking_start' || update.type === 'reasoning_start')) {
+            if (!streamThinkingNode) { streamThinkingNode = addThinkingCard(''); streamThinkingText = ''; }
+            handled = true;
+          }
+          if ((update.type === 'thinking_end' || update.type === 'reasoning_end')) {
+            if (streamThinkingNode) {
+              var state = streamThinkingNode.querySelector('.fb-pi-thinking-state');
+              if (state) state.textContent = 'done';
+              streamThinkingNode.classList.remove('thinking');
+            }
+            handled = true;
+          }
           if (handled) return;
           return;
         }
