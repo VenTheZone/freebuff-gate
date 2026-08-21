@@ -78,7 +78,7 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     }
 
     /** Called by the activity when the system file picker returns URIs. */
-    fun onFilePickerResult(uris: Array<Uri>?) {
+    override fun onFilePickerResult(uris: Array<Uri>?) {
         pendingFileCallback?.onReceiveValue(uris)
         pendingFileCallback = null
     }

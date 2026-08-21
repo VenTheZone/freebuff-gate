@@ -61,7 +61,7 @@ class GeckoGateEngine(context: Context) : GateBrowserEngine {
     }
 
     /** Called by the activity when the system file picker returns URIs. */
-    fun onFilePickerResult(uris: Array<android.net.Uri>?) {
+    override fun onFilePickerResult(uris: Array<android.net.Uri>?) {
         pendingFilePrompt?.let { prompt ->
             if (uris != null && uris.isNotEmpty()) {
                 session.promptDelegate?.onExtraPermissionResult(

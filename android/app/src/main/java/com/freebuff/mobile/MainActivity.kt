@@ -57,14 +57,7 @@ class MainActivity : AppCompatActivity() {
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri ->
-        if (uri == null) {
-            (engine as? WebViewGateEngine)?.onFilePickerResult(null)
-            (engine as? GeckoGateEngine)?.onFilePickerResult(null)
-        } else {
-            val uris = arrayOf(uri)
-            (engine as? WebViewGateEngine)?.onFilePickerResult(uris)
-            (engine as? GeckoGateEngine)?.onFilePickerResult(uris)
-        }
+        engine.onFilePickerResult(uri?.let { arrayOf(it) })
     }
 
     override fun onResume() {
