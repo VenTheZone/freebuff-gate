@@ -5197,6 +5197,7 @@
       var status = null;
       var projectButton = null;
       var projectLabel = null;
+      var sessionSwitch = null;
       var scopeSelect = null;
       var modelSelect = null;
       var modelSearch = null;
@@ -6332,7 +6333,33 @@
           sessionItems.appendChild(row);
         });
         renderPiModeTabs();
+        renderSessionSwitch();
         if (piHome && !piHome.hidden) renderPiHome();
+      }
+      function renderSessionSwitch() {
+        if (!sessionSwitch) return;
+        var current = sessionSwitch.value;
+        sessionSwitch.textContent = '';
+        var newOpt = document.createElement('option');
+        newOpt.value = '__new';
+        newOpt.textContent = '+ New session';
+        sessionSwitch.appendChild(newOpt);
+        sessions.forEach(function (item) {
+          var opt = document.createElement('option');
+          opt.value = item.id;
+          var label = historyLabel(item);
+          if (item.id === sessionId) label = '● ' + label;
+          opt.textContent = label;
+          opt.title = item.cwd || '';
+          sessionSwitch.appendChild(opt);
+        });
+        var hasCurrent = Array.from(sessionSwitch.options).some(function (o) { return o.value === sessionId; });
+        sessionSwitch.value = hasCurrent ? sessionId : (sessions.length ? sessions[0].id : '__new');
+        // keep native select visible; also sync enhanced trigger if later enhanced
+        if (sessionSwitch._fbPiSync) sessionSwitch._fbPiSync();
+        // hide if only New and not yet booted? always show when Pi active
+        sessionSwitch.hidden = false;
+        if (current !== sessionSwitch.value && sessionSwitch._fbPiSync) sessionSwitch._fbPiSync();
       }
       function closeHistoryManager() {
         if (historyLayer && historyLayer.parentNode) historyLayer.parentNode.removeChild(historyLayer);
@@ -6637,6 +6664,26 @@
         projectButton = head.querySelector('.fb-pi-project-button');
         projectLabel = head.querySelector('.fb-pi-project');
         projectButton.addEventListener('click', openPiProjectPicker);
+        // Quick-switch active session dropdown (no home roundtrip)
+        sessionSwitch = document.createElement('select');
+        sessionSwitch.className = 'fb-pi-session-switch';
+        sessionSwitch.setAttribute('aria-label', 'Switch Pi session');
+        var headingInner = head.querySelector('.fb-pi-heading > div:nth-child(3)');
+        if (headingInner) {
+          headingInner.appendChild(sessionSwitch);
+        } else {
+          head.querySelector('.fb-pi-heading').appendChild(sessionSwitch);
+        }
+        sessionSwitch.addEventListener('change', function () {
+          var id = sessionSwitch.value;
+          if (id === '__new') {
+            loadSession(null);
+            return;
+          }
+          var item = sessions.find(function (s) { return s.id === id; });
+          if (item) loadSession(item);
+          else showPiHome();
+        });
         sessionDrawerToggle = head.querySelector('.fb-pi-sessions-toggle');
         settingsToggle = head.querySelector('.fb-pi-settings-toggle');
         head.querySelector('.fb-pi-back').addEventListener('click', closePanel);
