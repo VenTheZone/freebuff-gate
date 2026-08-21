@@ -186,10 +186,6 @@ class MainActivity : AppCompatActivity() {
         pairingExecutor.execute {
             try {
                 val payload = PairingPayload.parse(rawUrl)
-                val configuredPairingOrigin = configuredOrigin(BuildConfig.DEFAULT_PAIRING_ORIGIN)
-                require(configuredPairingOrigin == null || payload.baseUrl == configuredPairingOrigin) {
-                    "Pairing URL is not from configured Freebuff relay"
-                }
                 val session = PairingApi(payload.baseUrl).claim(
                     payload = payload,
                     deviceName = deviceName,
