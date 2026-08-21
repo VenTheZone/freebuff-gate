@@ -6066,10 +6066,19 @@
             renderSessionList();
           })
           .catch(function (error) {
+            if (item && item.id === getDefaultSession(cwd)) setDefaultSession(cwd, '');
             if (promptInput) promptInput.disabled = true;
             if (sendButton) sendButton.disabled = true;
-            if (item && item.id === getDefaultSession(cwd)) setDefaultSession(cwd, '');
-            setStatus(error.message || 'Pi unavailable', false);
+            var msg = (error && error.message) || 'Pi unavailable';
+            if (/pi_session_not_found|pi_too_many_sessions|pi_session_busy/i.test(msg)) {
+              if (item && !item.id) {
+                setProjectLabel(cwd);
+                showPiHome();
+              } else {
+                refreshSessions(false).then(function () { showPiHome(); }).catch(function () {});
+              }
+            }
+            setStatus(msg, false);
           });
       }
       function setSettingsDrawer(open) {
@@ -7022,7 +7031,8 @@
           savePiProject(cwd);
           return refreshSessions(false).then(function () {
             var chosen = getDefaultSession(cwd);
-            if (chosen) return loadSession({ id: chosen });
+            if (chosen && sessions.some(function (item) { return item.id === chosen; })) return loadSession({ id: chosen });
+            if (chosen) setDefaultSession(cwd, '');
             showPiHome();
           });
         }).catch(function (error) { setStatus(error.message || 'Pi unavailable', false); });
