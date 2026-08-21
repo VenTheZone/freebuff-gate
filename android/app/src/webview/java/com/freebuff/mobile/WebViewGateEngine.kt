@@ -54,7 +54,7 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
                 pendingFileCallback = filePathCallback
                 _filePickerRequest?.invoke(
                     fileChooserParams.acceptTypes,
-                    fileChooserParams.isMultipleAllowed,
+                    fileChooserParams.mode == android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
                 )
                 return true
             }
