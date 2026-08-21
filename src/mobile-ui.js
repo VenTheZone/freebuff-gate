@@ -7001,8 +7001,9 @@
           wallpaperStyleEl.textContent =
             '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }' +
             '.fb-pi-view.fb-pi-wall::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--fb-wallpaper-dim,.22)); pointer-events:none; }' +
-            '.fb-pi-view.fb-pi-wall .fb-pi-messages, .fb-pi-view.fb-pi-wall .fb-pi-message, .fb-pi-view.fb-pi-wall .fb-pi-panel, .fb-pi-view.fb-pi-wall .fb-pi-head, .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 78%, transparent) !important; }' +
-            '.fb-pi-view.fb-pi-wall .fb-pi-message.user { background: color-mix(in srgb, var(--fb-pi-accent) 12%, transparent) !important; }';
+            '.fb-pi-view.fb-pi-wall .fb-pi-messages, .fb-pi-view.fb-pi-wall .fb-pi-panel, .fb-pi-view.fb-pi-wall .fb-pi-head, .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 62%, transparent) !important; }' +
+            '.fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 58%, transparent) !important; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }' +
+            '.fb-pi-view.fb-pi-wall .fb-pi-message.user { background: color-mix(in srgb, var(--fb-pi-accent) 18%, color-mix(in srgb, var(--surface-2,#1a1a1a) 42%, transparent)) !important; }';
           document.head.appendChild(wallpaperStyleEl);
           overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '%22') + '")');
         } else {
