@@ -6286,7 +6286,7 @@
               .catch(function (error) {
                 if (trigger) trigger.disabled = false;
                 setStatus(error.message || 'Delete failed', false);
-                resolve(false);
+                refreshSessions(false).then(function () { resolve(false); }).catch(function () { resolve(false); });
               });
           }, 'pi-session-history');
         });
