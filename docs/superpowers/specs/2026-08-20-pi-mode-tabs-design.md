@@ -30,8 +30,11 @@ Replace Pi's separate workspace/sidebar navigation with a project-level Pi mode.
 
 ### Directory behavior
 
-- Pi mode uses active Freebuff project directory.
-- Changing project reloads Pi sessions for new directory.
+- Pi mode defaults to saved directory, then active Freebuff project directory.
+- Pi project picker lists connected directories and recent Pi sessions grouped by directory.
+- Picker can launch existing Freebuff server-side folder browser for another directory.
+- Selecting directory reloads Pi sessions for new `cwd`.
+- Selecting recent Pi session changes directory and resumes that Pi JSONL session.
 - Existing sessions for directory appear automatically.
 
 ## UI and data flow
@@ -40,7 +43,7 @@ Replace Pi's separate workspace/sidebar navigation with a project-level Pi mode.
 
 - Add `Pi mode` toggle beside current Freebuff mode control.
 - Active mode receives clear label and theme accent.
-- Pi mode opens against active project directory.
+- Pi mode opens against saved or active project directory; user can change directory from Pi header.
 
 ### Pi tabs
 
