@@ -5202,8 +5202,9 @@
       var modelSearch = null;
       var availableModels = [];
       var thinkingSelect = null;
-      var wallMode = null;
+      var wallSelect = null;
       var wallUrl = null;
+      var wallApply = null;
       var wallNote = null;
       var streamText = '';
       var streamNode = null;
@@ -5214,6 +5215,11 @@
       var contentIndexToId = Object.create(null);
       var wallpaperStyleEl = null;
       var wallpaperState = null;
+      var WALLPAPER_PRESETS = {
+        void: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3CradialGradient id="g" cx="50%25" cy="25%25" r="70%25"%3E%3Cstop offset="0%25" stop-color="%232a0a42"/%3E%3Cstop offset="100%25" stop-color="%2305000d"/%3E%3C/radialGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E',
+        grid: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" fill="%2306000d"/%3E%3Cpath d="M0 0h2V128H0zM0 0h128v2H0z" fill="%23140026" fill-opacity=".45"/%3E%3Cg opacity=".35"%3E%3Cpath d="M0 0h1V128H0z"/%3E%3Cpath d="M0 0h128v1H0z"/%3E%3C/g%3E%3C/svg%3E',
+        dusk: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3ClinearGradient id="g" x1="0%25" y1="0%25" x2="0%25" y2="100%25"%3E%3Cstop offset="0%25" stop-color="%231b0030"/%3E%3Cstop offset="100%25" stop-color="%2304000a"/%3E%3C/linearGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E'
+      };
       var promptPending = false;
       var piModeActive = false;
       var piModeToggle = null;
@@ -6792,32 +6798,33 @@
         wallTitle.style.textTransform = 'uppercase';
         wallTitle.style.letterSpacing = '.04em';
         wallTitle.style.color = 'var(--muted,#999)';
-        wallMode = document.createElement('select');
-        wallMode.className = 'fb-pi-wall-mode';
-        wallMode.setAttribute('aria-label', 'Wallpaper mode');
-        ['off', 'dim', 'vivid'].forEach(function (m) {
+        wallSelect = document.createElement('select');
+        wallSelect.className = 'fb-pi-wall-select';
+        wallSelect.setAttribute('aria-label', 'Wallpaper');
+        var wallOptions = [
+          ['off', 'Off'],
+          ['void', 'Void'],
+          ['grid', 'Grid'],
+          ['dusk', 'Dusk'],
+          ['url', 'URL image…']
+        ];
+        wallOptions.forEach(function (opt) {
           var o = document.createElement('option');
-          o.value = m;
-          o.textContent = m.toUpperCase();
-          wallMode.appendChild(o);
+          o.value = opt[0];
+          o.textContent = opt[1];
+          wallSelect.appendChild(o);
         });
         wallUrl = document.createElement('input');
         wallUrl.type = 'url';
         wallUrl.className = 'fb-pi-wall-url';
-        wallUrl.placeholder = 'Image URL…';
+        wallUrl.placeholder = 'https://… .gif/.png/.jpg';
         wallUrl.setAttribute('aria-label', 'Wallpaper image URL');
-        var wallFile = document.createElement('input');
-        wallFile.type = 'file';
-        wallFile.className = 'fb-pi-wall-file';
-        wallFile.accept = 'image/*';
-        wallFile.setAttribute('aria-label', 'Pick wallpaper image file');
-        wallFile.style.width = 'auto';
-        var wallLoad = document.createElement('button');
-        wallLoad.type = 'button';
-        wallLoad.className = 'fb-pi-wall-load';
-        wallLoad.textContent = 'Apply';
-        wallLoad.style.minHeight = '26px';
-        wallLoad.style.fontSize = '10px';
+        wallApply = document.createElement('button');
+        wallApply.type = 'button';
+        wallApply.className = 'fb-pi-wall-apply';
+        wallApply.textContent = 'Apply';
+        wallApply.style.minHeight = '26px';
+        wallApply.style.fontSize = '10px';
         wallNote = document.createElement('p');
         wallNote.className = 'fb-pi-wall-note';
         wallNote.style.gridColumn = '1 / -1';
@@ -6825,73 +6832,49 @@
         wallNote.style.fontSize = '10px';
         wallNote.style.color = 'var(--muted,#999)';
         wallNote.hidden = true;
-        var wallPresets = [
-          ['Void', 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3CradialGradient id="g" cx="50%25" cy="25%25" r="70%25"%3E%3Cstop offset="0%25" stop-color="%232a0a42"/%3E%3Cstop offset="100%25" stop-color="%2305000d"/%3E%3C/radialGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E'],
-          ['Grid', 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" fill="%2306000d"/%3E%3Cpath d="M0 0h2V128H0zM0 0h128v2H0z" fill="%23140026" fill-opacity=".45"/%3E%3Cg opacity=".35"%3E%3Cpath d="M0 0h1V128H0z"/%3E%3Cpath d="M0 0h128v1H0z"/%3E%3C/g%3E%3C/svg%3E'],
-          ['Dusk', 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3ClinearGradient id="g" x1="0%25" y1="0%25" x2="0%25" y2="100%25"%3E%3Cstop offset="0%25" stop-color="%231b0030"/%3E%3Cstop offset="100%25" stop-color="%2304000a"/%3E%3C/linearGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E']
-        ];
-        var wallPresetsEl = document.createElement('div');
-        wallPresetsEl.className = 'fb-pi-wall-presets';
-        wallPresetsEl.style.gridColumn = '1 / -1';
-        wallPresetsEl.style.display = 'flex';
-        wallPresetsEl.style.flexWrap = 'wrap';
-        wallPresetsEl.style.gap = '5px';
-        wallPresets.forEach(function (preset) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'fb-pi-wall-preset';
-          btn.textContent = preset[0];
-          btn.style.minHeight = '24px';
-          btn.style.fontSize = '10px';
-          btn.style.padding = '4px 8px';
-          btn.title = 'Use ' + preset[0] + ' wallpaper';
-          btn.addEventListener('click', function () {
-            wallUrl.value = preset[1];
-            wallMode.value = 'dim';
-            wallpaperState = { mode: 'dim', url: preset[1] };
+        wallUrl.hidden = true;
+        wallApply.hidden = true;
+        wallSelect.addEventListener('change', function () {
+          var pick = wallSelect.value;
+          if (pick === 'off') {
+            wallpaperState = { mode: 'dim', url: '', preset: 'off' };
             applyWallpaper();
-            wallNote.textContent = preset[0] + ' wallpaper applied.';
+            wallUrl.value = '';
+            wallNote.hidden = true;
+            return;
+          }
+          if (pick === 'url') {
+            wallUrl.hidden = false;
+            wallApply.hidden = false;
+            wallUrl.focus();
+            wallNote.textContent = 'Paste image URL, then Apply.';
             wallNote.hidden = false;
-          });
-          wallPresetsEl.appendChild(btn);
-        });
-        wallMode.addEventListener('change', function () {
-          if (wallpaperState) wallpaperState.mode = wallMode.value;
+            return;
+          }
+          // preset
+          wallUrl.hidden = true;
+          wallApply.hidden = true;
+          wallpaperState = { mode: 'dim', url: WALLPAPER_PRESETS[pick] || '', preset: pick };
           applyWallpaper();
+          wallNote.textContent = pick + ' wallpaper applied.';
+          wallNote.hidden = false;
         });
-        wallLoad.addEventListener('click', function () {
+        wallApply.addEventListener('click', function () {
           var url = wallUrl.value.trim();
-          if (!url) { wallpaperState = { mode: wallMode.value, url: '' }; applyWallpaper(); wallNote.hidden = true; return; }
+          if (!url) { wallpaperState = { mode: 'dim', url: '', preset: 'off' }; wallSelect.value = 'off'; applyWallpaper(); wallNote.hidden = true; return; }
           validateImageUrl(url, function (ok) {
-            if (ok) { wallpaperState = { mode: wallMode.value, url: url }; applyWallpaper(); wallNote.textContent = 'Wallpaper applied.'; wallNote.hidden = false; }
+            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: 'url' }; applyWallpaper(); wallNote.textContent = 'Wallpaper applied.'; wallNote.hidden = false; }
             else { wallNote.textContent = 'Image could not be loaded.'; wallNote.hidden = false; }
           });
         });
-        wallFile.addEventListener('change', function () {
-          var file = wallFile.files && wallFile.files[0];
-          if (!file) return;
-          var reader = new FileReader();
-          reader.onload = function () {
-            var data = reader.result;
-            wallUrl.value = data;
-            wallpaperState = { mode: wallMode.value, url: data };
-            applyWallpaper();
-            wallNote.textContent = 'Wallpaper applied (' + Math.round(data.length / 1024) + ' KB).';
-            wallNote.hidden = false;
-          };
-          reader.onerror = function () { wallNote.textContent = 'Could not read image.'; wallNote.hidden = false; };
-          reader.readAsDataURL(file);
-          wallFile.value = '';
-        });
         wallpaperSection.appendChild(wallTitle);
-        wallpaperSection.appendChild(wallMode);
+        wallpaperSection.appendChild(wallSelect);
         wallpaperSection.appendChild(wallUrl);
-        wallpaperSection.appendChild(wallFile);
-        wallpaperSection.appendChild(wallLoad);
+        wallpaperSection.appendChild(wallApply);
         wallpaperSection.appendChild(wallNote);
         wallpaperSection.appendChild(wallPresetsEl);
         controls.appendChild(wallpaperSection);
-        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider, wallMode].forEach(enhancePiSelect);
+        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider, wallSelect].forEach(enhancePiSelect);
         settingsScrim = document.createElement('button');
         settingsScrim.type = 'button';
         settingsScrim.className = 'fb-pi-settings-scrim';
@@ -6963,16 +6946,24 @@
         });
         return overlay;
       }
+      var WALLPAPER_DEFAULT = { mode: 'dim', url: '', preset: 'off' };
       function loadWallpaper() {
         if (!controls) return;
         try { wallpaperState = JSON.parse(localStorage.getItem('fb-pi-wallpaper') || 'null'); } catch (e) { wallpaperState = null; }
-        if (!wallpaperState || typeof wallpaperState !== 'object' || !wallpaperState.url) {
-          if (!wallpaperState) wallpaperState = { mode: 'off', url: '' };
-          else { wallpaperState = { mode: 'off', url: '' }; persistWallpaper(); }
+        if (!wallpaperState || typeof wallpaperState !== 'object' || !wallpaperState.preset) {
+          wallpaperState = WALLPAPER_DEFAULT;
+        } else {
+          wallpaperState.mode = wallpaperState.mode || 'dim';
+          wallpaperState.url = wallpaperState.url || (WALLPAPER_PRESETS[wallpaperState.preset] || '');
         }
-        if (wallMode) wallMode.value = wallpaperState.mode || 'off';
-        if (wallUrl) wallUrl.value = wallpaperState.url || '';
-        if (wallNote) wallNote.hidden = !wallpaperState.url;
+        if (wallSelect) wallSelect.value = wallpaperState.preset || 'off';
+        var showUrl = wallSelect && wallSelect.value === 'url';
+        if (wallUrl) {
+          wallUrl.hidden = !showUrl;
+          wallUrl.value = showUrl ? (wallpaperState.url || '') : '';
+        }
+        if (wallApply) wallApply.hidden = !showUrl;
+        if (wallNote) wallNote.hidden = true;
         applyWallpaper();
       }
       function persistWallpaper() {
