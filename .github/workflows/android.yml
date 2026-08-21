@@ -138,6 +138,7 @@ jobs:
         working-directory: android
         run: |
           gradle --no-daemon --stacktrace \
+            :app:clean \
             :app:lintWebviewDebug \
             :app:assembleWebviewDebug \
             :app:assembleWebviewDebugAndroidTest \
