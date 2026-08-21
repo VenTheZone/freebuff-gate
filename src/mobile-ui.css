@@ -2656,7 +2656,7 @@ body {
   --text: #e9e6f2;
   --muted: #a39bb5;
   --faint: #6e6584;
-  --brand: #f2d21c;
+  --brand: #b89a0f;
   --brand-dim: #b89a0f;
   --accent: #d6d2e4;
   --accent-dim: #7f7894;
@@ -2667,12 +2667,12 @@ body {
   --warn: #d3a51f;
   --shadow: #000;
   --focus-ring: color-mix(in srgb, #3fd8ee 45%, transparent);
-  --fb-m-brand: #f2d21c;
+  --fb-m-brand: #b89a0f;
   --fb-m-brand-ink: #151203;
-  --fb-m-brand-soft: color-mix(in srgb, #f2d21c 13%, transparent);
-  --fb-m-brand-ring: color-mix(in srgb, #f2d21c 26%, transparent);
+  --fb-m-brand-soft: color-mix(in srgb, #b89a0f 13%, transparent);
+  --fb-m-brand-ring: color-mix(in srgb, #b89a0f 26%, transparent);
   --fb-m-brand-glow: 0 4px 16px -6px
-    color-mix(in srgb, #f2d21c 45%, transparent);
+    color-mix(in srgb, #b89a0f 45%, transparent);
 }
 
 /* Ambient night-city wash: two soft neon glows (cyan top-left, violet
@@ -2710,7 +2710,7 @@ body {
     ),
     radial-gradient(
       30% 26% at 78% 4%,
-      color-mix(in srgb, #f2d21c 9%, transparent),
+      color-mix(in srgb, #b89a0f 9%, transparent),
       transparent 70%
     );
 }
@@ -2732,7 +2732,7 @@ body {
    cyan under-glow stays faint. The mobile polish section already paints a
    brand-tinted border-bottom at narrow widths; this covers desktop too. */
 :root[data-fb-theme='cyberpunk'] .tabbar {
-  border-bottom-color: color-mix(in srgb, #f2d21c 30%, var(--border));
+  border-bottom-color: color-mix(in srgb, #b89a0f 30%, var(--border));
   box-shadow: 0 1px 0 color-mix(in srgb, #3fd8ee 14%, transparent),
     0 12px 32px -20px color-mix(in srgb, var(--shadow) 80%, transparent);
 }
@@ -3108,6 +3108,8 @@ body {
   --fb-pi-accent: var(--fb-m-brand, #45d06e);
   --fb-pi-accent-soft: var(--fb-m-brand-soft, #173);
   --fb-pi-ring: var(--fb-m-brand-ring, #345);
+  /* Dimmed accent for command/tool-name text so labels are readable, not glaring. */
+  --fb-pi-accent-dim: color-mix(in srgb, var(--fb-pi-accent) 58%, #0c0c0c);
 }
 .fb-pi-panel {
   display: flex;
@@ -3195,9 +3197,9 @@ body {
 .fb-pi-tool-toggle:focus-visible { outline: 2px solid var(--fb-pi-ring); outline-offset: -2px; }
 .fb-pi-tool-caret { flex: none; color: var(--fb-pi-accent); transition: transform .12s ease; }
 .fb-pi-tool-card.expanded .fb-pi-tool-caret { transform: rotate(90deg); }
-.fb-pi-tool-summary { min-width: 0; overflow: hidden; color: var(--fb-pi-accent); font-family: var(--fb-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.fb-pi-tool-summary { min-width: 0; overflow: hidden; color: var(--fb-pi-accent-dim); font-family: var(--fb-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .fb-pi-tool-state { flex: none; margin-left: auto; color: var(--muted, #999); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
-.fb-pi-tool-card.pending .fb-pi-tool-state { color: var(--fb-pi-accent); }
+.fb-pi-tool-card.pending .fb-pi-tool-state { color: var(--fb-pi-accent-dim); }
 .fb-pi-tool-detail { margin: 0 10px 9px 27px; padding: 8px; border-left: 1px solid var(--fb-pi-ring); background: color-mix(in srgb, var(--fb-pi-accent) 4%, transparent); color: var(--muted, #bbb); font-family: var(--fb-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
 .fb-pi-thinking-card { max-width: 100%; padding: 0; border-left-color: color-mix(in srgb, var(--muted, #999) 45%, var(--border, #333)); }
 .fb-pi-thinking-toggle { display: flex; width: 100%; min-width: 0; align-items: center; gap: 7px; padding: 8px 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -3212,8 +3214,8 @@ body {
    Pi panel, paint accents in brand-yellow with cyan focus glow, and keep the
    live busy pulse so the panel feels alive instead of a dead slab. */
 :root[data-fb-theme='cyberpunk'] .fb-pi-view {
-  --fb-pi-accent: var(--brand, #f2d21c);
-  --fb-pi-accent-soft: color-mix(in srgb, #f2d21c 13%, transparent);
+  --fb-pi-accent: var(--brand, #b89a0f);
+  --fb-pi-accent-soft: color-mix(in srgb, #b89a0f 13%, transparent);
   --fb-pi-ring: color-mix(in srgb, #3fd8ee 40%, #2d2440);
   background: transparent;
 }
@@ -3232,7 +3234,7 @@ body {
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-message.tool,
 :root[data-fb-theme='cyberpunk'] .fb-pi-message.error {
-  background-color: color-mix(in srgb, #f2d21c 8%, transparent);
+  background-color: color-mix(in srgb, #b89a0f 8%, transparent);
   box-shadow: var(--fb-m-brand-glow);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-message.assistant { border-left-color: var(--brand); }
@@ -3685,7 +3687,7 @@ html body .new-thread-project-menu .project-option {
   border-color: color-mix(in srgb, #3fd8ee 30%, var(--border));
   background-color: color-mix(in srgb, var(--surface-2) 88%, transparent);
   color: var(--text);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, #f2d21c 35%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, #b89a0f 35%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls select {
   appearance: none;
@@ -3702,7 +3704,7 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls input:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-search:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-edit:hover {
-  border-color: color-mix(in srgb, #f2d21c 62%, #3fd8ee 38%);
+  border-color: color-mix(in srgb, #b89a0f 62%, #3fd8ee 38%);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls select:focus,
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls input:focus,
@@ -3710,7 +3712,6 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-edit:focus {
   outline: none;
   border-color: #3fd8ee;
-  box-shadow: 0 0 0 2px color-mix(in srgb, #3fd8ee 24%, transparent), inset 0 -2px 0 #f2d21c;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls option {
   background: #191326;
@@ -3721,8 +3722,7 @@ html body .new-thread-project-menu .project-option {
   background: color-mix(in srgb, #120e1b 88%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-sessions-head strong {
-  color: #f2d21c;
-  text-shadow: 0 0 8px color-mix(in srgb, #f2d21c 40%, transparent);
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-sessions-head span {
   color: #7fdaea;
@@ -3733,21 +3733,20 @@ html body .new-thread-project-menu .project-option {
   background: color-mix(in srgb, #191326 82%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-new-session {
-  border-color: color-mix(in srgb, #f2d21c 58%, #3fd8ee 42%);
-  background: color-mix(in srgb, #f2d21c 10%, #191326);
-  color: #f2d21c;
-  box-shadow: 0 0 14px color-mix(in srgb, #f2d21c 18%, transparent);
+  border-color: color-mix(in srgb, #b89a0f 58%, #3fd8ee 42%);
+  background: color-mix(in srgb, #b89a0f 10%, #191326);
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-session:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-session:focus-visible,
 :root[data-fb-theme='cyberpunk'] .fb-pi-session.active {
   border-color: #3fd8ee;
   background: color-mix(in srgb, #3fd8ee 10%, #191326);
-  box-shadow: inset 3px 0 0 #f2d21c, 0 0 12px color-mix(in srgb, #3fd8ee 16%, transparent);
+  box-shadow: inset 3px 0 0 #b89a0f, 0 0 12px color-mix(in srgb, #3fd8ee 16%, transparent);
   outline: none;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-session.active strong {
-  color: #f2d21c;
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-session span {
   color: #9c91b1;
@@ -3755,11 +3754,11 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-dialog {
   border-color: color-mix(in srgb, #3fd8ee 36%, var(--border));
   background: color-mix(in srgb, #120e1b 94%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, #f2d21c 16%, transparent), 0 16px 40px #000;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #b89a0f 16%, transparent), 0 16px 40px #000;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-head h3,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-title {
-  color: #f2d21c;
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-row {
   border-bottom-color: color-mix(in srgb, #3fd8ee 20%, var(--border));
@@ -3767,18 +3766,17 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-row:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-row.active {
   background: color-mix(in srgb, #3fd8ee 9%, #191326);
-  box-shadow: inset 3px 0 0 #f2d21c;
+  box-shadow: inset 3px 0 0 #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-actions button:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-new:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-history-close:hover {
   border-color: #3fd8ee;
-  color: #f2d21c;
-  box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 18%, transparent);
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-tool-card {
   border-color: color-mix(in srgb, #3fd8ee 28%, var(--border));
-  border-left-color: #f2d21c;
+  border-left-color: #b89a0f;
   background-color: color-mix(in srgb, #191326 82%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-tool-toggle:hover,
@@ -3882,8 +3880,7 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-sessions-toggle[aria-expanded='true'] {
   border-color: #3fd8ee;
   background: color-mix(in srgb, #3fd8ee 10%, transparent);
-  color: #f2d21c;
-  box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 20%, transparent);
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-sessions.drawer-open {
   border-right-color: #3fd8ee !important;
@@ -4012,7 +4009,7 @@ html body .new-thread-project-menu .project-option {
 }
 .fb-pi-settings-scrim[hidden] { display: none !important; }
 .fb-pi-login { min-height: 30px; padding: 5px 9px; border: 1px solid var(--fb-pi-ring); border-radius: 7px; background: var(--fb-pi-accent-soft); color: var(--fb-pi-accent); font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
-.fb-pi-login:hover, .fb-pi-login:focus-visible { border-color: var(--fb-pi-accent); box-shadow: 0 0 10px color-mix(in srgb, var(--fb-pi-accent) 22%, transparent); outline: none; }
+.fb-pi-login:hover, .fb-pi-login:focus-visible { border-color: var(--fb-pi-accent); outline: none; }
 .fb-pi-login-layer { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 18px; background: color-mix(in srgb, #000 62%, transparent); }
 .fb-pi-login-dialog { display: flex; width: min(380px, 100%); flex-direction: column; gap: 9px; padding: 18px; border: 1px solid var(--fb-pi-ring); border-radius: 14px; background: var(--surface-2, #181818); color: var(--text, #eee); box-shadow: 0 18px 44px rgba(0, 0, 0, .5); }
 .fb-pi-login-dialog h3 { margin: 0; color: var(--fb-pi-accent); font-size: 16px; }
@@ -4021,22 +4018,131 @@ html body .new-thread-project-menu .project-option {
 .fb-pi-login-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 3px; }
 .fb-pi-login-actions button { min-height: 36px; padding: 7px 11px; border: 1px solid var(--fb-pi-ring); border-radius: 8px; background: var(--fb-pi-accent-soft); color: var(--fb-pi-accent); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .fb-pi-login-actions .fb-pi-login-cancel { border-color: var(--border, #444); background: transparent; color: var(--muted, #999); }
-.fb-pi-login-actions button:hover, .fb-pi-login-actions button:focus-visible { border-color: var(--fb-pi-accent); outline: none; box-shadow: 0 0 10px color-mix(in srgb, var(--fb-pi-accent) 20%, transparent); }
-:root[data-fb-theme='cyberpunk'] .fb-pi-login { border-color: #3fd8ee; color: #f2d21c; }
+.fb-pi-login-actions button:hover, .fb-pi-login-actions button:focus-visible { border-color: var(--fb-pi-accent); outline: none; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-login { border-color: #3fd8ee; color: #b89a0f; }
+/* Slash-command popup (cyberpunk): opaque light panel + black letters so it is readable.
+   Black on the dark theme is invisible, so the popup gets its own light surface. */
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestions {
+  background: #efece0;
+  border-color: #b89a0f;
+  box-shadow: 0 12px 28px rgba(0,0,0,.5);
+}
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestion strong { color: #0b0b0b; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestion span { color: #3a3528; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestion:hover,
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestion.active { background: #e3dfd0; }
 :root[data-fb-theme='cyberpunk'] .fb-pi-login:hover,
-:root[data-fb-theme='cyberpunk'] .fb-pi-login:focus-visible { background: color-mix(in srgb, #3fd8ee 10%, transparent); box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 22%, transparent); }
-:root[data-fb-theme='cyberpunk'] .fb-pi-login-dialog { border-color: color-mix(in srgb, #3fd8ee 42%, var(--border)); background: color-mix(in srgb, #191326 94%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, #f2d21c 18%, transparent), 0 18px 44px #000; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-login:focus-visible { background: color-mix(in srgb, #3fd8ee 10%, transparent); }
+:root[data-fb-theme='cyberpunk'] .fb-pi-login-dialog { border-color: color-mix(in srgb, #3fd8ee 42%, var(--border)); background: color-mix(in srgb, #191326 94%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, #b89a0f 18%, transparent), 0 18px 44px #000; }
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-dialog select,
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-dialog input { border-color: color-mix(in srgb, #3fd8ee 30%, var(--border)); background: #0f0b18; }
-:root[data-fb-theme='cyberpunk'] .fb-pi-login-actions button:not(.fb-pi-login-cancel) { border-color: #f2d21c; background: #f2d21c; color: #151203; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-login-actions button:not(.fb-pi-login-cancel) { border-color: #b89a0f; background: #b89a0f; color: #151203; }
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-actions button:not(.fb-pi-login-cancel):hover { background: #ffe95b; }
 :root[data-fb-theme='cyberpunk'] .fb-pi-settings-toggle:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-settings-toggle[aria-expanded='true'] {
   border-color: #3fd8ee;
   background: color-mix(in srgb, #3fd8ee 10%, transparent);
-  color: #f2d21c;
-  box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 20%, transparent);
+  color: #b89a0f;
 }
+/* ── CP2077 reference polish — dark-first (ref: gwannon/Cyberpunk-2077-theme-css)
+   Signature angled corners, sparse neon hairlines, red selection ticks.
+   Surfaces stay near-black; yellow appears only as thin dimmed lines. */
+:root[data-fb-theme='cyberpunk'] {
+  --cp-yellow: #f9f002;
+  --cp-yellow-dim: color-mix(in srgb, #f9f002 55%, #0b0912);
+  --cp-neon: #8ae66e;
+  --cp-red: #ff003c;
+}
+
+/* Signature angled corner (top-left notch, bottom-right cut) on card-like surfaces */
+:root[data-fb-theme='cyberpunk'] .fb-pi-new-session,
+:root[data-fb-theme='cyberpunk'] .fb-pi-session,
+:root[data-fb-theme='cyberpunk'] .fb-pi-home-directory,
+:root[data-fb-theme='cyberpunk'] .fb-pi-home-new,
+:root[data-fb-theme='cyberpunk'] .fb-pi-select-trigger,
+:root[data-fb-theme='cyberpunk'] .fb-pi-login {
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 12px);
+}
+
+/* Brand hairline under the header — thin dimmed yellow, never a fill */
+:root[data-fb-theme='cyberpunk'] .fb-pi-head { position: relative; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-head::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, var(--cp-yellow-dim), transparent 72%);
+  pointer-events: none;
+}
+
+/* Hover = neon edge, not bright fill */
+:root[data-fb-theme='cyberpunk'] .fb-pi-composer button:hover:not(:disabled),
+:root[data-fb-theme='cyberpunk'] .fb-pi-composer button:focus-visible {
+  border-color: var(--cp-yellow-dim);
+  box-shadow: inset 0 0 0 1px var(--cp-yellow-dim), 0 0 12px color-mix(in srgb, var(--cp-yellow) 16%, transparent);
+}
+:root[data-fb-theme='cyberpunk'] .fb-pi-session:hover,
+:root[data-fb-theme='cyberpunk'] .fb-pi-home-session:hover {
+  border-color: color-mix(in srgb, var(--cp-neon) 40%, var(--border));
+}
+
+/* Active selection tick — CP menu style */
+:root[data-fb-theme='cyberpunk'] .fb-pi-session.active { box-shadow: inset 3px 0 0 var(--cp-neon); }
+:root[data-fb-theme='cyberpunk'] .fb-pi-home-session.active { box-shadow: inset 3px 0 0 var(--cp-red); }
+
+/* Text selection: yellow on black, readable */
+:root[data-fb-theme='cyberpunk'] .fb-pi-view ::selection { background: var(--cp-yellow); color: #000; }
+
+/* Slash popup gets a matching angled corner + yellow edge (stays light for black text) */
+:root[data-fb-theme='cyberpunk'] .fb-pi-slash-suggestions {
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 12px);
+  border-left: 3px solid var(--cp-yellow-dim);
+}
+
+/* Scrollbars: dim yellow thumb on black track */
+:root[data-fb-theme='cyberpunk'] .fb-pi-messages::-webkit-scrollbar,
+:root[data-fb-theme='cyberpunk'] .fb-pi-panel ::-webkit-scrollbar { width: 8px; height: 8px; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-messages::-webkit-scrollbar-track,
+:root[data-fb-theme='cyberpunk'] .fb-pi-panel ::-webkit-scrollbar-track { background: #000; }
+:root[data-fb-theme='cyberpunk'] .fb-pi-messages::-webkit-scrollbar-thumb,
+:root[data-fb-theme='cyberpunk'] .fb-pi-panel ::-webkit-scrollbar-thumb { background: var(--cp-yellow-dim); border-radius: 0; }
+
+/* ── Same CP2077 polish on the main app chrome (tabs, composer, modals, explorer) ── */
+
+/* Angled corners on tab chips + panels */
+:root[data-fb-theme='cyberpunk'] .tab,
+:root[data-fb-theme='cyberpunk'] .tab-new,
+:root[data-fb-theme='cyberpunk'] .modal-panel,
+:root[data-fb-theme='cyberpunk'] .explorer-header {
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 12px);
+}
+
+/* Active tab: red tick + neon edge; hover: faint neon border */
+:root[data-fb-theme='cyberpunk'] .tab.active { box-shadow: inset 3px 0 0 var(--cp-red); }
+:root[data-fb-theme='cyberpunk'] .tab:hover { border-color: color-mix(in srgb, var(--cp-neon) 40%, var(--border)); }
+
+/* Header hairline already on .tabbar; add one over the explorer */
+:root[data-fb-theme='cyberpunk'] .explorer-header { position: relative; }
+:root[data-fb-theme='cyberpunk'] .explorer-header::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, var(--cp-yellow-dim), transparent 72%);
+  pointer-events: none;
+}
+
+/* Composer send button: dim yellow edge instead of bright glow */
+:root[data-fb-theme='cyberpunk'] .composer button:hover:not(:disabled),
+:root[data-fb-theme='cyberpunk'] .composer button:focus-visible {
+  border-color: var(--cp-yellow-dim);
+  box-shadow: inset 0 0 0 1px var(--cp-yellow-dim);
+}
+
+/* App-wide text selection + scrollbars to match */
+:root[data-fb-theme='cyberpunk'] ::selection { background: var(--cp-yellow); color: #000; }
+:root[data-fb-theme='cyberpunk'] ::-webkit-scrollbar { width: 8px; height: 8px; }
+:root[data-fb-theme='cyberpunk'] ::-webkit-scrollbar-track { background: #000; }
+:root[data-fb-theme='cyberpunk'] ::-webkit-scrollbar-thumb { background: var(--cp-yellow-dim); border-radius: 0; }
+
 @media (max-width: 700px) {
   :root[data-fb-theme='cyberpunk'] .fb-pi-controls {
     border-color: color-mix(in srgb, #3fd8ee 38%, var(--border)) !important;
@@ -4046,8 +4152,7 @@ html body .new-thread-project-menu .project-option {
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-controls::before {
   border-bottom-color: color-mix(in srgb, #3fd8ee 26%, transparent);
-  color: #f2d21c;
-  text-shadow: 0 0 8px color-mix(in srgb, #f2d21c 42%, transparent);
+  color: #b89a0f;
 }
 .fb-pi-auth {
   display: grid;
@@ -4089,7 +4194,6 @@ html body .new-thread-project-menu .project-option {
 .fb-pi-login-save:hover:not(:disabled), .fb-pi-login-save:focus-visible {
   border-color: var(--fb-pi-accent);
   outline: none;
-  box-shadow: 0 0 10px color-mix(in srgb, var(--fb-pi-accent) 20%, transparent);
 }
 .fb-pi-login-save:disabled { cursor: wait; opacity: .55; }
 .fb-pi-auth-row input { min-width: 0; }
@@ -4103,37 +4207,32 @@ html body .new-thread-project-menu .project-option {
   border-top-color: color-mix(in srgb, #3fd8ee 26%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-auth strong {
-  color: #f2d21c;
-  text-shadow: 0 0 8px color-mix(in srgb, #f2d21c 42%, transparent);
+  color: #b89a0f;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-save {
-  border-color: #f2d21c;
-  background: #f2d21c;
+  border-color: #b89a0f;
+  background: #b89a0f;
   color: #151203;
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-save:hover:not(:disabled),
 :root[data-fb-theme='cyberpunk'] .fb-pi-login-save:focus-visible {
   background: #ffe95b;
-  box-shadow: 0 0 14px color-mix(in srgb, #f2d21c 38%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-auth-save:hover,
 :root[data-fb-theme='cyberpunk'] .fb-pi-auth-save:focus-visible {
   border-color: #3fd8ee;
   background: color-mix(in srgb, #3fd8ee 10%, transparent);
-  color: #f2d21c;
+  color: #b89a0f;
   outline: none;
-  box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 20%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-composer button:not(.fb-pi-abort) {
-  border-color: #f2d21c;
-  background: #f2d21c;
+  border-color: #b89a0f;
+  background: #b89a0f;
   color: #151203;
-  box-shadow: 0 0 14px color-mix(in srgb, #f2d21c 28%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-composer button:not(.fb-pi-abort):hover:not(:disabled),
 :root[data-fb-theme='cyberpunk'] .fb-pi-composer button:not(.fb-pi-abort):focus-visible {
   background: #ffe95b;
-  box-shadow: 0 0 18px color-mix(in srgb, #f2d21c 48%, transparent);
 }
 :root[data-fb-theme='cyberpunk'] .fb-pi-composer .fb-pi-abort {
   border-color: #e36a8a;
@@ -4238,8 +4337,7 @@ html body .new-thread-project-menu .project-option {
 :root[data-fb-theme='cyberpunk'] .fb-pi-mode-tab.active {
   border-color: #3fd8ee;
   background: color-mix(in srgb, #3fd8ee 10%, #191326);
-  color: #f2d21c;
-  box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 18%, transparent);
+  color: #b89a0f;
 }
 @media (max-width: 700px) {
   html body .fb-pi-mode-toggle,
@@ -4260,13 +4358,13 @@ html body .new-thread-project-menu .project-option {
     grid-column: 1 / -1;
     padding-bottom: 3px;
     border-bottom: 1px solid color-mix(in srgb, #3fd8ee 26%, transparent);
-    color: #f2d21c;
+    color: #b89a0f;
     font-size: 10px;
     font-weight: 800;
     letter-spacing: .12em;
   }
   :root[data-fb-theme='cyberpunk'] .fb-pi-controls::before {
-    text-shadow: 0 0 8px color-mix(in srgb, #f2d21c 42%, transparent);
+    text-shadow: 0 0 8px color-mix(in srgb, #b89a0f 42%, transparent);
   }
 }
 /* Skill origin badge (bundle patch, slash menu): a small pill after the
@@ -4309,7 +4407,7 @@ html body .new-thread-project-menu .project-option {
 .fb-pi-command-list { min-height: 0; overflow-y: auto; }
 .fb-pi-command-item { display: flex; width: 100%; align-items: baseline; gap: 12px; padding: 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .fb-pi-command-item:hover, .fb-pi-command-item:focus-visible { background: var(--fb-pi-accent-soft); color: var(--fb-pi-accent); outline: none; }
-.fb-pi-command-item strong { min-width: 125px; color: var(--fb-pi-accent); font-family: var(--fb-mono, ui-monospace, monospace); font-size: 11px; }
+.fb-pi-command-item strong { min-width: 125px; color: var(--muted, #bbb); font-family: var(--fb-mono, ui-monospace, monospace); font-size: 11px; }
 .fb-pi-command-item span, .fb-pi-command-card p { color: var(--muted, #bbb); font-size: 11px; }
 .fb-pi-command-card p { margin: 0; line-height: 1.5; }
 .fb-pi-command-ok { align-self: flex-end; padding: 7px 12px; border: 1px solid var(--fb-pi-ring); border-radius: 7px; background: var(--fb-pi-accent-soft); color: var(--fb-pi-accent); font: inherit; cursor: pointer; }
@@ -4318,8 +4416,8 @@ html body .new-thread-project-menu .project-option {
 .fb-pi-slash-suggestion { display: flex; width: 100%; align-items: baseline; gap: 10px; padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .fb-pi-slash-suggestion strong { min-width: 110px; color: var(--muted, #aaa); font-family: var(--fb-mono, ui-monospace, monospace); font-size: 11px; }
 .fb-pi-slash-suggestion span { color: var(--muted, #999); font-size: 11px; }
-.fb-pi-slash-suggestion:hover, .fb-pi-slash-suggestion.active { background: color-mix(in srgb, var(--fb-pi-accent) 6%, transparent); }
-.fb-pi-slash-suggestion:hover strong, .fb-pi-slash-suggestion.active strong { color: var(--text, #eee); }
+.fb-pi-slash-suggestion:hover, .fb-pi-slash-suggestion.active { background: color-mix(in srgb, var(--fb-pi-accent) 4%, transparent); }
+.fb-pi-slash-suggestion:hover strong, .fb-pi-slash-suggestion.active strong { color: var(--muted, #bbb); }
 @media (max-width: 700px) {
   html body .fb-pi-mode-view .fb-pi-head-actions { gap: 3px; }
   html body .fb-pi-mode-view .fb-pi-head-actions > button { min-width: 0; padding: 4px 6px; font-size: 9px; white-space: nowrap; }

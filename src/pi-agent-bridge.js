@@ -576,7 +576,11 @@ function createPiAgentController(options = {}) {
         try {
           const status = JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
           if (status.status === 'ready') resolve(true);
-          else if (status.reason === 'provider_not_found') resolve(configured.has(key));
+          // provider_not_found: the CLI does not enumerate this provider (it is a
+          // runtime/extension provider like freebuff-pi's custom 'freebuff' backend).
+          // Pi's runtime already returned its models via get_available_models, so it is
+          // available — do not drop its models from the UI.
+          else if (status.reason === 'provider_not_found') resolve(true);
           else resolve(false);
         } catch (error) {
           resolve(configured.has(key));

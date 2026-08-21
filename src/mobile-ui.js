@@ -3231,7 +3231,7 @@
       var opener = null;
       var THEMES = [
         { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
-        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#f2d21c' },
+        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#b89a0f' },
         { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
         { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
       ];
@@ -5216,6 +5216,7 @@
       var contentIndexToId = Object.create(null);
       var wallpaperStyleEl = null;
       var wallpaperState = null;
+      var wallpaperVideoEl = null;
       var WALLPAPER_PRESETS = {
         void: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3CradialGradient id="g" cx="50%25" cy="25%25" r="70%25"%3E%3Cstop offset="0%25" stop-color="%232a0a42"/%3E%3Cstop offset="100%25" stop-color="%2305000d"/%3E%3C/radialGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E',
         grid: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" fill="%2306000d"/%3E%3Cpath d="M0 0h2V128H0zM0 0h128v2H0z" fill="%23140026" fill-opacity=".45"/%3E%3Cg opacity=".35"%3E%3Cpath d="M0 0h1V128H0z"/%3E%3Cpath d="M0 0h128v1H0z"/%3E%3C/g%3E%3C/svg%3E',
@@ -6222,6 +6223,13 @@
           setPiMode(false);
           return;
         }
+        if (command === 'reload') {
+          if (!sessionId) { showCommandNotice('/reload', 'No active Pi session'); return; }
+          setStatus('Reloading Pi resources…', true);
+          post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/prompt', { message: '/buff-reload', cwd: cwd })
+            .catch(function (error) { setStatus(error.message || 'Reload failed', false); });
+          return;
+        }
         var detail = PI_SLASH_COMMANDS.filter(function (item) { return item[0] === command; })[0];
         showCommandNotice('/' + command, detail ? detail[1] + '. Use native Pi terminal for this command.' : 'Unknown Pi command.');
       }
@@ -6863,7 +6871,8 @@
           ['void', 'Void'],
           ['grid', 'Grid'],
           ['dusk', 'Dusk'],
-          ['url', 'URL image…']
+          ['url', 'URL image…'],
+          ['video-url', 'Video URL…']
         ];
         wallOptions.forEach(function (opt) {
           var o = document.createElement('option');
@@ -6900,11 +6909,11 @@
             wallNote.hidden = true;
             return;
           }
-          if (pick === 'url') {
+          if (pick === 'url' || pick === 'video-url') {
             wallUrl.hidden = false;
             wallApply.hidden = false;
             wallUrl.focus();
-            wallNote.textContent = 'Paste image URL, then Apply.';
+            wallNote.textContent = pick === 'video-url' ? 'Paste video URL, then Apply.' : 'Paste image URL, then Apply.';
             wallNote.hidden = false;
             return;
           }
@@ -6918,11 +6927,14 @@
         });
         wallApply.addEventListener('click', function () {
           var url = wallUrl.value.trim();
+          var isVideo = wallSelect.value === 'video-url';
           if (!url) { wallpaperState = { mode: 'dim', url: '', preset: 'off' }; wallSelect.value = 'off'; applyWallpaper(); wallNote.hidden = true; return; }
-          validateImageUrl(url, function (ok) {
-            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: 'url' }; applyWallpaper(); wallNote.textContent = 'Wallpaper applied.'; wallNote.hidden = false; }
-            else { wallNote.textContent = 'Image could not be loaded.'; wallNote.hidden = false; }
-          });
+          var done = function (ok) {
+            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: isVideo ? 'video-url' : 'url', kind: isVideo ? 'video' : 'image' }; applyWallpaper(); wallNote.textContent = isVideo ? 'Video wallpaper applied.' : 'Wallpaper applied.'; wallNote.hidden = false; }
+            else { wallNote.textContent = isVideo ? 'Video could not be loaded.' : 'Image could not be loaded.'; wallNote.hidden = false; }
+          };
+          if (isVideo) validateVideoUrl(url, done);
+          else validateImageUrl(url, done);
         });
         wallpaperSection.appendChild(wallTitle);
         wallpaperSection.appendChild(wallSelect);
@@ -7011,9 +7023,10 @@
         } else {
           wallpaperState.mode = wallpaperState.mode || 'dim';
           wallpaperState.url = wallpaperState.url || (WALLPAPER_PRESETS[wallpaperState.preset] || '');
+          wallpaperState.kind = wallpaperState.kind || 'image';
         }
         if (wallSelect) wallSelect.value = wallpaperState.preset || 'off';
-        var showUrl = wallSelect && wallSelect.value === 'url';
+        var showUrl = wallSelect && (wallSelect.value === 'url' || wallSelect.value === 'video-url');
         if (wallUrl) {
           wallUrl.hidden = !showUrl;
           wallUrl.value = showUrl ? (wallpaperState.url || '') : '';
@@ -7035,18 +7048,37 @@
         img.onerror = function () { cb(false); };
         img.src = url;
       }
+      function validateVideoUrl(url, cb) {
+        try {
+          var parsed = new URL(url);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'data:') { cb(false); return; }
+        } catch (e) { cb(false); return; }
+        var v = document.createElement('video');
+        var settled = false;
+        var done = function (ok) { if (!settled) { settled = true; v.src = ''; cb(ok); } };
+        v.muted = true;
+        v.addEventListener('loadeddata', function () { done(true); });
+        v.addEventListener('error', function () { done(false); });
+        setTimeout(function () { done(false); }, 8000);
+        v.src = url;
+      }
+      function removeWallpaperVideo() {
+        if (wallpaperVideoEl) { wallpaperVideoEl.remove(); wallpaperVideoEl = null; }
+      }
       function applyWallpaper() {
         var state = wallpaperState || { mode: 'off', url: '' };
         var url = state.mode === 'off' ? '' : (state.url || '');
+        var isVideo = !!url && state.kind === 'video';
         if (wallpaperStyleEl) wallpaperStyleEl.remove();
         if (!overlay) return;
+        if (url && !isVideo) removeWallpaperVideo();
         if (url) {
           overlay.classList.add('fb-pi-wall');
           overlay.style.setProperty('--fb-wallpaper-dim', state.mode === 'vivid' ? '.14' : '.22');
           wallpaperStyleEl = document.createElement('style');
           wallpaperStyleEl.id = 'fb-pi-wall-style';
           wallpaperStyleEl.textContent =
-            '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }' +
+            (isVideo ? '' : '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }') +
             '.fb-pi-view.fb-pi-wall::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--fb-wallpaper-dim,.22)); pointer-events:none; }' +
             '.fb-pi-view.fb-pi-wall .fb-pi-messages, .fb-pi-view.fb-pi-wall .fb-pi-panel, .fb-pi-view.fb-pi-wall .fb-pi-head, .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 62%, transparent) !important; }' +
             '.fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 58%, transparent) !important; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }' +
@@ -7054,8 +7086,23 @@
             ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-messages, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-panel, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-head, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 48%, transparent) !important; }' +
             ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 42%, transparent) !important; }';
           document.head.appendChild(wallpaperStyleEl);
-          overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '%22') + '")');
+          if (isVideo) {
+            removeWallpaperVideo();
+            wallpaperVideoEl = document.createElement('video');
+            wallpaperVideoEl.className = 'fb-pi-wall-video';
+            wallpaperVideoEl.setAttribute('aria-hidden', 'true');
+            wallpaperVideoEl.muted = true; // autoplay policies require muted+playsinline
+            wallpaperVideoEl.loop = true;
+            wallpaperVideoEl.autoplay = true;
+            wallpaperVideoEl.playsInline = true;
+            wallpaperVideoEl.preload = 'auto';
+            wallpaperVideoEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-1;pointer-events:none;filter:brightness(.8) saturate(.92);';
+            wallpaperVideoEl.src = url;
+            overlay.insertBefore(wallpaperVideoEl, overlay.firstChild);
+            var p = wallpaperVideoEl.play(); if (p && p.catch) p.catch(function () {});
+          }
         } else {
+          removeWallpaperVideo();
           overlay.classList.remove('fb-pi-wall');
           overlay.style.removeProperty('--fb-wallpaper-url');
           overlay.style.removeProperty('--fb-wallpaper-dim');
