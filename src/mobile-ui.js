@@ -6872,7 +6872,6 @@
         wallpaperSection.appendChild(wallUrl);
         wallpaperSection.appendChild(wallApply);
         wallpaperSection.appendChild(wallNote);
-        wallpaperSection.appendChild(wallPresetsEl);
         controls.appendChild(wallpaperSection);
         [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider, wallSelect].forEach(enhancePiSelect);
         settingsScrim = document.createElement('button');
