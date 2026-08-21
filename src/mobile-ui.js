@@ -5207,6 +5207,8 @@
       var streamThinkingText = '';
       var streamThinkingNode = null;
       var toolCards = Object.create(null);
+      var toolArgBuffers = Object.create(null);
+      var contentIndexToId = Object.create(null);
       var promptPending = false;
       var piModeActive = false;
       var piModeToggle = null;
@@ -5668,6 +5670,8 @@
         if (!messageList) return;
         messageList.textContent = '';
         toolCards = Object.create(null);
+        toolArgBuffers = Object.create(null);
+        contentIndexToId = Object.create(null);
         streamThinkingNode = null;
         streamThinkingText = '';
         extractMessages(items).forEach(function (raw) {
@@ -5759,6 +5763,42 @@
               if (state) state.textContent = 'done';
               streamThinkingNode.classList.remove('thinking');
             }
+            handled = true;
+          }
+          if ((update.type === 'toolcall_start') && typeof update.contentIndex === 'number' && update.id) {
+            contentIndexToId[update.contentIndex] = update.id;
+            addToolCard(update.toolName || 'tool', '', '', update.id);
+            toolArgBuffers[update.contentIndex] = '';
+            var startCard = toolCards[update.id];
+            if (startCard) {
+              var startState = startCard.querySelector('.fb-pi-tool-state');
+              if (startState) startState.textContent = 'args…';
+              var startDetail = startCard.querySelector('.fb-pi-tool-detail');
+              if (startDetail) { startDetail.textContent = ''; startDetail.hidden = false; }
+              startCard.classList.add('streaming', 'expanded');
+            }
+            handled = true;
+          }
+          if ((update.type === 'toolcall_delta') && typeof update.contentIndex === 'number' && typeof update.delta === 'string') {
+            var idx = update.contentIndex;
+            toolArgBuffers[idx] = (toolArgBuffers[idx] || '') + update.delta;
+            var card = toolCards[contentIndexToId[idx]];
+            if (card) {
+              var detail = card.querySelector('.fb-pi-tool-detail');
+              if (detail && !detail.hidden) detail.textContent = toolArgBuffers[idx];
+            }
+            handled = true;
+          }
+          if ((update.type === 'toolcall_end') && typeof update.contentIndex === 'number' && update.toolCall) {
+            var id = contentIndexToId[update.contentIndex];
+            var endCard = toolCards[id];
+            if (endCard) {
+              var endState = endCard.querySelector('.fb-pi-tool-state');
+              if (endState) endState.textContent = 'pending';
+              endCard.classList.remove('streaming');
+            }
+            delete toolArgBuffers[update.contentIndex];
+            delete contentIndexToId[update.contentIndex];
             handled = true;
           }
           if (handled) return;
