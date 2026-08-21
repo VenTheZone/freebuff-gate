@@ -7020,7 +7020,11 @@
           setProjectLabel(value || '');
           if (!cwd) throw new Error('Project path unavailable');
           savePiProject(cwd);
-          return refreshSessions(false).then(function () { showPiHome(); });
+          return refreshSessions(false).then(function () {
+            var chosen = getDefaultSession(cwd);
+            if (chosen) return loadSession({ id: chosen });
+            showPiHome();
+          });
         }).catch(function (error) { setStatus(error.message || 'Pi unavailable', false); });
       }
       function syncMenus() {
