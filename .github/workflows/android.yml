@@ -141,8 +141,6 @@ jobs:
             :app:lintWebviewDebug \
             :app:assembleWebviewDebug \
             :app:assembleWebviewDebugAndroidTest \
-            -PfreebuffPairingOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}" \
-            -PfreebuffWebOrigin="${FB_MOBILE_E2E_RELAY_ORIGIN}"
 
       - name: Enable KVM for emulator
         shell: bash
