@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 
 const MAX_PROMPT_BYTES = 128 * 1024;
-const MAX_SESSIONS = 6;
+const MAX_SESSIONS = 5;
 const MAX_EVENT_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_PI_IDLE_TIMEOUT_MS = 0;
@@ -390,7 +390,13 @@ function createPiAgentController(options = {}) {
     const active = requested ? sessions.get(requested) : null;
     if (active && !active.closed) return sessionSnapshot(active);
     if (active) removeSession(active);
-    closeOtherSessions();
+    // Keep up to MAX_SESSIONS live. Evict oldest idle first, then oldest overall (Map insertion order).
+    while (sessions.size >= MAX_SESSIONS) {
+      const candidates = [...sessions.values()].filter((candidate) => !requested || candidate.id !== requested);
+      if (!candidates.length) break;
+      const victim = candidates.find((candidate) => candidate.state !== 'running') || candidates[0];
+      closeLiveSession(victim);
+    }
     let summary = null;
     if (requested) summary = listPiSessions(cwd, { agentDir, allowedRoot }).find((item) => item.id === requested);
     if (requested && !summary) throw fail('pi_session_not_found');

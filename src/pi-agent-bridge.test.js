@@ -187,7 +187,7 @@ test('Pi controller reopens an idle session for the next prompt', async () => {
   }
 });
 
-test('Pi controller keeps one live RPC process when switching sessions', async () => {
+test('Pi controller keeps up to 5 live sessions, evicting oldest when over limit', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-pi-single-process-'));
   const children = [];
   const controller = createPiAgentController({
@@ -204,8 +204,18 @@ test('Pi controller keeps one live RPC process when switching sessions', async (
     await controller.open({ cwd: dir });
     await controller.open({ cwd: dir });
     assert.equal(children.length, 2);
-    assert.equal(children[0].killed, true);
+    assert.equal(children[0].killed, false);
     assert.equal(children[1].killed, false);
+    // Fill to limit (5) then exceed — oldest should be evicted
+    await controller.open({ cwd: dir });
+    await controller.open({ cwd: dir });
+    await controller.open({ cwd: dir });
+    assert.equal(children.length, 5);
+    assert.equal(children[0].killed, false);
+    await controller.open({ cwd: dir });
+    assert.equal(children.length, 6);
+    assert.equal(children[0].killed, true);
+    assert.equal(children[5].killed, false);
   } finally {
     controller.close();
     fs.rmSync(dir, { recursive: true, force: true });
