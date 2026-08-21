@@ -3990,6 +3990,13 @@ html body .new-thread-project-menu .project-option {
   padding: 5px 9px;
   font-size: 10px;
 }
+.fb-pi-wallpaper { overflow: visible; min-height: 44px; }
+.fb-pi-wallpaper .fb-pi-wall-select,
+.fb-pi-wallpaper .fb-pi-wall-url { min-height: 30px; }
+@media (max-width: 600px) {
+  .fb-pi-wallpaper { grid-template-columns: 1fr !important; }
+  .fb-pi-wallpaper .fb-pi-wall-select { grid-column: 1 / -1; }
+}
 .fb-pi-settings-scrim {
   position: absolute;
   inset: 0;

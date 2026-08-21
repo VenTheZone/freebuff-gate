@@ -6787,8 +6787,9 @@
         wallpaperSection.className = 'fb-pi-wallpaper';
         wallpaperSection.style.gridColumn = '1 / -1';
         wallpaperSection.style.display = 'grid';
-        wallpaperSection.style.gridTemplateColumns = '100px 1fr auto';
-        wallpaperSection.style.alignItems = 'end';
+        wallpaperSection.style.gridTemplateColumns = '100px minmax(0, 1fr) auto';
+        wallpaperSection.style.alignItems = 'center';
+        wallpaperSection.style.overflow = 'visible';
         wallpaperSection.style.gap = '6px';
         wallpaperSection.style.padding = '6px 8px';
         wallpaperSection.style.borderTop = '1px solid var(--border,#333)';
@@ -6873,7 +6874,7 @@
         wallpaperSection.appendChild(wallApply);
         wallpaperSection.appendChild(wallNote);
         controls.appendChild(wallpaperSection);
-        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider, wallSelect].forEach(enhancePiSelect);
+        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider].forEach(enhancePiSelect);
         settingsScrim = document.createElement('button');
         settingsScrim.type = 'button';
         settingsScrim.className = 'fb-pi-settings-scrim';
