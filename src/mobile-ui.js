@@ -215,6 +215,36 @@
     }, 80);
   }
 
+  // Remote inject: file chip + @file token (same as local attach, but remote)
+  var fbLoadingEl = null;
+  function showFbLoading(label){ try{ hideFbLoading(); var o=document.createElement('div'); o.className='fb-loading'; o.innerHTML='<div class="fb-loading-card">▓ '+(label||'UPLOADING')+' ▓</div>'; document.body.appendChild(o); fbLoadingEl=o; }catch(e){} }
+  function hideFbLoading(){ try{ if(fbLoadingEl&&fbLoadingEl.parentNode) fbLoadingEl.parentNode.removeChild(fbLoadingEl); fbLoadingEl=null; }catch(e){} }
+  function ensureAttachChipContainer() {
+    var composer = document.querySelector('.fb-pi-panel .fb-pi-composer') || document.querySelector('.composer') || document.querySelector('.fb-pi-composer');
+    if (!composer || !composer.parentNode) return null;
+    var c = composer.parentNode.querySelector('.fb-attach-chips');
+    if (c) return c;
+    c = document.createElement('div');
+    c.className = 'fb-attach-chips';
+    composer.parentNode.insertBefore(c, composer);
+    return c;
+  }
+  function injectFileToken(path) {
+    hideFbLoading();
+    var token = '@file ' + path;
+    try {
+      var cc = ensureAttachChipContainer();
+      if (cc) {
+        var chip = document.createElement('span');
+        chip.className = 'fb-attach-chip';
+        chip.textContent = path.split('/').pop() + ' ✓';
+        chip.title = path;
+        cc.appendChild(chip);
+        setTimeout(function(){ try{ chip.remove(); if(!cc.children.length) cc.remove(); }catch(e){} }, 6000);
+      }
+    } catch(e){}
+    return insertComposerToken(token);
+  }
   // Inserts an attachment token (e.g. "name @/server/path") into whatever
   // composer textarea is live, using a React-safe value setter. Queries the
   // DOM at call time so it never depends on inner-scope composer refs.
@@ -247,7 +277,7 @@
   }
   // Called by the native layer after it zips + uploads a picked folder.
   window.freebuffFolderAttached = function (path, name) {
-    insertOrNotify((name ? name + ' @' : '@') + path);
+    injectFileToken(path);
   };
 
   // ---- Folder attach fallback (desktop browsers, no native APK) ----
@@ -313,7 +343,7 @@
       var files = Array.prototype.slice.call(input.files || []);
       input.remove();
       if (!files.length) { alert('No files in folder'); return; }
-      var note = insertComposerToken('[zipping ' + files.length + ' files...]');
+      showFbLoading('ZIPPING ' + files.length + ' FILES');
       Promise.all(files.map(function (f) {
         return f.arrayBuffer().then(function (ab) {
           return { name: f.webkitRelativePath || f.name, data: new Uint8Array(ab) };
@@ -321,30 +351,49 @@
       })).then(function (items) {
         return uploadBlob(zipStore(items), (files[0].webkitRelativePath.split('/')[0] || 'folder') + '.zip');
       }).then(function (d) {
-        if (d && d.path) insertOrNotify((d.name ? d.name + ' @' : '@') + d.path);
+        if (d && d.path) injectFileToken(d.path);
         else alert('Upload failed: ' + JSON.stringify(d));
       }).catch(function (e) { alert('Folder zip failed: ' + (e && e.message || e)); });
     });
     input.click();
   }
-  // Always-on (bounded interval, no subtree observer): a "Folder" button in the
-  // app's composer row at every width — native picker on the phone APK, JS
-  // folder+zip on desktop browsers.
+  // Always-on (bounded interval, no subtree observer): single Attach button
+  // in the app's composer row — phone picker -> /api/fb/upload -> token.
+  // Folder lives only in the floating card (mobile) / native APK picker.
   function ensureComposerFolderButton() {
     var row = document.querySelector('.composer-row');
     if (!row || row.querySelector('.fb-folder-attach')) return;
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'fb-folder-attach';
-    b.textContent = '\uD83D\uDCC2 Folder';
-    b.setAttribute('aria-label', 'Attach a folder (zipped)');
-    b.addEventListener('click', function (ev) {
+    var filesBtn = document.createElement('button');
+    filesBtn.type = 'button';
+    filesBtn.className = 'fb-folder-attach fb-files-attach';
+    filesBtn.textContent = '\uD83D\uDCCE Attach';
+    filesBtn.setAttribute('aria-label', 'Attach files');
+    filesBtn.addEventListener('click', function (ev) {
       ev.stopPropagation();
-      var native = window.FreebuffNative;
-      if (native && typeof native.pickFolder === 'function') native.pickFolder();
-      else pickFolderViaInput();
+      var shim = window.freebuffDesktop;
+      if (shim && typeof shim.pickAttachments === 'function') {
+        var btn = filesBtn;
+        var orig = btn.textContent;
+        btn.textContent = '⏳ Uploading…';
+        btn.disabled = true;
+        showFbLoading('UPLOADING');
+        shim.pickAttachments().then(function (files) {
+          hideFbLoading(); btn.textContent = orig;
+          btn.disabled = false;
+          if (!files || !files.length) return;
+          (files || []).forEach(function (f) {
+            injectFileToken(f.path);
+          });
+          // brief green flash so "paste path" reads as uploaded
+          try { btn.style.outline = '2px solid #2eaa62'; setTimeout(function(){ btn.style.outline=''; }, 900); } catch(e){}
+        }).catch(function (e) { btn.textContent = orig; btn.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
+      } else {
+        var native = row.querySelector('.attach');
+        if (native) native.click();
+        else window.alert('File attach unavailable here.');
+      }
     });
-    row.appendChild(b);
+    row.appendChild(filesBtn);
   }
   if (typeof setInterval !== 'undefined') setInterval(ensureComposerFolderButton, 1500);
   ensureComposerFolderButton();
@@ -4035,16 +4084,14 @@
             function () {
             var shim = window.freebuffDesktop;
             if (shim && typeof shim.pickAttachments === 'function') {
-              window.alert('ATTACH-DEBUG 1: shim found, opening device picker…');
+              showFbLoading('UPLOADING');
               shim.pickAttachments().then(function (files) {
-                window.alert('ATTACH-DEBUG 3: picked ' + (files ? files.length : 0) + ' file(s)');
-                if (!files || !files.length) return;
+                hideFbLoading(); if (!files || !files.length) return;
                 (files || []).forEach(function (f) {
-                  insertOrNotify((f.name ? f.name + ' @' : '@') + f.path);
+                  injectFileToken(f.path);
                 });
-              }).catch(function (e) { window.alert('ATTACH-DEBUG ERR: ' + (e && e.message || e)); });
+              }).catch(function (e) { window.alert('File attach failed: ' + (e && e.message || e)); });
             } else {
-              window.alert('ATTACH-DEBUG 0: no shim — falling back to app button');
               var c = getComposer();
               var a = c ? c.querySelector('.composer-row .attach') : null;
               if (a) a.click();
@@ -6034,7 +6081,7 @@
         if (eventSourceRetry) { clearTimeout(eventSourceRetry); eventSourceRetry = null; }
         if (eventSource) { try { eventSource.close(); } catch (e) {} eventSource = null; }
         if (!sessionId) return;
-        eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events');
+        eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events' + (cwd ? '?cwd=' + encodeURIComponent(cwd) : ''));
         eventSource.onopen = function () {
           eventSourceAttempts = 0;
           if (session) setStatus(session.state === 'running' ? 'Running' : 'Ready', session && session.state === 'running');
@@ -6800,10 +6847,13 @@
       function closePanel() {
         setSessionDrawer(false);
         setSettingsDrawer(false);
-        closeEventStream();
+        // ponytail: keep EventSource alive when Pi is streaming — closing the
+        // panel is a view hide, not a session kill. Reconnect happens on open.
+        if (!session || session.state !== 'running') closeEventStream();
         historyLayer = null;
         if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
         overlay = null;
+        // keep wallpaperVideoEl/style for next open; applyWallpaper rebuilds it
         document.documentElement.classList.remove('fb-pi-active');
       }
       function sendPrompt() {
@@ -7138,6 +7188,40 @@
         abortButton.textContent = 'Stop';
         abortButton.addEventListener('click', function () { if (sessionId) post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/abort', {}); });
         form.appendChild(promptInput);
+        var piAttachButton = document.createElement('button');
+        piAttachButton.type = 'button';
+        piAttachButton.className = 'fb-pi-attach';
+        piAttachButton.textContent = '\uD83D\uDCCE';
+        piAttachButton.title = 'Attach files';
+        piAttachButton.setAttribute('aria-label', 'Attach files');
+        piAttachButton.addEventListener('click', function () {
+          var shim = window.freebuffDesktop;
+          if (shim && typeof shim.pickAttachments === 'function') {
+            var b = piAttachButton; var o = b.textContent; b.textContent = '⏳'; b.disabled = true;
+            showFbLoading('UPLOADING');
+            shim.pickAttachments().then(function (files) {
+              hideFbLoading(); b.textContent = o; b.disabled = false;
+              if (!files || !files.length) return;
+              (files || []).forEach(function (f) {
+                var tok = '@file ' + f.path;
+                // ponytail: Pi has its own textarea — write directly, not via global .composer
+                try {
+                  if (promptInput) {
+                    var cur = promptInput.value || '';
+                    promptInput.value = cur ? cur + '\n' + tok : tok;
+                    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    promptInput.dispatchEvent(new Event('change', { bubbles: true }));
+                  } else injectFileToken(f.path);
+                  promptInput && promptInput.focus();
+                  // chip above Pi composer
+                  var cc = ensureAttachChipContainer();
+                  if (cc) { var chip=document.createElement('span'); chip.className='fb-attach-chip'; chip.textContent=f.path.split('/').pop()+' ✓'; cc.appendChild(chip); setTimeout(function(){try{chip.remove();if(!cc.children.length)cc.remove();}catch(e){}},6000); }
+                } catch (e) { injectFileToken(f.path); }
+              });
+            }).catch(function (e) { b.textContent = o; b.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
+          } else window.alert('File attach unavailable here.');
+        });
+        form.appendChild(piAttachButton);
         var piFolderButton = document.createElement('button');
         piFolderButton.type = 'button';
         piFolderButton.className = 'fb-pi-attach-url';
@@ -7262,6 +7346,9 @@
         if (url) {
           overlay.classList.add('fb-pi-wall');
           overlay.style.setProperty('--fb-wallpaper-dim', state.mode === 'vivid' ? '.14' : '.22');
+          // ponytail: image wallpaper was never visible — --fb-wallpaper-url was never set
+          if (!isVideo) overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '\\"') + '")');
+          else overlay.style.removeProperty('--fb-wallpaper-url');
           wallpaperStyleEl = document.createElement('style');
           wallpaperStyleEl.id = 'fb-pi-wall-style';
           wallpaperStyleEl.textContent =

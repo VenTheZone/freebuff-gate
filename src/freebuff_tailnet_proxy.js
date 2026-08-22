@@ -566,10 +566,8 @@ const SHIM = `(function () {
       };
       input.addEventListener('change', function () {
         var files = Array.prototype.slice.call(input.files || []);
-        window.alert('ATTACH-DEBUG 2: change fired, ' + files.length + ' file(s), uploading…');
         if (!files.length) { finish([]); return; }
         Promise.all(files.map(uploadOne)).then(function (results) {
-          window.alert('ATTACH-DEBUG 4: upload OK — ' + results.length + ' file(s) on server');
           finish(results);
         }).catch(function (err) {
           console.error('Freebuff attach failed', err);
