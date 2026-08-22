@@ -124,7 +124,7 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     }
 
     /** Origin the WebView is pinned to; used to build the upload endpoint. */
-    fun currentOrigin(): String? = allowedOrigin
+    override fun currentOrigin(): String? = allowedOrigin
 
     override fun onFilePickerResult(uris: List<Uri>?) {
         pendingFileCallback?.onReceiveValue(uris?.toTypedArray())
