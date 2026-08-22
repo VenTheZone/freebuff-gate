@@ -1,5 +1,6 @@
 package com.freebuff.mobile
 
+import android.net.Uri
 import android.view.View
 
 /**
@@ -31,4 +32,19 @@ interface GateBrowserEngine {
     fun goBack()
     fun stopLoading()
     fun destroy()
+
+    /**
+     * Registers a callback the engine invokes when the page requests file
+     * selection (<input type=file>). The activity provides the launcher that
+     * opens the system file picker; [requestFile] receives the accept types
+     * and whether multiple selection was requested.
+     */
+    fun setFilePickerLauncher(
+        requestFile: (acceptTypes: Array<String>, allowMultiple: Boolean) -> Unit,
+    ) {
+    }
+
+    /** Called with the picker's URIs (null = cancelled). No-op default so
+     *  engines without file-picker support compile unchanged. */
+    fun onFilePickerResult(uris: List<Uri>?) {}
 }

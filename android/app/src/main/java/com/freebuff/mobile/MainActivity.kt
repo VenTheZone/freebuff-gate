@@ -32,6 +32,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var sessionStore: SecureSessionStore
     private lateinit var deviceIdentity: DeviceIdentity
+
+    // System file picker for <input type=file> in the WebView. Registered at
+    // construction as required by the ActivityResult API; GetMultipleContents
+    // covers single and multi selection.
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris -> engine.onFilePickerResult(uris) }
     private lateinit var reconnectController: ReconnectController
     private lateinit var qrScanner: QrScanner
     private var webSessionLoading = false
@@ -82,6 +89,10 @@ class MainActivity : AppCompatActivity() {
         engine = GateEngineFactory.create(this)
         engine.configure {
             showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
+        }
+        engine.setFilePickerLauncher { acceptTypes, _ ->
+            val mime = acceptTypes.firstOrNull { it.contains("/") } ?: "*/*"
+            filePickerLauncher.launch(mime)
         }
         browserHost.addView(
             engine.view,

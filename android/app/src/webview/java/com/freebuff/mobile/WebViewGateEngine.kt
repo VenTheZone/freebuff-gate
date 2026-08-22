@@ -19,6 +19,8 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     private val appContext = context.applicationContext
     private val webView = WebView(context)
     private var allowedOrigin: String? = null
+    private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
+    private var filePickerRequest: ((Array<String>, Boolean) -> Unit)? = null
 
     override val view: View get() = webView
 
@@ -27,7 +29,9 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
             javaScriptEnabled = true
             domStorageEnabled = true
             allowFileAccess = false
-            allowContentAccess = false
+            // content:// URIs handed back by the system file picker must be
+            // readable by the WebView; file:// stays blocked above.
+            allowContentAccess = true
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setSupportMultipleWindows(false)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) safeBrowsingEnabled = true
@@ -42,6 +46,23 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
         webView.setBackgroundColor(android.graphics.Color.parseColor("#0B0B0F"))
         CookieManager.getInstance().setAcceptCookie(true)
         webView.setDownloadListener { _, _, _, _, _ -> onBlockedDownload() }
+        // <input type=file> support: hand the request to the activity's file
+        // picker launcher and return the picked content:// URIs to the page.
+        webView.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: android.webkit.ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams,
+            ): Boolean {
+                pendingFileCallback?.onReceiveValue(null)
+                pendingFileCallback = filePathCallback
+                filePickerRequest?.invoke(
+                    fileChooserParams.acceptTypes ?: emptyArray(),
+                    fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                )
+                return true
+            }
+        }
         // Bridge the injected mobile layer (mobile-ui.js) to the native
         // external browser: the ad popup's Open button calls
         // window.FreebuffNative.openExternal(url) to leave the WebView
@@ -84,4 +105,15 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     override fun goBack() = webView.goBack()
     override fun stopLoading() = webView.stopLoading()
     override fun destroy() = webView.destroy()
+
+    override fun setFilePickerLauncher(
+        requestFile: (acceptTypes: Array<String>, allowMultiple: Boolean) -> Unit,
+    ) {
+        filePickerRequest = requestFile
+    }
+
+    override fun onFilePickerResult(uris: List<Uri>?) {
+        pendingFileCallback?.onReceiveValue(uris?.toTypedArray())
+        pendingFileCallback = null
+    }
 }
