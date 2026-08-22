@@ -21,6 +21,7 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     private var allowedOrigin: String? = null
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var filePickerRequest: ((Array<String>, Boolean) -> Unit)? = null
+    private var folderPickerRequest: (() -> Unit)? = null
 
     override val view: View get() = webView
 
@@ -80,6 +81,12 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
                         )
                     }
                 }
+
+                // Called from mobile-ui.js: open the system folder picker.
+                @JavascriptInterface
+                fun pickFolder() {
+                    folderPickerRequest?.invoke()
+                }
             },
             "FreebuffNative",
         )
@@ -111,6 +118,13 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
     ) {
         filePickerRequest = requestFile
     }
+
+    override fun setFolderPickerLauncher(requestFolder: () -> Unit) {
+        folderPickerRequest = requestFolder
+    }
+
+    /** Origin the WebView is pinned to; used to build the upload endpoint. */
+    fun currentOrigin(): String? = allowedOrigin
 
     override fun onFilePickerResult(uris: List<Uri>?) {
         pendingFileCallback?.onReceiveValue(uris?.toTypedArray())

@@ -7,13 +7,20 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.view.View
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.concurrent.thread
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import java.net.URI
@@ -39,6 +46,60 @@ class MainActivity : AppCompatActivity() {
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents(),
     ) { uris -> engine.onFilePickerResult(uris) }
+
+    // Folder attach: pick a document tree, zip it natively, upload the zip via
+    // the proxy's /api/fb/upload, and hand the server path back to the page.
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> if (uri != null) uploadFolderAsZip(uri) }
+
+    // Zip a picked document tree natively and upload the zip to the proxy's
+    // /api/fb/upload; then hand the returned server path to the page so it can
+    // drop an attachment token into the composer.
+    private fun uploadFolderAsZip(treeUri: Uri) {
+        thread {
+            try {
+                val base = engine.currentOrigin() ?: return@thread
+                val tree = DocumentFile.fromTreeUri(this, treeUri) ?: return@thread
+                val baos = ByteArrayOutputStream()
+                ZipOutputStream(baos).use { zos ->
+                    fun addDir(dir: DocumentFile, prefix: String) {
+                        for (child in dir.listFiles()) {
+                            if (child.isDirectory) addDir(child, prefix + (child.name ?: "dir") + "/")
+                            else {
+                                val entryName = prefix + (child.name ?: "file")
+                                zos.putNextEntry(ZipEntry(entryName))
+                                contentResolver.openInputStream(child.uri)?.use { ins -> ins.copyTo(zos) }
+                                zos.closeEntry()
+                            }
+                        }
+                    }
+                    addDir(tree, "")
+                }
+                val zipBytes = baos.toByteArray()
+                val folderName = tree.name ?: "folder"
+                val uploadUrl = URL("${base}/api/fb/upload?name=${Uri.encode(folderName + ".zip")}")
+                val conn = uploadUrl.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/octet-stream")
+                conn.outputStream.use { it.write(zipBytes) }
+                val code = conn.responseCode
+                val resp = conn.inputStream.bufferedReader().readText()
+                if (code in 200..299) {
+                    val path = Regex("\"path\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1)
+                    val name = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1) ?: folderName
+                    if (path != null) {
+                        val safePath = path.replace("'", "\\'")
+                        val safeName = name.replace("'", "\\'")
+                        runOnUiThread { (engine.view as WebView).evaluateJavascript("window.freebuffFolderAttached('$safePath','$safeName')", null) }
+                    }
+                }
+            } catch (e: Exception) {
+                // surface a toast on failure (TODO)
+            }
+        }
+    }
     private lateinit var reconnectController: ReconnectController
     private lateinit var qrScanner: QrScanner
     private var webSessionLoading = false
@@ -94,6 +155,7 @@ class MainActivity : AppCompatActivity() {
             val mime = acceptTypes.firstOrNull { it.contains("/") } ?: "*/*"
             filePickerLauncher.launch(mime)
         }
+        engine.setFolderPickerLauncher { folderPickerLauncher.launch(null) }
         browserHost.addView(
             engine.view,
             FrameLayout.LayoutParams(

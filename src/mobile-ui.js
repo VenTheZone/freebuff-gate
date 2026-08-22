@@ -215,6 +215,33 @@
     }, 80);
   }
 
+  // Inserts an attachment token (e.g. "name @/server/path") into whatever
+  // composer textarea is live, using a React-safe value setter. Queries the
+  // DOM at call time so it never depends on inner-scope composer refs.
+  function insertComposerToken(text) {
+    var el = document.querySelector('.composer textarea') ||
+      document.querySelector('.fb-pi-composer textarea');
+    if (!el) return false;
+    try {
+      var proto = Object.getPrototypeOf(el);
+      var setter = proto && Object.getOwnPropertyDescriptor(proto, 'value') &&
+        Object.getOwnPropertyDescriptor(proto, 'value').set;
+      var pos = el.selectionStart != null ? el.selectionStart : (el.value || '').length;
+      var prefix = el.value && !/\s$/.test(el.value) ? ' ' : '';
+      var token = prefix + text;
+      var next = el.value.slice(0, pos) + token + el.value.slice(pos);
+      if (setter) setter.call(el, next); else el.value = next;
+      el.selectionStart = el.selectionEnd = pos + token.length;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) { return false; }
+    return true;
+  }
+  // Called by the native layer after it zips + uploads a picked folder.
+  window.freebuffFolderAttached = function (path, name) {
+    insertComposerToken((name ? name + ' @' : '@') + path);
+  };
+
   // React mounts large transcripts in many small commits. A separate
   // document-wide observer per mobile feature can monopolize a phone's main
   // thread while the initial thread is loading. Share one observer, start it
@@ -3899,9 +3926,29 @@
             'Attach files, photos, or a folder',
             '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
             function () {
+            var shim = window.freebuffDesktop;
+            if (shim && typeof shim.pickAttachments === 'function') {
+              shim.pickAttachments().then(function (files) {
+                (files || []).forEach(function (f) {
+                  insertComposerToken((f.name ? f.name + ' @' : '@') + f.path);
+                });
+              }).catch(function () {});
+            } else {
               var c = getComposer();
               var a = c ? c.querySelector('.composer-row .attach') : null;
               if (a) a.click();
+            }
+          },
+          ),
+        );
+        wrap.appendChild(
+          actionBtn(
+            'folder',
+            'Attach a folder (zipped) from your device',
+            '<path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/>',
+            function () {
+              var native = window.FreebuffNative;
+              if (native && typeof native.pickFolder === 'function') native.pickFolder();
             },
           ),
         );
