@@ -539,7 +539,7 @@ const SHIM = `(function () {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     }).then(function (r) {
-      if (!r.ok) throw new Error('upload failed: ' + r.status);
+      if (!r.ok) throw new Error('upload failed: HTTP ' + r.status);
       return r.json();
     }).then(function (d) {
       return { path: d.path, name: d.name || file.name, isDirectory: false };
@@ -566,9 +566,14 @@ const SHIM = `(function () {
       };
       input.addEventListener('change', function () {
         var files = Array.prototype.slice.call(input.files || []);
+        window.alert('ATTACH-DEBUG 2: change fired, ' + files.length + ' file(s), uploading…');
         if (!files.length) { finish([]); return; }
-        Promise.all(files.map(uploadOne)).then(finish).catch(function (err) {
+        Promise.all(files.map(uploadOne)).then(function (results) {
+          window.alert('ATTACH-DEBUG 4: upload OK — ' + results.length + ' file(s) on server');
+          finish(results);
+        }).catch(function (err) {
           console.error('Freebuff attach failed', err);
+          window.alert('File attach failed: ' + (err && err.message || err));
           finish([]);
         });
       });

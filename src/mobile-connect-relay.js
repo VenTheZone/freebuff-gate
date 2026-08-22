@@ -686,6 +686,7 @@ class RelayHub {
     if (!connector) throw new RelayError(503, 'desktop_offline', 'Desktop connector is offline');
     const body = await readRequestBody(req);
     const id = randomId('r_');
+    const isEventStream = String(req.url || '').includes('/events');
     const request = {
       id,
       connectorId: session.connectorId,
@@ -694,11 +695,13 @@ class RelayHub {
       finished: false,
       timer: null,
     };
-    request.timer = setTimeout(() => {
-      this.httpRequests.delete(id);
-      if (!res.headersSent) sendJson(res, 504, { error: 'upstream_timeout', message: 'Desktop response timed out' });
-      else res.destroy();
-    }, HTTP_TIMEOUT_MS);
+    if (!isEventStream) {
+      request.timer = setTimeout(() => {
+        this.httpRequests.delete(id);
+        if (!res.headersSent) sendJson(res, 504, { error: 'upstream_timeout', message: 'Desktop response timed out' });
+        else res.destroy();
+      }, HTTP_TIMEOUT_MS);
+    }
     this.httpRequests.set(id, request);
     res.once('close', () => {
       if (request.finished) return;

@@ -4035,13 +4035,16 @@
             function () {
             var shim = window.freebuffDesktop;
             if (shim && typeof shim.pickAttachments === 'function') {
+              window.alert('ATTACH-DEBUG 1: shim found, opening device picker…');
               shim.pickAttachments().then(function (files) {
-                if (!files || !files.length) { window.alert('No file selected.'); return; }
+                window.alert('ATTACH-DEBUG 3: picked ' + (files ? files.length : 0) + ' file(s)');
+                if (!files || !files.length) return;
                 (files || []).forEach(function (f) {
                   insertOrNotify((f.name ? f.name + ' @' : '@') + f.path);
                 });
-              }).catch(function (e) { window.alert('Attach failed: ' + (e && e.message || e)); });
+              }).catch(function (e) { window.alert('ATTACH-DEBUG ERR: ' + (e && e.message || e)); });
             } else {
+              window.alert('ATTACH-DEBUG 0: no shim — falling back to app button');
               var c = getComposer();
               var a = c ? c.querySelector('.composer-row .attach') : null;
               if (a) a.click();
@@ -5626,11 +5629,11 @@
           body: JSON.stringify(payload || {}),
         });
       }
+      var eventSourceRetry = null;
+      var eventSourceAttempts = 0;
       function closeEventStream() {
-        if (eventSource) {
-          eventSource.close();
-          eventSource = null;
-        }
+        if (eventSource) { try { eventSource.close(); } catch (e) {} eventSource = null; }
+        if (eventSourceRetry) { clearTimeout(eventSourceRetry); eventSourceRetry = null; }
       }
       function textOfMessage(message) {
         if (!message) return '';
@@ -6028,14 +6031,30 @@
         }
       }
       function connectEvents() {
-        closeEventStream();
+        if (eventSourceRetry) { clearTimeout(eventSourceRetry); eventSourceRetry = null; }
+        if (eventSource) { try { eventSource.close(); } catch (e) {} eventSource = null; }
         if (!sessionId) return;
         eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events');
+        eventSource.onopen = function () {
+          eventSourceAttempts = 0;
+          if (session) setStatus(session.state === 'running' ? 'Running' : 'Ready', session && session.state === 'running');
+          api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/messages').then(function (data) {
+            try { renderMessages(data); } catch (e) {}
+          }).catch(function () {});
+        };
         eventSource.onmessage = function (event) {
           try { handleEvent(JSON.parse(event.data)); } catch (e) {}
         };
         eventSource.onerror = function () {
-          if (session && session.state !== 'running') setStatus('Pi connection lost', false);
+          if (!eventSource) return;
+          if (eventSource.readyState === EventSource.CLOSED) {
+            eventSourceAttempts += 1;
+            var delay = Math.min(30000, 1000 * Math.pow(2, eventSourceAttempts));
+            setStatus('Pi reconnecting...', true);
+            eventSourceRetry = setTimeout(function () { if (sessionId) connectEvents(); }, delay);
+          } else if (session && session.state !== 'running') {
+            setStatus('Pi connection lost', false);
+          }
         };
       }
       function enhancePiSelect(select) {

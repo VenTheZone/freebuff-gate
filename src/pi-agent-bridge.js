@@ -390,11 +390,12 @@ function createPiAgentController(options = {}) {
     const active = requested ? sessions.get(requested) : null;
     if (active && !active.closed) return sessionSnapshot(active);
     if (active) removeSession(active);
-    // Keep up to MAX_SESSIONS live. Evict oldest idle first, then oldest overall (Map insertion order).
+    // Keep up to MAX_SESSIONS live. Evict oldest idle first; never kill a running agent.
     while (sessions.size >= MAX_SESSIONS) {
       const candidates = [...sessions.values()].filter((candidate) => !requested || candidate.id !== requested);
       if (!candidates.length) break;
-      const victim = candidates.find((candidate) => candidate.state !== 'running') || candidates[0];
+      const victim = candidates.find((candidate) => candidate.state !== 'running');
+      if (!victim) break;
       closeLiveSession(victim);
     }
     let summary = null;
