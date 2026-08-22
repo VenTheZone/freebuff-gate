@@ -1199,6 +1199,7 @@ function createProxyServer(options = {}) {
   // desktop even though the orchestrator only has the on-disk route after an
   // installer re-run.
   if (req.method === 'POST' && pathname === '/api/fb/upload') {
+    console.error('[freebuff upload] POST from', req.socket.remoteAddress, 'len', req.headers['content-length'] || '?');
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {

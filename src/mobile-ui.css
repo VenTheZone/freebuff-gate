@@ -504,7 +504,7 @@
     cursor: pointer;
   }
   .fb-folder-attach:hover:not(:disabled), .fb-folder-attach:focus-visible {
-    border-color: var(--fb-pi-accent, #4a7dff);
+    border-color: var(--brand, #6b9dff);
     color: var(--text, #e8e8ef);
     outline: none;
   }
@@ -3271,7 +3271,7 @@ body {
   0%, 100% { opacity: .4; transform: scale(.82); box-shadow: 0 0 0 transparent; }
   50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 10px color-mix(in srgb, #3fd8ee 60%, transparent); }
 }
-.fb-pi-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 10px; border-top: 1px solid var(--border, #333); }
+.fb-pi-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; padding: 10px; border-top: 1px solid var(--border, #333); }
 .fb-pi-composer textarea { min-width: 0; resize: vertical; padding: 9px; border: 1px solid var(--border, #444); border-radius: 8px; background: var(--surface-2, #1a1a1a); color: inherit; font: inherit; font-size: 13px; }
 .fb-pi-composer button { align-self: end; min-height: 38px; padding: 7px 11px; border: 1px solid var(--fb-pi-ring); border-radius: 8px; background: var(--fb-pi-accent-soft); color: var(--fb-pi-accent); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: border-color .12s ease, background .12s ease, color .12s ease, box-shadow .12s ease, transform .12s ease; }
 .fb-pi-composer button:hover:not(:disabled), .fb-pi-composer button:focus-visible { border-color: var(--fb-pi-accent); box-shadow: 0 0 12px color-mix(in srgb, var(--fb-pi-accent) 22%, transparent); outline: none; }
@@ -3298,8 +3298,8 @@ body {
   .fb-pi-home-head { flex-direction: column; gap: 10px; }
   .fb-pi-home-cwd { max-width: 100%; }
   .fb-pi-home-directory { align-self: flex-start; }
-  .fb-pi-composer { grid-template-columns: minmax(0, 1fr) auto; }
-  .fb-pi-composer .fb-pi-abort { grid-column: 2; grid-row: 2; }
+  .fb-pi-composer { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .fb-pi-composer .fb-pi-abort { grid-column: 3; grid-row: 2; }
   .fb-pi-composer textarea { grid-row: span 2; min-height: 76px; }
 }
 

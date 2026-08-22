@@ -87,7 +87,8 @@ class MainActivity : AppCompatActivity() {
                 conn.setRequestProperty("Content-Type", "application/octet-stream")
                 conn.outputStream.use { it.write(zipBytes) }
                 val code = conn.responseCode
-                val resp = conn.inputStream.bufferedReader().readText()
+                val resp = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                    ?.bufferedReader()?.readText() ?: ""
                 if (code in 200..299) {
                     val path = Regex("\"path\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1)
                     val name = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1) ?: folderName
@@ -95,11 +96,28 @@ class MainActivity : AppCompatActivity() {
                         val safePath = path.replace("'", "\\'")
                         val safeName = name.replace("'", "\\'")
                         runOnUiThread { (engine.view as WebView).evaluateJavascript("window.freebuffFolderAttached('$safePath','$safeName')", null) }
+                    } else {
+                        folderAttachError("Unexpected upload response: " + resp.take(120))
                     }
+                } else {
+                    folderAttachError("Upload failed: HTTP $code ${resp.take(120)}")
                 }
             } catch (e: Exception) {
-                // surface a toast on failure (TODO)
+                folderAttachError("Folder attach failed: " + (e.message ?: e.javaClass.simpleName))
             }
+        }
+    }
+
+    // Surface native attach failures inside the WebView so they are never
+    // silent (the old catch swallowed everything, including cleartext-policy
+    // rejections on the tunnel-mode loopback origin).
+    private fun folderAttachError(message: String) {
+        val safe = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        runOnUiThread {
+            (engine.view as? WebView)?.evaluateJavascript(
+                "window.alert('Folder attach: $safe');",
+                null,
+            )
         }
     }
     private lateinit var reconnectController: ReconnectController

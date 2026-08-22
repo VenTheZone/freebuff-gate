@@ -235,11 +235,19 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     } catch (e) { return false; }
-    return true;
+    // Verify it stuck (controlled React may ignore programmatic sets).
+    return el.value.indexOf(text) !== -1;
+  }
+  // Last-resort surface so an attach is never silently swallowed.
+  function insertOrNotify(text) {
+    if (insertComposerToken(text)) return true;
+    try { navigator.clipboard.writeText(text); } catch (e) {}
+    window.alert('Attached (path copied — paste into the message):\n' + text);
+    return false;
   }
   // Called by the native layer after it zips + uploads a picked folder.
   window.freebuffFolderAttached = function (path, name) {
-    insertComposerToken((name ? name + ' @' : '@') + path);
+    insertOrNotify((name ? name + ' @' : '@') + path);
   };
 
   // ---- Folder attach fallback (desktop browsers, no native APK) ----
@@ -265,21 +273,28 @@
       var nameBytes = [];
       for (var i = 0; i < name.length; i++) nameBytes.push(name.charCodeAt(i) & 0xff);
       var data = f.data, crc = crc32(data);
-      var local = [0x04034b50, 20, 0, 0, 0, 0, 0, crc, data.length, data.length, nameBytes.length, 0];
       var lh = [];
-      local.forEach(function (v) { lh.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+      function push32(v) { lh.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+      function push16(v) { lh.push(v & 0xff, (v >>> 8) & 0xff); }
+      push32(0x04034b50); push16(20); push16(0); push16(0); push16(0); push16(0);
+      push32(crc); push32(data.length); push32(data.length); push16(nameBytes.length); push16(0);
       lh = lh.concat(nameBytes);
       parts.push(new Uint8Array(lh)); parts.push(data);
-      var c = [0x02014b50, 20, 20, 0, 0, 0, 0, 0, crc, data.length, data.length, nameBytes.length, 0, 0, 0, 0, 0, 0, offset];
       var che = [];
-      c.forEach(function (v) { che.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+      function cpush32(v) { che.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+      function cpush16(v) { che.push(v & 0xff, (v >>> 8) & 0xff); }
+      cpush32(0x02014b50); cpush16(20); cpush16(20); cpush16(0); cpush16(0); cpush16(0); cpush16(0);
+      cpush32(crc); cpush32(data.length); cpush32(data.length); cpush16(nameBytes.length);
+      cpush16(0); cpush16(0); cpush16(0); cpush16(0); cpush32(offset);
       che = che.concat(nameBytes); central.push(new Uint8Array(che));
       offset += lh.length + data.length;
     });
     var centralSize = central.reduce(function (s, a) { return s + a.length; }, 0);
-    var end = [0x06054b50, 0, 0, files.length, files.length, centralSize, offset, 0];
     var eo = [];
-    end.forEach(function (v) { eo.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+    function epush32(v) { eo.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+    function epush16(v) { eo.push(v & 0xff, (v >>> 8) & 0xff); }
+    epush32(0x06054b50); epush16(0); epush16(0); epush16(files.length); epush16(files.length);
+    epush32(centralSize); epush32(offset); epush16(0);
     return new Blob(parts.concat(central, [new Uint8Array(eo)]), { type: 'application/zip' });
   }
   function uploadBlob(blob, name) {
@@ -291,19 +306,24 @@
     var input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    try { input.webkitdirectory = true; } catch (e) {}
+    try { input.webkitdirectory = true; input.setAttribute('webkitdirectory', ''); input.setAttribute('directory', ''); } catch (e) {}
+    input.style.display = 'none';
+    document.body.appendChild(input);
     input.addEventListener('change', function () {
       var files = Array.prototype.slice.call(input.files || []);
-      if (!files.length) return;
+      input.remove();
+      if (!files.length) { alert('No files in folder'); return; }
+      var note = insertComposerToken('[zipping ' + files.length + ' files...]');
       Promise.all(files.map(function (f) {
         return f.arrayBuffer().then(function (ab) {
           return { name: f.webkitRelativePath || f.name, data: new Uint8Array(ab) };
         });
       })).then(function (items) {
-        uploadBlob(zipStore(items), 'folder.zip').then(function (d) {
-          if (d && d.path) insertComposerToken((d.name ? d.name + ' @' : '@') + d.path);
-        });
-      });
+        return uploadBlob(zipStore(items), (files[0].webkitRelativePath.split('/')[0] || 'folder') + '.zip');
+      }).then(function (d) {
+        if (d && d.path) insertOrNotify((d.name ? d.name + ' @' : '@') + d.path);
+        else alert('Upload failed: ' + JSON.stringify(d));
+      }).catch(function (e) { alert('Folder zip failed: ' + (e && e.message || e)); });
     });
     input.click();
   }
@@ -316,7 +336,7 @@
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'fb-folder-attach';
-    b.textContent = 'Folder';
+    b.textContent = '\uD83D\uDCC2 Folder';
     b.setAttribute('aria-label', 'Attach a folder (zipped)');
     b.addEventListener('click', function (ev) {
       ev.stopPropagation();
@@ -4016,10 +4036,11 @@
             var shim = window.freebuffDesktop;
             if (shim && typeof shim.pickAttachments === 'function') {
               shim.pickAttachments().then(function (files) {
+                if (!files || !files.length) { window.alert('No file selected.'); return; }
                 (files || []).forEach(function (f) {
-                  insertComposerToken((f.name ? f.name + ' @' : '@') + f.path);
+                  insertOrNotify((f.name ? f.name + ' @' : '@') + f.path);
                 });
-              }).catch(function () {});
+              }).catch(function (e) { window.alert('Attach failed: ' + (e && e.message || e)); });
             } else {
               var c = getComposer();
               var a = c ? c.querySelector('.composer-row .attach') : null;
@@ -4031,8 +4052,8 @@
         wrap.appendChild(
           actionBtn(
             'folder',
-            'Attach a folder (zipped) from your device',
-            '<path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/>',
+            'Attach a folder (zipped) \uD83D\uDCC2',
+            '<text x="12" y="16" text-anchor="middle" font-size="14">\uD83D\uDCC2</text>',
             function () {
               var native = window.FreebuffNative;
               if (native && typeof native.pickFolder === 'function') native.pickFolder();
@@ -7098,6 +7119,18 @@
         abortButton.textContent = 'Stop';
         abortButton.addEventListener('click', function () { if (sessionId) post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/abort', {}); });
         form.appendChild(promptInput);
+        var piFolderButton = document.createElement('button');
+        piFolderButton.type = 'button';
+        piFolderButton.className = 'fb-pi-attach-url';
+        piFolderButton.textContent = '\uD83D\uDCC2';
+        piFolderButton.title = 'Attach a folder as .zip (or files: use 📎 in the main chat)';
+        piFolderButton.setAttribute('aria-label', 'Attach a folder (zipped)');
+        piFolderButton.addEventListener('click', function () {
+          var native = window.FreebuffNative;
+          if (native && typeof native.pickFolder === 'function') native.pickFolder();
+          else pickFolderViaInput();
+        });
+        form.appendChild(piFolderButton);
         form.appendChild(abortButton);
         chat.appendChild(controls);
         chat.appendChild(messageList);
