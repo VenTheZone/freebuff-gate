@@ -492,6 +492,22 @@
   .head-btn {
     min-height: 38px;
   }
+  .fb-folder-attach {
+    align-self: center;
+    padding: 6px 10px;
+    border: 1px solid var(--border, #444);
+    border-radius: 8px;
+    background: var(--surface-2, #1a1a1a);
+    color: var(--muted, #9a9aa8);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .fb-folder-attach:hover:not(:disabled), .fb-folder-attach:focus-visible {
+    border-color: var(--fb-pi-accent, #4a7dff);
+    color: var(--text, #e8e8ef);
+    outline: none;
+  }
 }
 
 /* ─────────────────────────── 700px: phones ─────────────────────────────── */

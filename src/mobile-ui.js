@@ -242,6 +242,93 @@
     insertComposerToken((name ? name + ' @' : '@') + path);
   };
 
+  // ---- Folder attach fallback (desktop browsers, no native APK) ----
+  // Build a ZIP (store, no compression) client-side and upload it.
+  function crc32(buf) {
+    if (!crc32.table) {
+      crc32.table = [];
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        crc32.table[n] = c >>> 0;
+      }
+    }
+    var t = crc32.table, crc = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) crc = t[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zipStore(files) {
+    var enc = function (s) { return unescape(encodeURIComponent(s)); };
+    var parts = [], central = [], offset = 0;
+    files.forEach(function (f) {
+      var name = enc(f.name);
+      var nameBytes = [];
+      for (var i = 0; i < name.length; i++) nameBytes.push(name.charCodeAt(i) & 0xff);
+      var data = f.data, crc = crc32(data);
+      var local = [0x04034b50, 20, 0, 0, 0, 0, 0, crc, data.length, data.length, nameBytes.length, 0];
+      var lh = [];
+      local.forEach(function (v) { lh.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+      lh = lh.concat(nameBytes);
+      parts.push(new Uint8Array(lh)); parts.push(data);
+      var c = [0x02014b50, 20, 20, 0, 0, 0, 0, 0, crc, data.length, data.length, nameBytes.length, 0, 0, 0, 0, 0, 0, offset];
+      var che = [];
+      c.forEach(function (v) { che.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+      che = che.concat(nameBytes); central.push(new Uint8Array(che));
+      offset += lh.length + data.length;
+    });
+    var centralSize = central.reduce(function (s, a) { return s + a.length; }, 0);
+    var end = [0x06054b50, 0, 0, files.length, files.length, centralSize, offset, 0];
+    var eo = [];
+    end.forEach(function (v) { eo.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); });
+    return new Blob(parts.concat(central, [new Uint8Array(eo)]), { type: 'application/zip' });
+  }
+  function uploadBlob(blob, name) {
+    return fetch('/api/fb/upload?name=' + encodeURIComponent(name), {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob,
+    }).then(function (r) { return r.json(); });
+  }
+  function pickFolderViaInput() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    try { input.webkitdirectory = true; } catch (e) {}
+    input.addEventListener('change', function () {
+      var files = Array.prototype.slice.call(input.files || []);
+      if (!files.length) return;
+      Promise.all(files.map(function (f) {
+        return f.arrayBuffer().then(function (ab) {
+          return { name: f.webkitRelativePath || f.name, data: new Uint8Array(ab) };
+        });
+      })).then(function (items) {
+        uploadBlob(zipStore(items), 'folder.zip').then(function (d) {
+          if (d && d.path) insertComposerToken((d.name ? d.name + ' @' : '@') + d.path);
+        });
+      });
+    });
+    input.click();
+  }
+  // Always-on (bounded interval, no subtree observer): a "Folder" button in the
+  // app's composer row at every width — native picker on the phone APK, JS
+  // folder+zip on desktop browsers.
+  function ensureComposerFolderButton() {
+    var row = document.querySelector('.composer-row');
+    if (!row || row.querySelector('.fb-folder-attach')) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'fb-folder-attach';
+    b.textContent = 'Folder';
+    b.setAttribute('aria-label', 'Attach a folder (zipped)');
+    b.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var native = window.FreebuffNative;
+      if (native && typeof native.pickFolder === 'function') native.pickFolder();
+      else pickFolderViaInput();
+    });
+    row.appendChild(b);
+  }
+  if (typeof setInterval !== 'undefined') setInterval(ensureComposerFolderButton, 1500);
+  ensureComposerFolderButton();
+
   // React mounts large transcripts in many small commits. A separate
   // document-wide observer per mobile feature can monopolize a phone's main
   // thread while the initial thread is loading. Share one observer, start it
@@ -3949,6 +4036,7 @@
             function () {
               var native = window.FreebuffNative;
               if (native && typeof native.pickFolder === 'function') native.pickFolder();
+              else pickFolderViaInput();
             },
           ),
         );
