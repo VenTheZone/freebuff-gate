@@ -1464,6 +1464,32 @@ html.fb-pi-active .global-feedback {
   color: var(--text);
   touch-action: manipulation;
 }
+.fb-session-menu-open {
+  flex: none;
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--accent-dim, #4a5568);
+  border-radius: 999px;
+  background: var(--raised, #1a1a1a);
+  color: var(--text, #eee);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fb-session-menu-open:active { transform: translateY(1px); }
+.fb-model-open {
+  flex: none;
+  margin-left: auto;
+  padding: 5px 12px;
+  border: 1px solid var(--accent-dim, #4a5568);
+  border-radius: 999px;
+  background: var(--raised, #1a1a1a);
+  color: var(--text, #eee);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fb-model-open:active { transform: translateY(1px); }
 .fb-session-menu-item:hover,
 .fb-session-menu-item:focus-within {
   background: var(--raised);

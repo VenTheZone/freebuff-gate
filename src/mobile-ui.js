@@ -1780,6 +1780,29 @@
         closeModelSheet();
         return true;
       }
+      // "Open" pill on each model row: jumps to the thread using that model.
+      function injectModelOpenButtons(menu) {
+        if (!menu) return;
+        Array.prototype.slice
+          .call(menu.querySelectorAll('.freebuff-model-option'))
+          .forEach(function (option) {
+            if (option.querySelector('.fb-model-open')) return;
+            var matches = modelSessionUserRecords(option);
+            if (!matches.length) return;
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'fb-model-open';
+            btn.textContent = 'Open';
+            btn.setAttribute('aria-label', 'Open session using ' + visibleModelTitle(option));
+            btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+            btn.addEventListener('click', function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              selectOpenSession(matches[0].record, matches[0].name);
+            });
+            option.appendChild(btn);
+          });
+      }
       function isInjectedAvailabilityNode(node) {
         var element =
           node && node.nodeType === 1
@@ -2096,6 +2119,7 @@
           parent: 'context-card',
         });
         syncModelAvailability(menu);
+        injectModelOpenButtons(menu);
         if (closeBtn) return;
         closeBtn = document.createElement('button');
         closeBtn.type = 'button';
