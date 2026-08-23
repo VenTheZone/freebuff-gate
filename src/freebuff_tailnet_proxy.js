@@ -539,7 +539,7 @@ const SHIM = `(function () {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     }).then(function (r) {
-      if (!r.ok) throw new Error('upload failed: ' + r.status);
+      if (!r.ok) throw new Error('upload failed: HTTP ' + r.status);
       return r.json();
     }).then(function (d) {
       return { path: d.path, name: d.name || file.name, isDirectory: false };
@@ -567,8 +567,11 @@ const SHIM = `(function () {
       input.addEventListener('change', function () {
         var files = Array.prototype.slice.call(input.files || []);
         if (!files.length) { finish([]); return; }
-        Promise.all(files.map(uploadOne)).then(finish).catch(function (err) {
+        Promise.all(files.map(uploadOne)).then(function (results) {
+          finish(results);
+        }).catch(function (err) {
           console.error('Freebuff attach failed', err);
+          window.alert('File attach failed: ' + (err && err.message || err));
           finish([]);
         });
       });
@@ -1199,6 +1202,7 @@ function createProxyServer(options = {}) {
   // desktop even though the orchestrator only has the on-disk route after an
   // installer re-run.
   if (req.method === 'POST' && pathname === '/api/fb/upload') {
+    console.error('[freebuff upload] POST from', req.socket.remoteAddress, 'len', req.headers['content-length'] || '?');
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {

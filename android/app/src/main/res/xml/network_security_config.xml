@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!--
-        The tunnel WebView talks to the app-owned loopback proxy. Keep the
-        exception scoped to localhost; all external traffic remains HTTPS-only.
-    -->
+    <!-- Tunnel mode points the WebView at the app-owned loopback proxy
+         (http://localhost:<port>); native uploads (folder zip) POST to the
+         same origin. Cleartext stays scoped to localhost only — every
+         external host remains HTTPS-only. -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

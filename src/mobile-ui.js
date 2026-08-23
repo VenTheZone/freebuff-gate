@@ -215,6 +215,189 @@
     }, 80);
   }
 
+  // Remote inject: file chip + @file token (same as local attach, but remote)
+  var fbLoadingEl = null;
+  function showFbLoading(label){ try{ hideFbLoading(); var o=document.createElement('div'); o.className='fb-loading'; o.innerHTML='<div class="fb-loading-card">▓ '+(label||'UPLOADING')+' ▓</div>'; document.body.appendChild(o); fbLoadingEl=o; }catch(e){} }
+  function hideFbLoading(){ try{ if(fbLoadingEl&&fbLoadingEl.parentNode) fbLoadingEl.parentNode.removeChild(fbLoadingEl); fbLoadingEl=null; }catch(e){} }
+  function ensureAttachChipContainer() {
+    var composer = document.querySelector('.fb-pi-panel .fb-pi-composer') || document.querySelector('.composer') || document.querySelector('.fb-pi-composer');
+    if (!composer || !composer.parentNode) return null;
+    var c = composer.parentNode.querySelector('.fb-attach-chips');
+    if (c) return c;
+    c = document.createElement('div');
+    c.className = 'fb-attach-chips';
+    composer.parentNode.insertBefore(c, composer);
+    return c;
+  }
+  function injectFileToken(path) {
+    hideFbLoading();
+    var token = '@file ' + path;
+    try {
+      var cc = ensureAttachChipContainer();
+      if (cc) {
+        var chip = document.createElement('span');
+        chip.className = 'fb-attach-chip';
+        chip.textContent = path.split('/').pop() + ' ✓';
+        chip.title = path;
+        cc.appendChild(chip);
+        setTimeout(function(){ try{ chip.remove(); if(!cc.children.length) cc.remove(); }catch(e){} }, 6000);
+      }
+    } catch(e){}
+    return insertComposerToken(token);
+  }
+  // Inserts an attachment token (e.g. "name @/server/path") into whatever
+  // composer textarea is live, using a React-safe value setter. Queries the
+  // DOM at call time so it never depends on inner-scope composer refs.
+  function insertComposerToken(text) {
+    var el = document.querySelector('.composer textarea') ||
+      document.querySelector('.fb-pi-composer textarea');
+    if (!el) return false;
+    try {
+      var proto = Object.getPrototypeOf(el);
+      var setter = proto && Object.getOwnPropertyDescriptor(proto, 'value') &&
+        Object.getOwnPropertyDescriptor(proto, 'value').set;
+      var pos = el.selectionStart != null ? el.selectionStart : (el.value || '').length;
+      var prefix = el.value && !/\s$/.test(el.value) ? ' ' : '';
+      var token = prefix + text;
+      var next = el.value.slice(0, pos) + token + el.value.slice(pos);
+      if (setter) setter.call(el, next); else el.value = next;
+      el.selectionStart = el.selectionEnd = pos + token.length;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) { return false; }
+    // Verify it stuck (controlled React may ignore programmatic sets).
+    return el.value.indexOf(text) !== -1;
+  }
+  // Last-resort surface so an attach is never silently swallowed.
+  function insertOrNotify(text) {
+    if (insertComposerToken(text)) return true;
+    try { navigator.clipboard.writeText(text); } catch (e) {}
+    window.alert('Attached (path copied — paste into the message):\n' + text);
+    return false;
+  }
+  // Called by the native layer after it zips + uploads a picked folder.
+  window.freebuffFolderAttached = function (path, name) {
+    injectFileToken(path);
+  };
+
+  // ---- Folder attach fallback (desktop browsers, no native APK) ----
+  // Build a ZIP (store, no compression) client-side and upload it.
+  function crc32(buf) {
+    if (!crc32.table) {
+      crc32.table = [];
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        crc32.table[n] = c >>> 0;
+      }
+    }
+    var t = crc32.table, crc = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) crc = t[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zipStore(files) {
+    var enc = function (s) { return unescape(encodeURIComponent(s)); };
+    var parts = [], central = [], offset = 0;
+    files.forEach(function (f) {
+      var name = enc(f.name);
+      var nameBytes = [];
+      for (var i = 0; i < name.length; i++) nameBytes.push(name.charCodeAt(i) & 0xff);
+      var data = f.data, crc = crc32(data);
+      var lh = [];
+      function push32(v) { lh.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+      function push16(v) { lh.push(v & 0xff, (v >>> 8) & 0xff); }
+      push32(0x04034b50); push16(20); push16(0); push16(0); push16(0); push16(0);
+      push32(crc); push32(data.length); push32(data.length); push16(nameBytes.length); push16(0);
+      lh = lh.concat(nameBytes);
+      parts.push(new Uint8Array(lh)); parts.push(data);
+      var che = [];
+      function cpush32(v) { che.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+      function cpush16(v) { che.push(v & 0xff, (v >>> 8) & 0xff); }
+      cpush32(0x02014b50); cpush16(20); cpush16(20); cpush16(0); cpush16(0); cpush16(0); cpush16(0);
+      cpush32(crc); cpush32(data.length); cpush32(data.length); cpush16(nameBytes.length);
+      cpush16(0); cpush16(0); cpush16(0); cpush16(0); cpush32(offset);
+      che = che.concat(nameBytes); central.push(new Uint8Array(che));
+      offset += lh.length + data.length;
+    });
+    var centralSize = central.reduce(function (s, a) { return s + a.length; }, 0);
+    var eo = [];
+    function epush32(v) { eo.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+    function epush16(v) { eo.push(v & 0xff, (v >>> 8) & 0xff); }
+    epush32(0x06054b50); epush16(0); epush16(0); epush16(files.length); epush16(files.length);
+    epush32(centralSize); epush32(offset); epush16(0);
+    return new Blob(parts.concat(central, [new Uint8Array(eo)]), { type: 'application/zip' });
+  }
+  function uploadBlob(blob, name) {
+    return fetch('/api/fb/upload?name=' + encodeURIComponent(name), {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob,
+    }).then(function (r) { return r.json(); });
+  }
+  function pickFolderViaInput() {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    try { input.webkitdirectory = true; input.setAttribute('webkitdirectory', ''); input.setAttribute('directory', ''); } catch (e) {}
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', function () {
+      var files = Array.prototype.slice.call(input.files || []);
+      input.remove();
+      if (!files.length) { alert('No files in folder'); return; }
+      showFbLoading('ZIPPING ' + files.length + ' FILES');
+      Promise.all(files.map(function (f) {
+        return f.arrayBuffer().then(function (ab) {
+          return { name: f.webkitRelativePath || f.name, data: new Uint8Array(ab) };
+        });
+      })).then(function (items) {
+        return uploadBlob(zipStore(items), (files[0].webkitRelativePath.split('/')[0] || 'folder') + '.zip');
+      }).then(function (d) {
+        if (d && d.path) injectFileToken(d.path);
+        else alert('Upload failed: ' + JSON.stringify(d));
+      }).catch(function (e) { alert('Folder zip failed: ' + (e && e.message || e)); });
+    });
+    input.click();
+  }
+  // Always-on (bounded interval, no subtree observer): single Attach button
+  // in the app's composer row — phone picker -> /api/fb/upload -> token.
+  // Folder lives only in the floating card (mobile) / native APK picker.
+  function ensureComposerFolderButton() {
+    var row = document.querySelector('.composer-row');
+    if (!row || row.querySelector('.fb-folder-attach')) return;
+    var filesBtn = document.createElement('button');
+    filesBtn.type = 'button';
+    filesBtn.className = 'fb-folder-attach fb-files-attach';
+    filesBtn.textContent = '\uD83D\uDCCE Attach';
+    filesBtn.setAttribute('aria-label', 'Attach files');
+    filesBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var shim = window.freebuffDesktop;
+      if (shim && typeof shim.pickAttachments === 'function') {
+        var btn = filesBtn;
+        var orig = btn.textContent;
+        btn.textContent = '⏳ Uploading…';
+        btn.disabled = true;
+        showFbLoading('UPLOADING');
+        shim.pickAttachments().then(function (files) {
+          hideFbLoading(); btn.textContent = orig;
+          btn.disabled = false;
+          if (!files || !files.length) return;
+          (files || []).forEach(function (f) {
+            injectFileToken(f.path);
+          });
+          // brief green flash so "paste path" reads as uploaded
+          try { btn.style.outline = '2px solid #2eaa62'; setTimeout(function(){ btn.style.outline=''; }, 900); } catch(e){}
+        }).catch(function (e) { btn.textContent = orig; btn.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
+      } else {
+        var native = row.querySelector('.attach');
+        if (native) native.click();
+        else window.alert('File attach unavailable here.');
+      }
+    });
+    row.appendChild(filesBtn);
+  }
+  if (typeof setInterval !== 'undefined') setInterval(ensureComposerFolderButton, 1500);
+  ensureComposerFolderButton();
+
   // React mounts large transcripts in many small commits. A separate
   // document-wide observer per mobile feature can monopolize a phone's main
   // thread while the initial thread is loading. Share one observer, start it
@@ -1597,6 +1780,29 @@
         closeModelSheet();
         return true;
       }
+      // "Open" pill on each model row: jumps to the thread using that model.
+      function injectModelOpenButtons(menu) {
+        if (!menu) return;
+        Array.prototype.slice
+          .call(menu.querySelectorAll('.freebuff-model-option'))
+          .forEach(function (option) {
+            if (option.querySelector('.fb-model-open')) return;
+            var matches = modelSessionUserRecords(option);
+            if (!matches.length) return;
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'fb-model-open';
+            btn.textContent = 'Open';
+            btn.setAttribute('aria-label', 'Open session using ' + visibleModelTitle(option));
+            btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+            btn.addEventListener('click', function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              selectOpenSession(matches[0].record, matches[0].name);
+            });
+            option.appendChild(btn);
+          });
+      }
       function isInjectedAvailabilityNode(node) {
         var element =
           node && node.nodeType === 1
@@ -1913,6 +2119,7 @@
           parent: 'context-card',
         });
         syncModelAvailability(menu);
+        injectModelOpenButtons(menu);
         if (closeBtn) return;
         closeBtn = document.createElement('button');
         closeBtn.type = 'button';
@@ -3231,7 +3438,7 @@
       var opener = null;
       var THEMES = [
         { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
-        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#f2d21c' },
+        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#b89a0f' },
         { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
         { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
       ];
@@ -3899,9 +4106,32 @@
             'Attach files, photos, or a folder',
             '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
             function () {
+            var shim = window.freebuffDesktop;
+            if (shim && typeof shim.pickAttachments === 'function') {
+              showFbLoading('UPLOADING');
+              shim.pickAttachments().then(function (files) {
+                hideFbLoading(); if (!files || !files.length) return;
+                (files || []).forEach(function (f) {
+                  injectFileToken(f.path);
+                });
+              }).catch(function (e) { window.alert('File attach failed: ' + (e && e.message || e)); });
+            } else {
               var c = getComposer();
               var a = c ? c.querySelector('.composer-row .attach') : null;
               if (a) a.click();
+            }
+          },
+          ),
+        );
+        wrap.appendChild(
+          actionBtn(
+            'folder',
+            'Attach a folder (zipped) \uD83D\uDCC2',
+            '<text x="12" y="16" text-anchor="middle" font-size="14">\uD83D\uDCC2</text>',
+            function () {
+              var native = window.FreebuffNative;
+              if (native && typeof native.pickFolder === 'function') native.pickFolder();
+              else pickFolderViaInput();
             },
           ),
         );
@@ -5216,6 +5446,7 @@
       var contentIndexToId = Object.create(null);
       var wallpaperStyleEl = null;
       var wallpaperState = null;
+      var wallpaperVideoEl = null;
       var WALLPAPER_PRESETS = {
         void: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3CradialGradient id="g" cx="50%25" cy="25%25" r="70%25"%3E%3Cstop offset="0%25" stop-color="%232a0a42"/%3E%3Cstop offset="100%25" stop-color="%2305000d"/%3E%3C/radialGradient%3E%3Crect width="128" height="128" fill="url(%23g)"/%3E%3C/svg%3E',
         grid: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" fill="%2306000d"/%3E%3Cpath d="M0 0h2V128H0zM0 0h128v2H0z" fill="%23140026" fill-opacity=".45"/%3E%3Cg opacity=".35"%3E%3Cpath d="M0 0h1V128H0z"/%3E%3Cpath d="M0 0h128v1H0z"/%3E%3C/g%3E%3C/svg%3E',
@@ -5469,11 +5700,11 @@
           body: JSON.stringify(payload || {}),
         });
       }
+      var eventSourceRetry = null;
+      var eventSourceAttempts = 0;
       function closeEventStream() {
-        if (eventSource) {
-          eventSource.close();
-          eventSource = null;
-        }
+        if (eventSource) { try { eventSource.close(); } catch (e) {} eventSource = null; }
+        if (eventSourceRetry) { clearTimeout(eventSourceRetry); eventSourceRetry = null; }
       }
       function textOfMessage(message) {
         if (!message) return '';
@@ -5871,14 +6102,30 @@
         }
       }
       function connectEvents() {
-        closeEventStream();
+        if (eventSourceRetry) { clearTimeout(eventSourceRetry); eventSourceRetry = null; }
+        if (eventSource) { try { eventSource.close(); } catch (e) {} eventSource = null; }
         if (!sessionId) return;
-        eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events');
+        eventSource = new EventSource('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/events' + (cwd ? '?cwd=' + encodeURIComponent(cwd) : ''));
+        eventSource.onopen = function () {
+          eventSourceAttempts = 0;
+          if (session) setStatus(session.state === 'running' ? 'Running' : 'Ready', session && session.state === 'running');
+          api('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/messages').then(function (data) {
+            try { renderMessages(data); } catch (e) {}
+          }).catch(function () {});
+        };
         eventSource.onmessage = function (event) {
           try { handleEvent(JSON.parse(event.data)); } catch (e) {}
         };
         eventSource.onerror = function () {
-          if (session && session.state !== 'running') setStatus('Pi connection lost', false);
+          if (!eventSource) return;
+          if (eventSource.readyState === EventSource.CLOSED) {
+            eventSourceAttempts += 1;
+            var delay = Math.min(30000, 1000 * Math.pow(2, eventSourceAttempts));
+            setStatus('Pi reconnecting...', true);
+            eventSourceRetry = setTimeout(function () { if (sessionId) connectEvents(); }, delay);
+          } else if (session && session.state !== 'running') {
+            setStatus('Pi connection lost', false);
+          }
         };
       }
       function enhancePiSelect(select) {
@@ -6220,6 +6467,13 @@
         }
         if (command === 'quit') {
           setPiMode(false);
+          return;
+        }
+        if (command === 'reload') {
+          if (!sessionId) { showCommandNotice('/reload', 'No active Pi session'); return; }
+          setStatus('Reloading Pi resources…', true);
+          post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/prompt', { message: '/buff-reload', cwd: cwd })
+            .catch(function (error) { setStatus(error.message || 'Reload failed', false); });
           return;
         }
         var detail = PI_SLASH_COMMANDS.filter(function (item) { return item[0] === command; })[0];
@@ -6617,10 +6871,13 @@
       function closePanel() {
         setSessionDrawer(false);
         setSettingsDrawer(false);
-        closeEventStream();
+        // ponytail: keep EventSource alive when Pi is streaming — closing the
+        // panel is a view hide, not a session kill. Reconnect happens on open.
+        if (!session || session.state !== 'running') closeEventStream();
         historyLayer = null;
         if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
         overlay = null;
+        // keep wallpaperVideoEl/style for next open; applyWallpaper rebuilds it
         document.documentElement.classList.remove('fb-pi-active');
       }
       function sendPrompt() {
@@ -6863,7 +7120,8 @@
           ['void', 'Void'],
           ['grid', 'Grid'],
           ['dusk', 'Dusk'],
-          ['url', 'URL image…']
+          ['url', 'URL image…'],
+          ['video-url', 'Video URL…']
         ];
         wallOptions.forEach(function (opt) {
           var o = document.createElement('option');
@@ -6900,11 +7158,11 @@
             wallNote.hidden = true;
             return;
           }
-          if (pick === 'url') {
+          if (pick === 'url' || pick === 'video-url') {
             wallUrl.hidden = false;
             wallApply.hidden = false;
             wallUrl.focus();
-            wallNote.textContent = 'Paste image URL, then Apply.';
+            wallNote.textContent = pick === 'video-url' ? 'Paste video URL, then Apply.' : 'Paste image URL, then Apply.';
             wallNote.hidden = false;
             return;
           }
@@ -6918,11 +7176,14 @@
         });
         wallApply.addEventListener('click', function () {
           var url = wallUrl.value.trim();
+          var isVideo = wallSelect.value === 'video-url';
           if (!url) { wallpaperState = { mode: 'dim', url: '', preset: 'off' }; wallSelect.value = 'off'; applyWallpaper(); wallNote.hidden = true; return; }
-          validateImageUrl(url, function (ok) {
-            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: 'url' }; applyWallpaper(); wallNote.textContent = 'Wallpaper applied.'; wallNote.hidden = false; }
-            else { wallNote.textContent = 'Image could not be loaded.'; wallNote.hidden = false; }
-          });
+          var done = function (ok) {
+            if (ok) { wallpaperState = { mode: 'dim', url: url, preset: isVideo ? 'video-url' : 'url', kind: isVideo ? 'video' : 'image' }; applyWallpaper(); wallNote.textContent = isVideo ? 'Video wallpaper applied.' : 'Wallpaper applied.'; wallNote.hidden = false; }
+            else { wallNote.textContent = isVideo ? 'Video could not be loaded.' : 'Image could not be loaded.'; wallNote.hidden = false; }
+          };
+          if (isVideo) validateVideoUrl(url, done);
+          else validateImageUrl(url, done);
         });
         wallpaperSection.appendChild(wallTitle);
         wallpaperSection.appendChild(wallSelect);
@@ -6951,6 +7212,52 @@
         abortButton.textContent = 'Stop';
         abortButton.addEventListener('click', function () { if (sessionId) post('/api/fb/pi/session/' + encodeURIComponent(sessionId) + '/abort', {}); });
         form.appendChild(promptInput);
+        var piAttachButton = document.createElement('button');
+        piAttachButton.type = 'button';
+        piAttachButton.className = 'fb-pi-attach';
+        piAttachButton.textContent = '\uD83D\uDCCE';
+        piAttachButton.title = 'Attach files';
+        piAttachButton.setAttribute('aria-label', 'Attach files');
+        piAttachButton.addEventListener('click', function () {
+          var shim = window.freebuffDesktop;
+          if (shim && typeof shim.pickAttachments === 'function') {
+            var b = piAttachButton; var o = b.textContent; b.textContent = '⏳'; b.disabled = true;
+            showFbLoading('UPLOADING');
+            shim.pickAttachments().then(function (files) {
+              hideFbLoading(); b.textContent = o; b.disabled = false;
+              if (!files || !files.length) return;
+              (files || []).forEach(function (f) {
+                var tok = '@file ' + f.path;
+                // ponytail: Pi has its own textarea — write directly, not via global .composer
+                try {
+                  if (promptInput) {
+                    var cur = promptInput.value || '';
+                    promptInput.value = cur ? cur + '\n' + tok : tok;
+                    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    promptInput.dispatchEvent(new Event('change', { bubbles: true }));
+                  } else injectFileToken(f.path);
+                  promptInput && promptInput.focus();
+                  // chip above Pi composer
+                  var cc = ensureAttachChipContainer();
+                  if (cc) { var chip=document.createElement('span'); chip.className='fb-attach-chip'; chip.textContent=f.path.split('/').pop()+' ✓'; cc.appendChild(chip); setTimeout(function(){try{chip.remove();if(!cc.children.length)cc.remove();}catch(e){}},6000); }
+                } catch (e) { injectFileToken(f.path); }
+              });
+            }).catch(function (e) { b.textContent = o; b.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
+          } else window.alert('File attach unavailable here.');
+        });
+        form.appendChild(piAttachButton);
+        var piFolderButton = document.createElement('button');
+        piFolderButton.type = 'button';
+        piFolderButton.className = 'fb-pi-attach-url';
+        piFolderButton.textContent = '\uD83D\uDCC2';
+        piFolderButton.title = 'Attach a folder as .zip (or files: use 📎 in the main chat)';
+        piFolderButton.setAttribute('aria-label', 'Attach a folder (zipped)');
+        piFolderButton.addEventListener('click', function () {
+          var native = window.FreebuffNative;
+          if (native && typeof native.pickFolder === 'function') native.pickFolder();
+          else pickFolderViaInput();
+        });
+        form.appendChild(piFolderButton);
         form.appendChild(abortButton);
         chat.appendChild(controls);
         chat.appendChild(messageList);
@@ -7011,9 +7318,10 @@
         } else {
           wallpaperState.mode = wallpaperState.mode || 'dim';
           wallpaperState.url = wallpaperState.url || (WALLPAPER_PRESETS[wallpaperState.preset] || '');
+          wallpaperState.kind = wallpaperState.kind || 'image';
         }
         if (wallSelect) wallSelect.value = wallpaperState.preset || 'off';
-        var showUrl = wallSelect && wallSelect.value === 'url';
+        var showUrl = wallSelect && (wallSelect.value === 'url' || wallSelect.value === 'video-url');
         if (wallUrl) {
           wallUrl.hidden = !showUrl;
           wallUrl.value = showUrl ? (wallpaperState.url || '') : '';
@@ -7035,18 +7343,40 @@
         img.onerror = function () { cb(false); };
         img.src = url;
       }
+      function validateVideoUrl(url, cb) {
+        try {
+          var parsed = new URL(url);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'data:') { cb(false); return; }
+        } catch (e) { cb(false); return; }
+        var v = document.createElement('video');
+        var settled = false;
+        var done = function (ok) { if (!settled) { settled = true; v.src = ''; cb(ok); } };
+        v.muted = true;
+        v.addEventListener('loadeddata', function () { done(true); });
+        v.addEventListener('error', function () { done(false); });
+        setTimeout(function () { done(false); }, 8000);
+        v.src = url;
+      }
+      function removeWallpaperVideo() {
+        if (wallpaperVideoEl) { wallpaperVideoEl.remove(); wallpaperVideoEl = null; }
+      }
       function applyWallpaper() {
         var state = wallpaperState || { mode: 'off', url: '' };
         var url = state.mode === 'off' ? '' : (state.url || '');
+        var isVideo = !!url && state.kind === 'video';
         if (wallpaperStyleEl) wallpaperStyleEl.remove();
         if (!overlay) return;
+        if (url && !isVideo) removeWallpaperVideo();
         if (url) {
           overlay.classList.add('fb-pi-wall');
           overlay.style.setProperty('--fb-wallpaper-dim', state.mode === 'vivid' ? '.14' : '.22');
+          // ponytail: image wallpaper was never visible — --fb-wallpaper-url was never set
+          if (!isVideo) overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '\\"') + '")');
+          else overlay.style.removeProperty('--fb-wallpaper-url');
           wallpaperStyleEl = document.createElement('style');
           wallpaperStyleEl.id = 'fb-pi-wall-style';
           wallpaperStyleEl.textContent =
-            '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }' +
+            (isVideo ? '' : '.fb-pi-view.fb-pi-wall { background-image: var(--fb-wallpaper-url) !important; background-size: cover; background-position: center; background-repeat: no-repeat; }') +
             '.fb-pi-view.fb-pi-wall::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--fb-wallpaper-dim,.22)); pointer-events:none; }' +
             '.fb-pi-view.fb-pi-wall .fb-pi-messages, .fb-pi-view.fb-pi-wall .fb-pi-panel, .fb-pi-view.fb-pi-wall .fb-pi-head, .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 62%, transparent) !important; }' +
             '.fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 58%, transparent) !important; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }' +
@@ -7054,8 +7384,23 @@
             ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-messages, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-panel, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-head, :root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-home { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 48%, transparent) !important; }' +
             ':root[data-fb-theme=\'cyberpunk\'] .fb-pi-view.fb-pi-wall .fb-pi-message { background: color-mix(in srgb, var(--surface-2,#1a1a1a) 42%, transparent) !important; }';
           document.head.appendChild(wallpaperStyleEl);
-          overlay.style.setProperty('--fb-wallpaper-url', 'url("' + url.replace(/"/g, '%22') + '")');
+          if (isVideo) {
+            removeWallpaperVideo();
+            wallpaperVideoEl = document.createElement('video');
+            wallpaperVideoEl.className = 'fb-pi-wall-video';
+            wallpaperVideoEl.setAttribute('aria-hidden', 'true');
+            wallpaperVideoEl.muted = true; // autoplay policies require muted+playsinline
+            wallpaperVideoEl.loop = true;
+            wallpaperVideoEl.autoplay = true;
+            wallpaperVideoEl.playsInline = true;
+            wallpaperVideoEl.preload = 'auto';
+            wallpaperVideoEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-1;pointer-events:none;filter:brightness(.8) saturate(.92);';
+            wallpaperVideoEl.src = url;
+            overlay.insertBefore(wallpaperVideoEl, overlay.firstChild);
+            var p = wallpaperVideoEl.play(); if (p && p.catch) p.catch(function () {});
+          }
         } else {
+          removeWallpaperVideo();
           overlay.classList.remove('fb-pi-wall');
           overlay.style.removeProperty('--fb-wallpaper-url');
           overlay.style.removeProperty('--fb-wallpaper-dim');

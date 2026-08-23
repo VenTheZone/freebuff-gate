@@ -34,15 +34,27 @@ interface GateBrowserEngine {
     fun destroy()
 
     /**
-     * Registers a callback the engine invokes when the web page requests file
-     * selection (input[type=file]). The activity provides the launcher that
-     * opens the system file picker; the engine invokes [requestFile] with
-     * the accept types and whether multiple selection is allowed.
+     * Registers a callback the engine invokes when the page requests file
+     * selection (<input type=file>). The activity provides the launcher that
+     * opens the system file picker; [requestFile] receives the accept types
+     * and whether multiple selection was requested.
      */
     fun setFilePickerLauncher(
         requestFile: (acceptTypes: Array<String>, allowMultiple: Boolean) -> Unit,
-    )
+    ) {
+    }
 
-    /** Called by the activity when the system file picker returns URIs. */
-    fun onFilePickerResult(uris: Array<Uri>?)
+    /** Called with the picker's URIs (null = cancelled). No-op default so
+     *  engines without file-picker support compile unchanged. */
+    fun onFilePickerResult(uris: List<Uri>?) {}
+
+    /** Origin the engine is pinned to (used to build the upload endpoint). */
+    fun currentOrigin(): String? = null
+
+    /**
+     * Registers a callback the engine invokes when the page requests a folder
+     * selection (for zipped upload). The activity opens the system document
+     * tree picker; [requestFolder] is invoked with no args.
+     */
+    fun setFolderPickerLauncher(requestFolder: () -> Unit) {}
 }

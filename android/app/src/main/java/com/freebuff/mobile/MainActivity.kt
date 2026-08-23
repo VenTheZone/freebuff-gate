@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.view.View
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -14,6 +15,14 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.concurrent.thread
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import java.net.URI
@@ -32,12 +41,91 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var sessionStore: SecureSessionStore
     private lateinit var deviceIdentity: DeviceIdentity
+
+    // System file picker for <input type=file> in the WebView. Registered at
+    // construction as required by the ActivityResult API; GetMultipleContents
+    // covers single and multi selection.
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris -> engine.onFilePickerResult(uris) }
+
+    // Folder attach: pick a document tree, zip it natively, upload the zip via
+    // the proxy's /api/fb/upload, and hand the server path back to the page.
+    private val folderPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> if (uri != null) uploadFolderAsZip(uri) }
+
+    // Zip a picked document tree natively and upload the zip to the proxy's
+    // /api/fb/upload; then hand the returned server path to the page so it can
+    // drop an attachment token into the composer.
+    private fun uploadFolderAsZip(treeUri: Uri) {
+        thread {
+            try {
+                val base = engine.currentOrigin() ?: return@thread
+                val tree = DocumentFile.fromTreeUri(this, treeUri) ?: return@thread
+                val baos = ByteArrayOutputStream()
+                ZipOutputStream(baos).use { zos ->
+                    fun addDir(dir: DocumentFile, prefix: String) {
+                        for (child in dir.listFiles()) {
+                            if (child.isDirectory) addDir(child, prefix + (child.name ?: "dir") + "/")
+                            else {
+                                val entryName = prefix + (child.name ?: "file")
+                                zos.putNextEntry(ZipEntry(entryName))
+                                contentResolver.openInputStream(child.uri)?.use { ins -> ins.copyTo(zos) }
+                                zos.closeEntry()
+                            }
+                        }
+                    }
+                    addDir(tree, "")
+                }
+                val zipBytes = baos.toByteArray()
+                val folderName = tree.name ?: "folder"
+                val uploadUrl = URL("${base}/api/fb/upload?name=${Uri.encode(folderName + ".zip")}")
+                val conn = uploadUrl.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/octet-stream")
+                conn.outputStream.use { it.write(zipBytes) }
+                val code = conn.responseCode
+                val resp = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                    ?.bufferedReader()?.readText() ?: ""
+                if (code in 200..299) {
+                    val path = Regex("\"path\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1)
+                    val name = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"").find(resp)?.groupValues?.get(1) ?: folderName
+                    if (path != null) {
+                        val safePath = path.replace("'", "\\'")
+                        val safeName = name.replace("'", "\\'")
+                        runOnUiThread { (engine.view as WebView).evaluateJavascript("window.freebuffFolderAttached('$safePath','$safeName')", null) }
+                    } else {
+                        folderAttachError("Unexpected upload response: " + resp.take(120))
+                    }
+                } else {
+                    folderAttachError("Upload failed: HTTP $code ${resp.take(120)}")
+                }
+            } catch (e: Exception) {
+                folderAttachError("Folder attach failed: " + (e.message ?: e.javaClass.simpleName))
+            }
+        }
+    }
+
+    // Surface native attach failures inside the WebView so they are never
+    // silent (the old catch swallowed everything, including cleartext-policy
+    // rejections on the tunnel-mode loopback origin).
+    private fun folderAttachError(message: String) {
+        val safe = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        runOnUiThread {
+            (engine.view as? WebView)?.evaluateJavascript(
+                "window.alert('Folder attach: $safe');",
+                null,
+            )
+        }
+    }
     private lateinit var reconnectController: ReconnectController
     private lateinit var qrScanner: QrScanner
     private var webSessionLoading = false
     private var loadedWebSessionKey: String? = null
     // E2E tunnel prototype (docs/e2e-tunnel.md §5): owns the loopback proxy +
-    // tunnel peer while the WebView is pointed at the app-owned localhost proxy.
+    // tunnel peer while the WebView is pointed at 127.0.0.1.
     private var tunnelGateway: com.freebuff.mobile.tunnel.TunnelGateway? = null
     private val pairingExecutor = Executors.newSingleThreadExecutor()
 
@@ -52,12 +140,6 @@ class MainActivity : AppCompatActivity() {
     ) {
         // Best effort: the background turn-notification service still runs
         // without POST_NOTIFICATIONS; only the notification itself is hidden.
-    }
-
-    private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent(),
-    ) { uri ->
-        engine.onFilePickerResult(uri?.let { arrayOf(it) })
     }
 
     override fun onResume() {
@@ -90,12 +172,10 @@ class MainActivity : AppCompatActivity() {
             showState(ConnectionState.ERROR, "Downloads are disabled in Freebuff Gate")
         }
         engine.setFilePickerLauncher { acceptTypes, _ ->
-            val mimeTypes = acceptTypes
-                .filter { it.isNotBlank() }
-                .ifEmpty { listOf("*/*") }
-                .toTypedArray()
-            filePickerLauncher.launch(mimeTypes.first())
+            val mime = acceptTypes.firstOrNull { it.contains("/") } ?: "*/*"
+            filePickerLauncher.launch(mime)
         }
+        engine.setFolderPickerLauncher { folderPickerLauncher.launch(null) }
         browserHost.addView(
             engine.view,
             FrameLayout.LayoutParams(
@@ -186,6 +266,10 @@ class MainActivity : AppCompatActivity() {
         pairingExecutor.execute {
             try {
                 val payload = PairingPayload.parse(rawUrl)
+                val configuredPairingOrigin = configuredOrigin(BuildConfig.DEFAULT_PAIRING_ORIGIN)
+                require(configuredPairingOrigin == null || payload.baseUrl == configuredPairingOrigin) {
+                    "Pairing URL is not from configured Freebuff relay"
+                }
                 val session = PairingApi(payload.baseUrl).claim(
                     payload = payload,
                     deviceName = deviceName,
@@ -331,7 +415,7 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Tunnel mode (Phase 1 prototype): WebView points at the loopback proxy
-     * (localhost) whose traffic rides the encrypted tunnel to the desktop
+     * (127.0.0.1) whose traffic rides the encrypted tunnel to the desktop
      * agent. No relay session cookie — the desktop orchestrator's own cookie
      * flows back through the tunnel like a desktop browser (docs/e2e-tunnel.md
      * §5.6).

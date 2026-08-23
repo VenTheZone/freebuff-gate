@@ -44,6 +44,7 @@ function fakeChild(sessionId = 'session-1') {
       queueMicrotask(() => child.stdout.write(JSON.stringify({ id: request.id, type: 'response', success: true, data: { models: [
         { provider: 'ready-provider', id: 'ready-model', name: 'Ready model' },
         { provider: 'locked-provider', id: 'locked-model', name: 'Locked model' },
+        { provider: 'freebuff', id: 'freebuff-model', name: 'Freebuff runtime model' },
       ] } }) + '\n'));
     } else {
       queueMicrotask(() => child.stdout.write(JSON.stringify({ id: request.id, type: 'response', success: true, data: {} }) + '\n'));
@@ -121,6 +122,49 @@ test('Pi controller opens a session and forwards RPC commands', async () => {
     await controller.setThinking('session-1', 'high');
     assert.equal(child.requests.find((request) => request.type === 'prompt' && request.message === 'follow-up while running').streamingBehavior, 'followUp');
     assert.equal(child.killed, false);
+  } finally {
+    controller.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Pi controller keeps runtime/extension providers whose CLI auth check is unknown', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-pi-runtime-provider-'));
+  let child;
+  const controller = createPiAgentController({
+    allowedRoot: path.dirname(dir),
+    nodePath: process.execPath,
+    cliPath: __filename,
+    spawnCommand: () => { child = fakeChild(); return child; },
+    // 'freebuff' is a custom provider registered by an extension at runtime.
+    // The CLI auth check does not enumerate it (provider_not_found), but pi's
+    // runtime already returned its models via get_available_models.
+    authSpawn: (_node, args) => {
+      const auth = new EventEmitter();
+      auth.stdout = new PassThrough();
+      auth.kill = () => {};
+      const provider = args[args.indexOf('--provider') + 1];
+      queueMicrotask(() => {
+        // freebuff is a runtime/extension provider the CLI does not enumerate.
+        // ready-provider is ready; locked-provider truly lacks credentials.
+        const status = provider === 'freebuff'
+          ? { status: 'not_ready', provider, reason: 'provider_not_found' }
+          : provider === 'ready-provider'
+            ? { status: 'ready', provider }
+            : { status: 'not_ready', provider, reason: 'missing_credentials' };
+        auth.stdout.write(JSON.stringify(status) + '\n');
+        auth.emit('close', 0);
+      });
+      return auth;
+    },
+  });
+  try {
+    await controller.open({ cwd: dir });
+    const catalog = await controller.models('session-1');
+    // The runtime provider's models survive the auth filter; a truly
+    // unauthenticated builtin provider (locked-provider) is still dropped.
+    assert.deepEqual(catalog.models.map((model) => model.id), ['ready-model', 'freebuff-model']);
+    assert.ok(catalog.authenticatedProviders.includes('freebuff'));
   } finally {
     controller.close();
     fs.rmSync(dir, { recursive: true, force: true });
