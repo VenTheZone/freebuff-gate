@@ -3894,11 +3894,13 @@
     });
   }
 
-  // Space switcher (mobile): 0.0.71 puts the workspace/space picker in a left
-  // .rail that has no phone affordance. Mirror the explorer side-panel pattern
-  // — a top-row .fb-space-toggle opens a slide-in panel cloning the rail's
-  // .space buttons; tapping one activates that space (clicks the app's own
-  // .space control) and closes the panel.
+  // Space manager (mobile): 0.0.71 moved the workspace switcher into a left
+  // .rail that hides on phones. Instead of reimplementing switch/new/rename/
+  // close, slide the REAL .rail in as a panel — its native .space buttons,
+  // .rail-add (project picker), and right-click context menu all keep working
+  // untouched. The top-row .fb-space-toggle summons it; tapping a space or
+  // the scrim closes it. We only override the rail's mobile display:none
+  // while open, so desktop layout is never touched.
   var spaceBound = false;
   function mobileSpacePanel() {
     if (spaceBound) return;
@@ -3908,70 +3910,64 @@
       var tabbar = document.querySelector('.tabbar:not(.threadbar)');
       if (!tabbar) return;
 
+      var railEl = null;
       function rail() { return document.querySelector('.rail'); }
       function activeSpace() {
         var s = document.querySelector('.rail .space.active') || document.querySelector('.space.active');
-        return s ? (s.innerText || s.getAttribute('aria-label') || 'SPACE').trim().slice(0, 8) : 'SPACE';
+        return s ? (s.getAttribute('aria-label') || s.innerText || 'SPACE').trim().slice(0, 8) : 'SPACE';
       }
 
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'fb-space-toggle';
-      btn.setAttribute('aria-label', 'Switch workspace');
-      btn.title = 'Workspace';
+      btn.setAttribute('aria-label', 'Manage workspaces');
+      btn.title = 'Workspaces';
       function refresh() { btn.textContent = activeSpace(); }
       refresh();
 
-      var panel = null;
       var scrim = null;
+      var open = false;
       function closePanel() {
-        if (panel) { panel.remove(); panel = null; }
+        if (!open) return;
+        open = false;
+        if (railEl) {
+          railEl.classList.remove('fb-space-panel-open');
+        }
         if (scrim) { scrim.remove(); scrim = null; }
+        document.removeEventListener('keydown', onKey, true);
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      function onKey(ev) {
+        if (ev.key === 'Escape') closePanel();
       }
       function openPanel() {
-        closePanel();
+        railEl = rail();
+        if (!railEl) return;
+        open = true;
+        // CSS .rail.fb-space-panel-open (inside the <=700px media query) wins
+        // over the .rail{display:none!important} rule — no inline style needed.
+        railEl.classList.add('fb-space-panel-open');
         scrim = document.createElement('div');
         scrim.className = 'fb-panel-scrim';
         scrim.setAttribute('aria-hidden', 'true');
         scrim.addEventListener('click', closePanel);
         document.body.appendChild(scrim);
-
-        panel = document.createElement('div');
-        panel.className = 'fb-space-panel';
-        var close = document.createElement('button');
-        close.className = 'fb-space-close fb-panel-toggle';
-        close.setAttribute('aria-label', 'Close');
-        close.textContent = '✕';
-        close.addEventListener('click', closePanel);
-        panel.appendChild(close);
-
-        var spaces = (rail() || document).querySelectorAll('.space');
-        spaces.forEach(function (s) {
-          var row = document.createElement('button');
-          row.type = 'button';
-          row.className = 'fb-space-row' + (s.classList.contains('active') ? ' active' : '');
-          row.textContent = (s.innerText || s.getAttribute('aria-label') || 'Space').trim();
-          row.addEventListener('click', function () {
-            s.click(); // app's own space activation
-            refresh();
-            closePanel();
-          });
-          panel.appendChild(row);
+        document.addEventListener('keydown', onKey, true);
+        btn.setAttribute('aria-expanded', 'true');
+        // A native space click switches space; close to reveal the chat.
+        railEl.querySelectorAll('.space').forEach(function (s) {
+          s.addEventListener('click', function () { setTimeout(closePanel, 120); });
         });
-        document.body.appendChild(panel);
       }
 
       btn.addEventListener('click', function (ev) {
         ev.stopPropagation();
-        if (panel) closePanel(); else openPanel();
+        if (open) closePanel(); else openPanel();
       });
 
       var anchor = tabbar.querySelector('.fb-session-switch') || tabbar.querySelector('.conn-status') || null;
       tabbar.insertBefore(btn, anchor);
 
-      document.addEventListener('keydown', function (ev) {
-        if (window.matchMedia(MOBILE).matches && ev.key === 'Escape') closePanel();
-      });
       var mq = window.matchMedia(MOBILE);
       mq.addEventListener('change', function (ev) { if (!ev.matches) { btn.style.display = 'none'; closePanel(); } });
       watchMobileBody(refresh);
