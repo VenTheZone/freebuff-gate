@@ -710,6 +710,15 @@
 }
 
 /* ─────────────────────────── 480px: small phones ───────────────────────── */
+/* Mobile (<=700px): 0.0.71 introduced a left "spaces" .rail (52px) that has
+   no mobile affordance and steals ~52px from the 390px viewport, pushing
+   .workspace to x52. Hide it; the active space switch moves into the top
+   action row via .fb-space-toggle (see mobile-ui.js). */
+@media (max-width: 700px) {
+  .rail { display: none !important; }
+  .workspace { left: 0 !important; width: 100% !important; }
+}
+
 @media (max-width: 480px) {
   .messages {
     --chat-gutter: 8px;
@@ -726,6 +735,10 @@
   }
   .msg.user .bubble {
     max-width: 92%;
+  }
+  /* Space switch lives in the top action row on phones, not the left rail. */
+  .fb-space-toggle {
+    display: inline-flex !important;
   }
 }
 
@@ -1289,8 +1302,79 @@ html.fb-pi-active .global-feedback {
   outline: 1px solid var(--focus-ring);
   outline-offset: 1px;
 }
+/* Space switch (mobile-ui.js): mirrors .fb-panel-toggle. 0.0.71 moved the
+   workspace/space switcher into a left .rail that has no mobile affordance;
+   on phones the active space lives in the top action row, and tapping this
+   summons the rail content as a slide-in panel (see mobileSpacePanel()). */
+.fb-space-toggle {
+  position: relative;
+  display: none; /* shown only via the 480px rule above */
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 28px;
+  min-width: 44px;
+  margin: 0 2px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 12px/1 monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.fb-space-toggle:hover,
+.fb-space-toggle:active {
+  background: var(--raised);
+  color: var(--text);
+}
+.fb-space-toggle:focus-visible {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: 1px;
+}
 
-/* Session switcher (mobile-ui.js): a slim header button + dropdown listing
+/* Slide-in panel that hosts the spaces rail content on mobile. The .rail is
+   display:none on mobile, so we clone its .space buttons into this panel. */
+.fb-space-panel {
+  position: fixed;
+  top: var(--fb-mobile-safe-top, 0);
+  left: 0;
+  bottom: 0;
+  z-index: 60;
+  width: min(72vw, 300px);
+  background: var(--bg, #0a0a0f);
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+  padding: 12px 8px;
+  overflow-y: auto;
+  animation: fb-panel-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.fb-space-panel .fb-space-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: 600 13px/1 monospace;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-space-panel .fb-space-row.active {
+  background: var(--raised);
+  color: var(--accent, #6b9dff);
+}
+.fb-space-panel .fb-space-close {
+  margin: 0 0 8px auto;
+}
    the open sessions. The tab strip is hidden on phones, so this is the
    mobile way to switch; picking one clicks the app's own .tab-select.
    The button sits before the status pill in the 48px header. Hidden on

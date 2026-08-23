@@ -1250,20 +1250,29 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
     }
   }
   if (bestEffort.length > 0) performed.push('cache-headers');
-  const piPatch = applyPiSkillsPatch(out);
+  const piPatch = (() => {
+    // ponytail: pi-skills anchors renamed in Desktop 0.0.71 — best-effort,
+    // skip instead of failing the routes/shim patch (upgrade path: refresh
+    // PI_SKILLS_PATCHES anchors for the new bundle).
+    try { return applyPiSkillsPatch(out); }
+    catch (e) { bestEffort.push('pi-skills:skipped (' + e.message.slice(0, 60) + ')'); return { out, patched: 0 }; }
+  })();
   out = piPatch.out;
   if (piPatch.patched > 0) performed.push('pi-skills');
   if (!out.includes(SHADOW_DETECT_FIX_MARK)) {
     if (!out.includes(SHADOW_DETECT_STOCK)) {
-      throw new Error(`orchestrator shadow-detect anchor not found (app update may have renamed helpers); expected: ${SHADOW_DETECT_STOCK.slice(0, 80)}…`);
+      // ponytail: shadow-detect anchor renamed in 0.0.71 — best-effort skip.
+      bestEffort.push('shadow-detect:skipped (anchor renamed)');
+    } else {
+      out = out.split(SHADOW_DETECT_STOCK).join(SHADOW_DETECT_FIX);
+      performed.push('shadow-detect');
     }
-    out = out.split(SHADOW_DETECT_STOCK).join(SHADOW_DETECT_FIX);
-    performed.push('shadow-detect');
   }
   if (!out.includes(SHADOW_NOTE_FIX_MARK)) {
     if (!out.includes(SHADOW_NOTE_STOCK) && !out.includes(`  ${SHADOW_NOTE_STOCK}`)) {
-      throw new Error(`orchestrator shadow-note anchor not found (app update may have renamed helpers); expected: ${SHADOW_NOTE_STOCK.slice(0, 80)}…`);
-    }
+      // ponytail: shadow-note anchor renamed in 0.0.71 — best-effort skip.
+      bestEffort.push('shadow-note:skipped (anchor renamed)');
+    } else {
     // SHADOW_NOTE_STOCK is a PREFIX of SHADOW_NOTE_FIX, so split/join would
     // match inside the replacement and duplicate the block. Replace only the
     // first occurrence (the stock anchor in the real file), never inside the
@@ -1276,6 +1285,7 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
       out = out.replace(SHADOW_NOTE_STOCK, SHADOW_NOTE_FIX);
     }
     performed.push('shadow-note');
+    }
   }
   writeAtomically(orchestratorFile, out, 0o644);
   return { changes: performed, bestEffort };

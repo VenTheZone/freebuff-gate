@@ -3894,6 +3894,90 @@
     });
   }
 
+  // Space switcher (mobile): 0.0.71 puts the workspace/space picker in a left
+  // .rail that has no phone affordance. Mirror the explorer side-panel pattern
+  // — a top-row .fb-space-toggle opens a slide-in panel cloning the rail's
+  // .space buttons; tapping one activates that space (clicks the app's own
+  // .space control) and closes the panel.
+  var spaceBound = false;
+  function mobileSpacePanel() {
+    if (spaceBound) return;
+    spaceBound = true;
+    if (!window.matchMedia(MOBILE).matches) return;
+    waitForEl('.tabbar:not(.threadbar)', function () {
+      var tabbar = document.querySelector('.tabbar:not(.threadbar)');
+      if (!tabbar) return;
+
+      function rail() { return document.querySelector('.rail'); }
+      function activeSpace() {
+        var s = document.querySelector('.rail .space.active') || document.querySelector('.space.active');
+        return s ? (s.innerText || s.getAttribute('aria-label') || 'SPACE').trim().slice(0, 8) : 'SPACE';
+      }
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fb-space-toggle';
+      btn.setAttribute('aria-label', 'Switch workspace');
+      btn.title = 'Workspace';
+      function refresh() { btn.textContent = activeSpace(); }
+      refresh();
+
+      var panel = null;
+      var scrim = null;
+      function closePanel() {
+        if (panel) { panel.remove(); panel = null; }
+        if (scrim) { scrim.remove(); scrim = null; }
+      }
+      function openPanel() {
+        closePanel();
+        scrim = document.createElement('div');
+        scrim.className = 'fb-panel-scrim';
+        scrim.setAttribute('aria-hidden', 'true');
+        scrim.addEventListener('click', closePanel);
+        document.body.appendChild(scrim);
+
+        panel = document.createElement('div');
+        panel.className = 'fb-space-panel';
+        var close = document.createElement('button');
+        close.className = 'fb-space-close fb-panel-toggle';
+        close.setAttribute('aria-label', 'Close');
+        close.textContent = '✕';
+        close.addEventListener('click', closePanel);
+        panel.appendChild(close);
+
+        var spaces = (rail() || document).querySelectorAll('.space');
+        spaces.forEach(function (s) {
+          var row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'fb-space-row' + (s.classList.contains('active') ? ' active' : '');
+          row.textContent = (s.innerText || s.getAttribute('aria-label') || 'Space').trim();
+          row.addEventListener('click', function () {
+            s.click(); // app's own space activation
+            refresh();
+            closePanel();
+          });
+          panel.appendChild(row);
+        });
+        document.body.appendChild(panel);
+      }
+
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        if (panel) closePanel(); else openPanel();
+      });
+
+      var anchor = tabbar.querySelector('.fb-session-switch') || tabbar.querySelector('.conn-status') || null;
+      tabbar.insertBefore(btn, anchor);
+
+      document.addEventListener('keydown', function (ev) {
+        if (window.matchMedia(MOBILE).matches && ev.key === 'Escape') closePanel();
+      });
+      var mq = window.matchMedia(MOBILE);
+      mq.addEventListener('change', function (ev) { if (!ev.matches) { btn.style.display = 'none'; closePanel(); } });
+      watchMobileBody(refresh);
+    });
+  }
+
   // Composer context chips (agent/model/effort/workspace) collapse into a
   // button in the slim header so the composer stays clean and the bottom of
   // the chat stays readable (see mobile-ui.css). Tapping the button drops a
@@ -4680,6 +4764,7 @@
     modelSheet();
     sessionSwitcher();
     sidePanel();
+    mobileSpacePanel();
     composerCtx();
     mobileReportAccess();
     mobileFeaturesBound = true;
