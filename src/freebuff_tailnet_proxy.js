@@ -730,6 +730,14 @@ const SETSTATE_FIX =
 // branch to re-assert the bottom scroll one frame and 150ms later. Both
 // guards re-check pinBottom (n.current) and the follow flag, so a user who
 // scrolled up (or used "Scroll to latest") is never yanked back down.
+const SCROLL_MARK_V0071 =
+  'A.useLayoutEffect(()=>{const g=e.current;if(g){if(n.current){i.current!=="follow"&&(g.scrollTop=g.scrollHeight);return}l(!0),o(V1(g)<NN)}},[t]),';
+const SCROLL_FIX_V0071 =
+  'A.useLayoutEffect(()=>{const g=e.current;if(g){if(n.current){i.current!=="follow"&&(g.scrollTop=g.scrollHeight);const q=()=>{const g2=e.current;if(g2&&n.current&&i.current!=="follow")g2.scrollTop=g2.scrollHeight};requestAnimationFrame(q),setTimeout(q,150);return}l(!0),o(V1(g)<NN)}},[t]),';
+const SCROLL_MARK_V0072 =
+  'A.useLayoutEffect(()=>{const y=n.current,x=f.current===t;if(f.current=t,!(!y||x)){if(i.current){r.current!=="follow"&&(y.scrollTop=y.scrollHeight);return}u(!0),a(SO(y)<_O)}},[t]),';
+const SCROLL_FIX_V0072 =
+  'A.useLayoutEffect(()=>{const y=n.current,x=f.current===t;if(f.current=t,!(!y||x)){if(i.current){r.current!=="follow"&&(y.scrollTop=y.scrollHeight);const q=()=>{const y2=n.current;if(y2&&i.current&&r.current!=="follow")y2.scrollTop=y2.scrollHeight};requestAnimationFrame(q),setTimeout(q,150);return}u(!0),a(SO(y)<_O)}},[t]),';
 const SCROLL_MARK =
   'L.useLayoutEffect(()=>{const v=t.current;if(v){if(n.current){i.current!=="follow"&&(v.scrollTop=v.scrollHeight);return}u(!0),o(Sv(v)<KT)}},[e]),';
 const SCROLL_FIX =
@@ -835,7 +843,23 @@ const SKILL_ORIGIN_FIX =
   'row:ee=>g.jsxs(g.Fragment,{children:[g.jsxs("span",{className:"slash-name",children:["/",ee.name]}),g.jsx("span",{className:"slash-origin"+("managed"===ee.source?" builtin":"agent"===ee.source?" agents":"freebuff"===ee.source?" project":"")},{children:("managed"===ee.source?"freebuff":"agent"===ee.source?"agents":"freebuff"===ee.source?"project":String(ee.source||"user"))}),g.jsx("span",{className:"slash-hint",children:ee.description??(ee.source==="managed"?"Run the Freebuff skill":"Run skill")})]})';
 
 function patchBundle(body) {
+  return patchBundleInfo(body).body;
+}
+function patchBundleInfo(body) {
   let out = body;
+  // 0.0.71 rewrote openTab/closeTab/setState and dropped the home-thread
+  // reuse + __fbOpenThread/skillOrigin markers entirely; SCROLL survives
+  // verbatim. Detect the new bundle so we apply only what still applies and
+  // record the rest as obsolete instead of throwing (the old behavior made
+  // every 0.0.71 install fail outright).
+  const isV0071 = body.includes('qr(e,()=>ve.createThread') && !body.includes('lr(t,()=>');
+  if (isV0071) {
+    if (out.includes(SCROLL_MARK_V0071)) out = out.split(SCROLL_MARK_V0071).join(SCROLL_FIX_V0071);
+    else if (out.includes(SCROLL_MARK_V0072)) out = out.split(SCROLL_MARK_V0072).join(SCROLL_FIX_V0072);
+    // CREATE/SETSTATE/CLOSE/OPEN_THREAD/SKILL: target code removed or
+    // rewritten in 0.0.71 — skip (obsolete for this bundle version).
+    return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'] };
+  }
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
@@ -863,7 +887,7 @@ function patchBundle(body) {
   else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
   if (out.includes(SKILL_ORIGIN_FIX)) { /* already applied */ }
   else if (out.includes(SKILL_ORIGIN_MARK)) out = out.split(SKILL_ORIGIN_MARK).join(SKILL_ORIGIN_FIX);
-  return out;
+  return { body: out, obsolete: [] };
 }
 
 // ---- Auto-verify: detect + surface post-update UI patch regressions ----
@@ -944,12 +968,23 @@ async function checkUiPatches(up, log) {
     } else {
       report.bundle = bundleName;
       const bundle = await fetchUpstream(up, '/' + bundleName);
-      const patched = patchBundle(bundle.body);
-      const missing = UI_PATCH_MARKERS.filter(([name, mark]) => !patched.includes(mark)).map(([name]) => name);
-      // A fresh patched bundle after an update would contain the V3 create
-      // marker; an unpatched rebuilt bundle fails the create marker check.
+      const patched = patchBundleInfo(bundle.body);
+      // Obsolete names in patchBundle() are constant names; the marker table
+      // shortens some (CLOSE_BTN, OPEN_THREAD). Match a marker as obsolete if
+      // either its table name or its table name + "_FIX" appears.
+      const obsolete = patched.obsolete || [];
+      const isObsolete = (name) => obsolete.includes(name) || obsolete.includes(name + '_FIX');
+      const missing = UI_PATCH_MARKERS
+        .filter(([name]) => !isObsolete(name))
+        .filter(([name, mark]) => {
+          if (mark === SCROLL_FIX && (patched.body.includes(SCROLL_FIX_V0071) || patched.body.includes(SCROLL_FIX_V0072))) return false;
+          return !patched.body.includes(mark);
+        })
+        .map(([name]) => name);
       if (missing.length > 0) {
         report.errors.push(`bundle ${bundleName}: missing patch marker(s): ${missing.join(', ')} (app update likely replaced it; re-run install)`);
+      } else if (obsolete.length > 0) {
+        report.warnings.push(`bundle ${bundleName}: ${obsolete.length} patch(es) obsolete for this app version (skipped): ${obsolete.join(', ')}`);
       }
     }
     for (const route of ['/api/fb/dirlist?path=/', '/api/fb/perf-report']) {
@@ -1506,6 +1541,7 @@ module.exports = {
   checkUiPatches,
   createProxyServer,
   patchBundle,
+  patchBundleInfo,
   UI_SOURCE_SIDECAR,
   uiAssetPath,
   uiSourceDir,

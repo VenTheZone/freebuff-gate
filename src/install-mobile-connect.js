@@ -1524,14 +1524,29 @@ function collectProblems(desktopDir, options = {}) {
       problems.push({ level: 'error', item: `bundle:${name}`, message: `unreadable: ${error.message}` });
       continue;
     }
-    const missing = names.filter((mark, index) => !body.includes(fixed[index]));
+    const raw = body;
+    // The proxy patches the bundle at serve time, so the on-disk file won't
+    // carry the markers. Run it through patchBundle() to see what's actually
+    // served, and treat obsolete markers (removed upstream in a new app
+    // version, e.g. 0.0.71) as non-errors.
+    const patched = proxy.patchBundle(body);
+    body = patched.body;
+    const obsolete = patched.obsolete || [];
+    const missing = names.filter((mark, index) => !body.includes(fixed[index]) && !obsolete.includes(names[index]));
     if (missing.length > 0) {
       problems.push({
         level: 'error',
         item: `bundle:${name}`,
         message: `missing patch marker(s): ${missing.join(', ')} (app update likely replaced the bundle; re-run install)`,
       });
+    } else if (obsolete.length > 0) {
+      problems.push({
+        level: 'warn',
+        item: `bundle:${name}`,
+        message: `${obsolete.length} patch(es) obsolete for this app version (skipped): ${obsolete.join(', ')}`,
+      });
     }
+    void raw;
   }
 
   const indexHtml = path.join(uiDir, 'index.html');
