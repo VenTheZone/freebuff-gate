@@ -103,7 +103,13 @@ class TurnNotificationService : Service() {
                 Log.w(TAG, "events stream error: ${error.message}")
             }
             if (!running.get()) return
-            Thread.sleep(backoffMs)
+            try {
+                Thread.sleep(backoffMs)
+            } catch (_: InterruptedException) {
+                // shutdownNow() interrupts the loop thread on stop; exit
+                // cleanly instead of crashing the process mid-instrumentation.
+                return
+            }
             backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
         }
     }
