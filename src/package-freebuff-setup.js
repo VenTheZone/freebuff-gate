@@ -179,7 +179,10 @@ function buildBinary(options = {}) {
     if (target.platform === 'darwin' && process.platform === 'darwin' && options.removeSignature !== false) {
       command('codesign', ['--remove-signature', artifact], { stdio: 'pipe' });
     }
-    command(options.postjectCommand || 'npx', injectArgs(target, artifact, blobFile), { stdio: 'pipe' });
+    // On Windows the npx shim is npx.cmd; bare 'npx' is not resolvable by
+    // spawnSync, which fails the postject step (spawnSync npx ENOENT).
+    const postjectCmd = options.postjectCommand || (process.platform === 'win32' ? 'npx.cmd' : 'npx');
+    command(postjectCmd, injectArgs(target, artifact, blobFile), { stdio: 'pipe' });
     return { version, target: targetId, artifact };
   } finally {
     fs.rmSync(stagingDir, { recursive: true, force: true });
