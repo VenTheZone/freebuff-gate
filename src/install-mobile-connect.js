@@ -1526,10 +1526,10 @@ function collectProblems(desktopDir, options = {}) {
     }
     const raw = body;
     // The proxy patches the bundle at serve time, so the on-disk file won't
-    // carry the markers. Run it through patchBundle() to see what's actually
+    // carry the markers. Run it through patchBundleInfo() to see what's actually
     // served, and treat obsolete markers (removed upstream in a new app
     // version, e.g. 0.0.71) as non-errors.
-    const patched = proxy.patchBundle(body);
+    const patched = proxy.patchBundleInfo(body);
     body = patched.body;
     const obsolete = patched.obsolete || [];
     const missing = names.filter((mark, index) => !body.includes(fixed[index]) && !obsolete.includes(names[index]));

@@ -13,6 +13,14 @@ val defaultWebOrigin = providers.gradleProperty("freebuffWebOrigin")
     .orElse("")
     .get()
     .replace("\"", "")
+// The E2E tunnel is a Phase 1 prototype (docs/e2e-tunnel.md): the desktop
+// agent does not join the rendezvous yet, so the app must not auto-enter
+// tunnel mode on a pairing that happens to carry tunnel credentials. Gate it
+// behind an opt-in build flag; the production HTTPS relay path stays default.
+val tunnelEnabled = providers.gradleProperty("freebuffTunnelEnabled")
+    .orElse("0")
+    .get()
+    .trim() == "1"
 
 // Release signing. Pass freebuffKeystorePath/Password and freebuffKeyAlias/
 // Password to sign with a production keystore (CI injects them from the
@@ -60,6 +68,7 @@ android {
         // generic test builds bind to the exact HTTPS origin carried by the QR.
         buildConfigField("String", "DEFAULT_WEB_ORIGIN", "\"$defaultWebOrigin\"")
         buildConfigField("String", "DEFAULT_PAIRING_ORIGIN", "\"$defaultPairingOrigin\"")
+        buildConfigField("boolean", "TUNNEL_ENABLED", "$tunnelEnabled")
     }
 
     buildTypes {

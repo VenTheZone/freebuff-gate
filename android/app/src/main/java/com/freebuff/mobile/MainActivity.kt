@@ -355,7 +355,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadRemoteUi(session: PairingSession) {
-        if (session.tunnelEnabled) {
+        if (session.tunnelEnabled && BuildConfig.TUNNEL_ENABLED) {
             loadRemoteUiViaTunnel(session)
             return
         }
