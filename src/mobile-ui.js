@@ -215,9 +215,24 @@
     }, 80);
   }
 
+  // Inline SVG icons (lucide-style stroke icons, the app's own icon family)
+  // — no emoji, so the added controls render identically on every platform
+  // and read as part of the native UI.
+  var FB_IC_PAPERCLIP = '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>';
+  var FB_IC_FOLDER = '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>';
+  function fbIcon(name) {
+    var paths = {
+      paperclip: FB_IC_PAPERCLIP,
+      folder: FB_IC_FOLDER,
+      check: '<path d="M20 6 9 17l-5-5"/>',
+      x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+    };
+    return '<svg class="fb-ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths[name] + '</svg>';
+  }
+
   // Remote inject: file chip + @file token (same as local attach, but remote)
   var fbLoadingEl = null;
-  function showFbLoading(label){ try{ hideFbLoading(); var o=document.createElement('div'); o.className='fb-loading'; o.innerHTML='<div class="fb-loading-card">▓ '+(label||'UPLOADING')+' ▓</div>'; document.body.appendChild(o); fbLoadingEl=o; }catch(e){} }
+  function showFbLoading(label){ try{ hideFbLoading(); var o=document.createElement('div'); o.className='fb-loading'; o.innerHTML='<div class="fb-loading-card">'+(label||'Uploading…')+'</div>'; document.body.appendChild(o); fbLoadingEl=o; }catch(e){} }
   function hideFbLoading(){ try{ if(fbLoadingEl&&fbLoadingEl.parentNode) fbLoadingEl.parentNode.removeChild(fbLoadingEl); fbLoadingEl=null; }catch(e){} }
   function ensureAttachChipContainer() {
     var composer = document.querySelector('.fb-pi-panel .fb-pi-composer') || document.querySelector('.composer') || document.querySelector('.fb-pi-composer');
@@ -237,7 +252,8 @@
       if (cc) {
         var chip = document.createElement('span');
         chip.className = 'fb-attach-chip';
-        chip.textContent = path.split('/').pop() + ' ✓';
+        chip.textContent = path.split('/').pop();
+        chip.innerHTML += fbIcon('check');
         chip.title = path;
         cc.appendChild(chip);
         setTimeout(function(){ try{ chip.remove(); if(!cc.children.length) cc.remove(); }catch(e){} }, 6000);
@@ -357,46 +373,67 @@
     });
     input.click();
   }
-  // Always-on (bounded interval, no subtree observer): single Attach button
-  // in the app's composer row — phone picker -> /api/fb/upload -> token.
-  // Folder lives only in the floating card (mobile) / native APK picker.
-  function ensureComposerFolderButton() {
+  // Always-on (bounded interval, no subtree observer): file + folder attach in
+  // the app's composer row at every width. The native paperclip is not reliable
+  // across targets (Desktop shim vs mobile APK), so keep an explicit files button
+  // (freebuffDesktop.pickAttachments, native .attach fallback) plus the folder
+  // button (FreebuffNative.pickFolder / client-side zip).
+  function ensureComposerAttachButtons() {
     var row = document.querySelector('.composer-row');
-    if (!row || row.querySelector('.fb-folder-attach')) return;
-    var filesBtn = document.createElement('button');
-    filesBtn.type = 'button';
-    filesBtn.className = 'fb-folder-attach fb-files-attach';
-    filesBtn.textContent = '\uD83D\uDCCE Attach';
-    filesBtn.setAttribute('aria-label', 'Attach files');
-    filesBtn.addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var shim = window.freebuffDesktop;
-      if (shim && typeof shim.pickAttachments === 'function') {
-        var btn = filesBtn;
-        var orig = btn.textContent;
-        btn.textContent = '⏳ Uploading…';
-        btn.disabled = true;
-        showFbLoading('UPLOADING');
-        shim.pickAttachments().then(function (files) {
-          hideFbLoading(); btn.textContent = orig;
-          btn.disabled = false;
-          if (!files || !files.length) return;
-          (files || []).forEach(function (f) {
-            injectFileToken(f.path);
+    if (!row) return;
+    if (!row.querySelector('.fb-files-attach')) {
+      var filesBtn = document.createElement('button');
+      filesBtn.type = 'button';
+      filesBtn.className = 'fb-files-attach';
+      filesBtn.innerHTML = fbIcon('paperclip');
+      filesBtn.title = 'Attach files';
+      filesBtn.setAttribute('aria-label', 'Attach files');
+      filesBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var shim = window.freebuffDesktop;
+        if (shim && typeof shim.pickAttachments === 'function') {
+          var b = filesBtn; var o = b.innerHTML;
+          b.innerHTML = '<span class="fb-spin" aria-hidden="true"></span>';
+          b.disabled = true;
+          showFbLoading('Uploading…');
+          shim.pickAttachments().then(function (files) {
+            hideFbLoading(); b.innerHTML = o; b.disabled = false;
+            if (!files || !files.length) return;
+            (files || []).forEach(function (f) { injectFileToken(f.path); });
+            try { b.style.outline = '2px solid #2eaa62'; setTimeout(function(){ b.style.outline=''; }, 900); } catch (e) {}
+          }).catch(function (e) {
+            hideFbLoading(); b.innerHTML = o; b.disabled = false;
+            window.alert('File attach failed: ' + (e && e.message || e));
           });
-          // brief green flash so "paste path" reads as uploaded
-          try { btn.style.outline = '2px solid #2eaa62'; setTimeout(function(){ btn.style.outline=''; }, 900); } catch(e){}
-        }).catch(function (e) { btn.textContent = orig; btn.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
-      } else {
+          return;
+        }
         var native = row.querySelector('.attach');
         if (native) native.click();
         else window.alert('File attach unavailable here.');
-      }
-    });
-    row.appendChild(filesBtn);
+      });
+      row.appendChild(filesBtn);
+    }
+    if (!row.querySelector('.fb-folder-attach')) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'fb-folder-attach';
+      btn.innerHTML = fbIcon('folder');
+      btn.title = 'Attach a folder (zipped)';
+      btn.setAttribute('aria-label', 'Attach a folder (zipped)');
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        var native = window.FreebuffNative;
+        if (native && typeof native.pickFolder === 'function') {
+          native.pickFolder();
+          return;
+        }
+        pickFolderViaInput();
+      });
+      row.appendChild(btn);
+    }
   }
-  if (typeof setInterval !== 'undefined') setInterval(ensureComposerFolderButton, 1500);
-  ensureComposerFolderButton();
+  if (typeof setInterval !== 'undefined') setInterval(ensureComposerAttachButtons, 1500);
+  ensureComposerAttachButtons();
 
   // React mounts large transcripts in many small commits. A separate
   // document-wide observer per mobile feature can monopolize a phone's main
@@ -2593,6 +2630,64 @@
     }, 50);
   }
 
+  // Custom dropdown in the app's own style (the native <select> renders
+  // as a white system picker on Android). The hidden select stays the
+  // source of truth; 'change' still drives the caller's logic.
+  function enhanceSelect(select, cfg) {
+    if (!select || select.dataset[cfg.flag] === 'true') return;
+    select.dataset[cfg.flag] = 'true';
+    var wrap = document.createElement('div');
+    wrap.className = cfg.ns + '-wrap';
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(select);
+    select.classList.add(cfg.native);
+    select.tabIndex = -1;
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = cfg.ns + '-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    var menu = document.createElement('div');
+    menu.className = cfg.ns + '-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = true;
+    wrap.insertBefore(trigger, select);
+    wrap.appendChild(menu);
+    function close() { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+    function sync() {
+      var option = select.options[select.selectedIndex];
+      trigger.textContent = option ? option.textContent : cfg.fallback;
+      menu.textContent = '';
+      Array.prototype.forEach.call(select.options, function (item) {
+        var choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = cfg.ns + '-option' + (item.value === select.value ? ' active' : '');
+        choice.setAttribute('role', 'option');
+        choice.setAttribute('aria-selected', String(item.value === select.value));
+        choice.textContent = item.textContent;
+        choice.addEventListener('click', function () {
+          select.value = item.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          close();
+          sync();
+        });
+        menu.appendChild(choice);
+      });
+    }
+    trigger.addEventListener('click', function (event) {
+      event.stopPropagation();
+      var open = menu.hidden;
+      document.querySelectorAll('.' + cfg.ns + '-menu').forEach(function (other) { other.hidden = true; });
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
+      sync();
+    });
+    document.addEventListener('click', function (event) { if (!wrap.contains(event.target)) close(); });
+    select.addEventListener('change', sync);
+    select[cfg.syncKey] = sync;
+    sync();
+  }
+
   // Session switcher (mobile): the tab strip is hidden on phones (slim
   // header), so switching between open sessions needs a dropdown. A header
   // button opens a menu listing the open session tabs; picking one clicks the
@@ -2925,6 +3020,7 @@
         }
         modelFilterValue = selected;
         modelFilter.value = selected;
+        if (modelFilter._fbSelSync) modelFilter._fbSelSync();
         applySessionModelFilter();
       }
       // Recent (closed) sessions from the app's own catalog API, for the
@@ -3061,6 +3157,13 @@
         filterRow.appendChild(filterLabel);
         filterRow.appendChild(modelFilter);
         menu.appendChild(filterRow);
+        enhanceSelect(modelFilter, {
+          ns: 'fb-sel',
+          native: 'fb-sel-native',
+          flag: 'fbSelEnhanced',
+          fallback: 'All models',
+          syncKey: '_fbSelSync',
+        });
         modelFilterEmpty = document.createElement('div');
         modelFilterEmpty.className = 'fb-session-menu-filter-empty';
         modelFilterEmpty.setAttribute('role', 'status');
@@ -3502,7 +3605,7 @@
           var check = document.createElement('span');
           check.className = 'fb-theme-check';
           check.setAttribute('aria-hidden', 'true');
-          check.textContent = '✓';
+          check.innerHTML = fbIcon('check');
           option.appendChild(swatch);
           option.appendChild(label);
           option.appendChild(check);
@@ -4184,7 +4287,7 @@
           actionBtn(
             'attach',
             'Attach files, photos, or a folder',
-            '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+            FB_IC_PAPERCLIP,
             function () {
             var shim = window.freebuffDesktop;
             if (shim && typeof shim.pickAttachments === 'function') {
@@ -4206,8 +4309,8 @@
         wrap.appendChild(
           actionBtn(
             'folder',
-            'Attach a folder (zipped) \uD83D\uDCC2',
-            '<text x="12" y="16" text-anchor="middle" font-size="14">\uD83D\uDCC2</text>',
+            'Attach a folder (zipped)',
+            FB_IC_FOLDER,
             function () {
               var native = window.FreebuffNative;
               if (native && typeof native.pickFolder === 'function') native.pickFolder();
@@ -4924,6 +5027,17 @@
     // was unmounted (thread switch); never re-parent a still-connected node.
     var tb = document.querySelector('.thread-bottom');
     if (tb && !msgToggle.isConnected) tb.appendChild(msgToggle);
+    // The question dock (ask_questions) owns the top-right corner of
+    // thread-bottom: its pager shows there when 2+ questions are pending.
+    // Yield while a dock is visible, whatever the viewport — width was the
+    // wrong discriminator (tablets > 1000px still collided). The observer
+    // below re-runs this scan on dock mount/unmount, so the pill returns
+    // automatically once the questions are answered.
+    var qDock = document.querySelector('.question-dock');
+    if (qDock && qDock.offsetParent !== null) {
+      if (msgToggle.style.display !== 'none') msgToggle.style.display = 'none';
+      return;
+    }
     var long = 0;
     var collapsed = 0;
     var bubbles = document.querySelectorAll('.msg.user .bubble');
@@ -6209,60 +6323,13 @@
           }
         };
       }
-      function enhancePiSelect(select) {
-        if (!select || select.dataset.fbPiEnhanced === 'true') return;
-        select.dataset.fbPiEnhanced = 'true';
-        var wrap = document.createElement('div');
-        wrap.className = 'fb-pi-select-wrap';
-        select.parentNode.insertBefore(wrap, select);
-        wrap.appendChild(select);
-        select.classList.add('fb-pi-native-select');
-        select.tabIndex = -1;
-        var trigger = document.createElement('button');
-        trigger.type = 'button';
-        trigger.className = 'fb-pi-select-trigger';
-        trigger.setAttribute('aria-haspopup', 'listbox');
-        trigger.setAttribute('aria-expanded', 'false');
-        var menu = document.createElement('div');
-        menu.className = 'fb-pi-select-menu';
-        menu.setAttribute('role', 'listbox');
-        menu.hidden = true;
-        wrap.insertBefore(trigger, select);
-        wrap.appendChild(menu);
-        function close() { menu.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
-        function sync() {
-          var option = select.options[select.selectedIndex];
-          trigger.textContent = option ? option.textContent : 'Choose…';
-          menu.textContent = '';
-          Array.prototype.forEach.call(select.options, function (item) {
-            var choice = document.createElement('button');
-            choice.type = 'button';
-            choice.className = 'fb-pi-select-option' + (item.value === select.value ? ' active' : '');
-            choice.setAttribute('role', 'option');
-            choice.setAttribute('aria-selected', String(item.value === select.value));
-            choice.textContent = item.textContent;
-            choice.addEventListener('click', function () {
-              select.value = item.value;
-              select.dispatchEvent(new Event('change', { bubbles: true }));
-              close();
-              sync();
-            });
-            menu.appendChild(choice);
-          });
-        }
-        trigger.addEventListener('click', function (event) {
-          event.stopPropagation();
-          var open = menu.hidden;
-          document.querySelectorAll('.fb-pi-select-menu').forEach(function (other) { other.hidden = true; });
-          menu.hidden = !open;
-          trigger.setAttribute('aria-expanded', String(open));
-          sync();
-        });
-        document.addEventListener('click', function (event) { if (!wrap.contains(event.target)) close(); });
-        select.addEventListener('change', sync);
-        select._fbPiSync = sync;
-        sync();
-      }
+      var piSelectCfg = {
+        ns: 'fb-pi-select',
+        native: 'fb-pi-native-select',
+        flag: 'fbPiEnhanced',
+        fallback: 'Choose…',
+        syncKey: '_fbPiSync',
+      };
       function renderAuthProviders() {
         if (!controls) return;
         var select = controls.querySelector('.fb-pi-login-provider');
@@ -7272,7 +7339,9 @@
         wallpaperSection.appendChild(wallApply);
         wallpaperSection.appendChild(wallNote);
         controls.appendChild(wallpaperSection);
-        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider].forEach(enhancePiSelect);
+        [scopeSelect, modelSelect, thinkingSelect, authMethod, authProvider].forEach(function (sel) {
+          enhanceSelect(sel, piSelectCfg);
+        });
         settingsScrim = document.createElement('button');
         settingsScrim.type = 'button';
         settingsScrim.className = 'fb-pi-settings-scrim';
@@ -7296,16 +7365,16 @@
         var piAttachButton = document.createElement('button');
         piAttachButton.type = 'button';
         piAttachButton.className = 'fb-pi-attach';
-        piAttachButton.textContent = '\uD83D\uDCCE';
+        piAttachButton.innerHTML = fbIcon('paperclip');
         piAttachButton.title = 'Attach files';
         piAttachButton.setAttribute('aria-label', 'Attach files');
         piAttachButton.addEventListener('click', function () {
           var shim = window.freebuffDesktop;
           if (shim && typeof shim.pickAttachments === 'function') {
-            var b = piAttachButton; var o = b.textContent; b.textContent = '⏳'; b.disabled = true;
+            var b = piAttachButton; var o = b.innerHTML; b.innerHTML = '<span class="fb-spin" aria-hidden="true"></span>'; b.disabled = true;
             showFbLoading('UPLOADING');
             shim.pickAttachments().then(function (files) {
-              hideFbLoading(); b.textContent = o; b.disabled = false;
+              hideFbLoading(); b.innerHTML = o; b.disabled = false;
               if (!files || !files.length) return;
               (files || []).forEach(function (f) {
                 var tok = '@file ' + f.path;
@@ -7320,18 +7389,18 @@
                   promptInput && promptInput.focus();
                   // chip above Pi composer
                   var cc = ensureAttachChipContainer();
-                  if (cc) { var chip=document.createElement('span'); chip.className='fb-attach-chip'; chip.textContent=f.path.split('/').pop()+' ✓'; cc.appendChild(chip); setTimeout(function(){try{chip.remove();if(!cc.children.length)cc.remove();}catch(e){}},6000); }
+                  if (cc) { var chip=document.createElement('span'); chip.className='fb-attach-chip'; chip.textContent=f.path.split('/').pop(); chip.innerHTML+=fbIcon('check'); cc.appendChild(chip); setTimeout(function(){try{chip.remove();if(!cc.children.length)cc.remove();}catch(e){}},6000); }
                 } catch (e) { injectFileToken(f.path); }
               });
-            }).catch(function (e) { b.textContent = o; b.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
+            }).catch(function (e) { b.innerHTML = o; b.disabled = false; window.alert('File attach failed: ' + (e && e.message || e)); });
           } else window.alert('File attach unavailable here.');
         });
         form.appendChild(piAttachButton);
         var piFolderButton = document.createElement('button');
         piFolderButton.type = 'button';
         piFolderButton.className = 'fb-pi-attach-url';
-        piFolderButton.textContent = '\uD83D\uDCC2';
-        piFolderButton.title = 'Attach a folder as .zip (or files: use 📎 in the main chat)';
+        piFolderButton.innerHTML = fbIcon('folder');
+        piFolderButton.title = 'Attach a folder as .zip (files attach lives in the main chat)';
         piFolderButton.setAttribute('aria-label', 'Attach a folder (zipped)');
         piFolderButton.addEventListener('click', function () {
           var native = window.FreebuffNative;
@@ -7583,7 +7652,7 @@
       card.innerHTML =
         '<div class="fb-ad-card-head">' +
         '<span class="fb-ad-title">' + esc(ad.title || 'Ad') + '</span>' +
-        '<button type="button" class="fb-ad-close" aria-label="Close ad">✕</button>' +
+        '<button type="button" class="fb-ad-close" aria-label="Close ad">' + fbIcon('x') + '</button>' +
         '</div>' +
         '<div class="fb-ad-copy">' + esc(ad.copy || '') + '</div>' +
         (ad.host
