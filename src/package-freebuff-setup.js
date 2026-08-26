@@ -60,6 +60,7 @@ function runCommand(command, args, options = {}) {
     stdio: options.stdio || 'pipe',
     cwd: options.cwd,
     env: options.env,
+    shell: options.shell,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
