@@ -35,7 +35,7 @@
   } catch (e) {
     native = null;
   }
-  if (native && typeof native.writeText === 'function') return;
+  if (native && typeof native.writeText === 'function' && !window.FreebuffNative) return;
   function fallbackCopy(text) {
     var ta = document.createElement('textarea');
     ta.value = String(text);
@@ -66,6 +66,11 @@
   }
   var shim = {
     writeText: function (text) {
+      // Prefer native Android clipboard bridge (works on all API levels)
+      if (window.FreebuffNative && typeof window.FreebuffNative.copyToClipboard === 'function') {
+        window.FreebuffNative.copyToClipboard(String(text));
+        return Promise.resolve();
+      }
       if (native && typeof native.writeText === 'function') {
         return native.writeText(text);
       }

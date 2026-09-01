@@ -1,5 +1,7 @@
 package com.freebuff.mobile
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,8 +12,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 
-/**
- * System Chromium WebView engine. This is the behavior the GeckoView spike must
+/** System Chromium WebView engine. This is the behavior the GeckoView spike must
  * match: same origin restriction, same Secure/HttpOnly session cookie install,
  * same user-agent marker, downloads disabled, SSL errors never bypassed.
  */
@@ -86,6 +87,17 @@ class WebViewGateEngine(context: Context) : GateBrowserEngine {
                 @JavascriptInterface
                 fun pickFolder() {
                     folderPickerRequest?.invoke()
+                }
+
+                // Called from mobile-ui.js clipboard shim: copy text to the
+                // system clipboard via Android ClipboardManager. The WebView's
+                // built-in navigator.clipboard and execCommand('copy') are
+                // unreliable on Android — this bridge works on all API levels.
+                @JavascriptInterface
+                fun copyToClipboard(text: String) {
+                    val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("freebuff", text)
+                    clipboard.setPrimaryClip(clip)
                 }
             },
             "FreebuffNative",
