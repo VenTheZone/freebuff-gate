@@ -12,7 +12,7 @@
  * Port defaults to 58061; override with FREEBUFF_PROXY_PORT.
  */
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const { createPiAgentController, readJsonBody: readPiJsonBody } = require('./pi-agent-bridge');
 const { injectSkills } = require('./freebuff-skill-loader');
 const fs = require('fs');
@@ -20,8 +20,28 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
+
+// ---- Orchestrator auto-discovery ----
+// The orchestrator (bun.exe) picks a random port on every restart.
+// Discover it by finding which port bun.exe listens on, then re-check
+// periodically so the proxy survives orchestrator restarts.
+const DISCOVER_SCRIPT = path.join(__dirname, 'discover-orchestrator.ps1');
+function discoverOrchestratorPort() {
+  try {
+    const out = execFileSync('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
+    ], { timeout: 8000, encoding: 'utf8' }).trim();
+    const port = parseInt(out, 10);
+    if (port > 0 && port < 65536) return port;
+  } catch (e) { /* discovery failed, keep old */ }
+  return null;
+}
+
+const FREEBUFF_UPSTREAM_ENV = process.env.FREEBUFF_UPSTREAM;
+let currentPort = null;
+if (!FREEBUFF_UPSTREAM_ENV) currentPort = discoverOrchestratorPort();
+const UPSTREAM = FREEBUFF_UPSTREAM_ENV || (currentPort ? `http://127.0.0.1:${currentPort}` : 'http://127.0.0.1:58060');
 
 const REPO = __dirname;
 
@@ -1033,8 +1053,20 @@ function maybeProbeUiPatches(up, force) {
 }
 
 function createProxyServer(options = {}) {
-  const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
-  const up = new URL(upstream);
+  const staticUpstream = options.upstream || process.env.FREEBUFF_UPSTREAM;
+  let up = new URL(staticUpstream || UPSTREAM);
+  // Auto-refresh: re-discover the orchestrator port every 30s when no static override
+  if (!staticUpstream) {
+    const refreshTimer = setInterval(() => {
+      const port = discoverOrchestratorPort();
+      if (port && String(port) !== String(up.port)) {
+        const oldPort = up.port;
+        up = new URL(`http://127.0.0.1:${port}`);
+        console.log(`[proxy] orchestrator port changed ${oldPort} -> ${port}`);
+      }
+    }, 30000);
+    if (refreshTimer.unref) refreshTimer.unref();
+  }
   // Local chat-server that speaks the same AI SDK /api/chat wire protocol as
   // the orchestrator. Set FB_CHAT_UPSTREAM=off to disable the /api/chat
   // override entirely; any other value overrides the default endpoint.
@@ -1430,7 +1462,26 @@ function createProxyServer(options = {}) {
     pres.pipe(res);
     pres.on('error', () => res.destroy());
   });
-  preq.on('error', () => res.destroy());
+  preq.on('error', (err) => {
+    // Orchestrator may have restarted on a new port — re-discover and retry once.
+    if (err && (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') && !req._retried && !preq._retried) {
+      const port = discoverOrchestratorPort();
+      if (port && String(port) !== String(up.port)) {
+        const oldPort = up.port;
+        up = new URL(`http://127.0.0.1:${port}`);
+        console.log(`[proxy] upstream gone, re-discovered orchestrator on :${port} (was :${oldPort})`);
+        preq._retried = true;
+        req._retried = true;
+        const retry = http.request({
+          host: up.hostname, port: up.port || 80,
+          method: req.method, path: req.url, headers,
+        }, (rpres) => { res.writeHead(rpres.statusCode || 200, rpres.headers); rpres.pipe(res); });
+        retry.on('error', () => res.destroy());
+        return;
+      }
+    }
+    res.destroy();
+  });
   if (sniffAd) {
     req.on('end', () => preq.end(Buffer.concat(reqChunks)));
   } else {

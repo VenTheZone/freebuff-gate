@@ -11,6 +11,7 @@
     "@noble/curves": "2.3.0",
     "@openai-oauth/ai-sdk": "^2.0.0",
     "@openai-oauth/local": "^2.0.0",
-    "ai": "^7.0.68"
+    "ai": "^7.0.68",
+    "zod": "^3.25.76"
   }
 }
