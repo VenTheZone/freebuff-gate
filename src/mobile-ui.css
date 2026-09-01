@@ -765,6 +765,13 @@
     height: 40px;
   }
 }
+/* Tablets (<=1200px): hide the Expand/Collapse toggle — it overlaps the
+   docked composer area on tablets wider than 1000px. */
+@media (max-width: 1200px) {
+  .thread-bottom .fb-msg-toggle {
+    display: none !important;
+  }
+}
 
 /* ─────────────────────────── 480px: small phones ───────────────────────── */
 /* Mobile (<=700px): 0.0.71 introduced a left "spaces" .rail (52px) that has
