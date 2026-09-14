@@ -150,3 +150,8 @@ Generic APK не доходит. Плюс письмо «что-то фейлн�
 - Watchdog-fail на raw upstream по shim/perf-report — ожидаемо до переустановки ui-стека инсталлером (on-disk shim смыт апдейтом 0.0.110; реальный сервинг прокси shim инжектит — живая страница содержит fb-desktop-shim).
 - Неизвестно, откуда discovery-скрипт берёт порт: `discover-orchestrator.ps1` отсутствует в репо (`DISCOVER_SCRIPT` указывает на `__dirname`); в деплой-каталоге он есть. Прокси стартует с явным `FREEBUFF_UPSTREAM` — не блокер, но чинить при случае.
 - Bundle-патчи (CREATE/SETSTATE/CLOSE/OPEN_THREAD/SKILL) на 0.0.110 мертвы — нужны новые якоря под новое поколение бандла (отдельная задача).
+
+**Дополнение 2026-09-14 (CI):** identity-check падал не по виновным — `>-` (folded scalar)
+склеивал allowlist в одну строку, и `grep -qxF` (fixed, whole-line) отвергал даже одобренные
+email. Фикс: блочный `|` (`e55ce76`). Прогон на `main` — success. Screenshot regression на
+`main` — success. Android build — in_progress.
