@@ -25,11 +25,14 @@ test('setup packager renders Node 22 SEA config with embedded assets and version
     sourceDir: '/repo/src',
     version: 'v0.2.0',
   });
-  assert.equal(config.main, '/tmp/sea-entry.js');
-  assert.equal(config.output, '/tmp/sea-prep.blob');
+  // renderSeaConfig resolves paths; assert the resolved form.
+  assert.equal(config.main, path.resolve('/tmp/sea-entry.js'));
+  assert.equal(config.output, path.resolve('/tmp/sea-prep.blob'));
   assert.equal(config.useCodeCache, false);
-  assert.equal(config.assets['freebuff-setup.version'], '/repo/src/freebuff-setup.version');
-  assert.equal(config.assets['freebuff-setup.js'], '/repo/src/freebuff-setup.js');
+  // path.join keeps segments intact on every platform (path.resolve
+  // would drop the '/repo' root on Windows, where it has no drive).
+  assert.equal(config.assets['freebuff-setup.version'], path.join(path.sep, 'repo', 'src', 'freebuff-setup.version'));
+  assert.equal(config.assets['freebuff-setup.js'], path.join(path.sep, 'repo', 'src', 'freebuff-setup.js'));
   assert.ok(config.assets['mobile-ui.js']);
 });
 
