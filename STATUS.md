@@ -118,3 +118,35 @@ Generic APK не доходит. Плюс письмо «что-то фейлн�
 - iOS — планка «CI зелёный + паритет фич в коде»; реальный прогон на устройстве вне нашей машины.
 - Планка готовности: все документированные фичи gate на 0.0.110 + прогон на планшете.
 - PR не создавать и не пушить без отдельного разрешения владельца.
+
+### 2026-09-14 — dirlist в прокси + честный watchdog + Windows-фиксы (адаптация под 0.0.110)
+
+**Windows-фейлы тест-набора (6 шт) — починены, набор полностью зелёный (157 тестов, 0 fail):**
+- `parseArgs`/SEA-конфиг: тесты ждали литеральные POSIX-пути; теперь сравнивают с path-resolved формой.
+- installer-тест: launcher-скрипт не спавнится из execFileSync на win32 → гоняем node-обёртку; darwin auto-start требует `options.uid` → задан.
+- tar: GNU tar трактует `C:\...` как remote-host → архивы создаются/читаются по относительному пути с `cwd`.
+- npm: на win32 это `npm.cmd`, spawnSync без shell отказывается (CVE-2024-27980) → `shell: true` на win32.
+- Коммиты: `844cd20`, `156be79`, `fb1e8b2`.
+
+**dirlist перенесён в tailnet-прокси (`be7f161`):**
+- Прокси отвечает на `GET /api/fb/dirlist?path=...` сам (тот же wire shape: `{path, entries:[{name,dir}]}`, dirs-first сортировка; 400 с текстом ошибки на битый путь).
+- Инсталлерский route-block больше НЕ вставляет dirlist в orchestrator.js; stale-block upgrade глотает легаси-dirlist-ветку; verify не требует dirlist в оркестраторе.
+- Live-проверка: `:58061/api/fb/dirlist` → 200 с записями; папка-пикер переживает апдейты Desktop.
+
+**Якорь роутов переведён на regex (`50c0d8e`):**
+- 0.0.110 переименовал минифицированный счётчик `match12` → `match14`; литеральный якорь ломался каждым апдейтом. Теперь якорь — `upgrade required` + `findRoute` dispatch (любой счётчик). Тест-фикстура с match14 зелёная.
+
+**Watchdog честный (`be7f161`):**
+- `patchBundleInfo` возвращает `recognized`: «неизвестное поколение бандла» больше не неотличимо от «здорового».
+- `checkUiPatches`: unknown generation → ERROR с перечислением пропущенных патчей («derive new anchors for this Desktop version»).
+- dirlist больше не пробуется upstream (он локальный); perf-report пробуется (on-disk).
+- Live-статус на 0.0.110 теперь ЧЕСТНЫЙ `ok: false` с тремя ошибками (shim on raw upstream, unknown bundle generation, perf-report route) вместо прежнего лживого «OK».
+
+**Применено к установленному окружению:**
+- `orchestrator.js` 0.0.110: route-block (perf-report+upload+read-file, без dirlist) применён, bun build OK. Бэкап `orchestrator.js.gate-bak-20260914-dirlist`. ВАЖНО: bun-процесс Desktop (pid 14980) стартовал ДО патча — подхватит после рестарта Desktop.
+- Прокси: репо-копия задеплоена в `AppData/Local/Freebuff/tailnet-proxy/freebuff_tailnet_proxy.js` (бэкап `.bak-20260914-dirlist`), рестартнута с `FREEBUFF_UPSTREAM=127.0.0.1:47800`, `FREEBUFF_PROXY_HOST=0.0.0.0` (pid живой, `:58061` listening).
+
+**Открытые проблемы (не блокер, зафиксированы):**
+- Watchdog-fail на raw upstream по shim/perf-report — ожидаемо до переустановки ui-стека инсталлером (on-disk shim смыт апдейтом 0.0.110; реальный сервинг прокси shim инжектит — живая страница содержит fb-desktop-shim).
+- Неизвестно, откуда discovery-скрипт берёт порт: `discover-orchestrator.ps1` отсутствует в репо (`DISCOVER_SCRIPT` указывает на `__dirname`); в деплой-каталоге он есть. Прокси стартует с явным `FREEBUFF_UPSTREAM` — не блокер, но чинить при случае.
+- Bundle-патчи (CREATE/SETSTATE/CLOSE/OPEN_THREAD/SKILL) на 0.0.110 мертвы — нужны новые якоря под новое поколение бандла (отдельная задача).
