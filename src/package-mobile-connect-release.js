@@ -111,10 +111,13 @@ function createArchive(outputDir, archivePath) {
   const absoluteOutput = path.resolve(outputDir);
   const absoluteArchive = path.resolve(archivePath);
   fs.mkdirSync(path.dirname(absoluteArchive), { recursive: true });
+  // GNU tar interprets a colon in the archive path (e.g. 'C:\\...') as a
+  // remote host spec. Run tar from the parent directory with a relative
+  // -f so the same code works on Windows and Unix.
   const result = childProcess.spawnSync(
     'tar',
-    ['-czf', absoluteArchive, '-C', path.dirname(absoluteOutput), path.basename(absoluteOutput)],
-    { encoding: 'utf8' },
+    ['-czf', path.basename(absoluteArchive), '-C', path.dirname(absoluteOutput), path.basename(absoluteOutput)],
+    { encoding: 'utf8', cwd: path.dirname(absoluteArchive) },
   );
   if (result.error?.code === 'ENOENT') {
     throw new Error('tar is required when --archive is used');

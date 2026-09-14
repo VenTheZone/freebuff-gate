@@ -33,7 +33,10 @@ test('release package contains pinned versioned files and verifiable checksums',
     assert.equal(result.version, 'v2.3.4');
     assert.equal(fs.existsSync(result.archive), true);
     assert.equal(fs.existsSync(result.bootstrap), true);
-    assert.equal(fs.statSync(result.bootstrap).mode & 0o111, 0o111);
+    if (process.platform !== 'win32') {
+      // Unix permission bits are not tracked by NTFS/FAT.
+      assert.equal(fs.statSync(result.bootstrap).mode & 0o111, 0o111);
+    }
 
     const manifest = JSON.parse(fs.readFileSync(result.manifest, 'utf8'));
     assert.equal(manifest.product, 'freebuff-mobile-connect');

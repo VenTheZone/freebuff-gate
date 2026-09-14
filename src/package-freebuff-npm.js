@@ -47,12 +47,20 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function runCommand(command, args, options = {}) {
-  const result = childProcess.spawnSync(command, args, {
+function npmSpawnOptions(options = {}) {
+  // On Windows npm is an npm.cmd shim: spawnSync without a shell
+  // refuses to execute .cmd files (EINVAL since the CVE-2024-27980
+  // mitigation), so it must run with shell: true.
+  return {
     encoding: 'utf8',
     stdio: options.stdio || 'pipe',
     cwd: options.cwd,
-  });
+    ...(process.platform === 'win32' ? { shell: true } : {}),
+  };
+}
+
+function runCommand(command, args, options = {}) {
+  const result = childProcess.spawnSync(command, args, npmSpawnOptions(options));
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const detail = String(result.stderr || result.stdout || '').trim();
