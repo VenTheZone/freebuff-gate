@@ -155,3 +155,21 @@ Generic APK не доходит. Плюс письмо «что-то фейлн�
 склеивал allowlist в одну строку, и `grep -qxF` (fixed, whole-line) отвергал даже одобренные
 email. Фикс: блочный `|` (`e55ce76`). Прогон на `main` — success. Screenshot regression на
 `main` — success. Android build — in_progress.
+
+### 2026-09-14 — CI-итоги на свежем push (0eb61eb) + фикс iOS attach-release
+
+**Все воркфлоу на `main` форка — зелёные:**
+- `Commit identity` — success (после фикса `|`-скаляра).
+- `Mobile UI screenshot regression` — success.
+- `Android build and release` — success: все 5 джоб (debug-apk, release-apk, release-gecko-apk, relay-integration, gecko-spike). Первый прогон debug-apk упёрся в 50-минутный таймаут джоба на шаге emulator-E2E (флак-эмулятор, известная история), реран прошёл за 7 минут — весь пайплайн success.
+- `iOS build` — success: build-test, signed-ipa, **attach-release**.
+
+**Фикс iOS attach-release (`0eb61eb`):** джоба падала, потому что upload-artifact v4 при
+загрузке одиночного каталога сохраняет его СОДЕРЖИМОЕ в корень артефакта (проверено
+скачиванием артефакта: Info.plist/Frameworks/PlugIns в корне, каталога FreebuffGate.app нет).
+`find -name 'FreebuffGate.app' -type d` не находил ничего → exit 1. Фикс: стадируем содержимое
+артефакта в `$RUNNER_TEMP/staged/FreebuffGate.app/` и зипуем оттуда; guard `test -f Info.plist`.
+
+**PR #4** (VenTheZone/freebuff-gate#4): описание обновлено (полный список из 18 коммитов),
+head = `0eb61eb`... хвост синка после iOS-фикса — перепроверить, что PR-ветка = форк/main,
+mergeStateStatus был CLEAN, все чеки (кроме ожидаемых skipped release-джоб) — SUCCESS.
