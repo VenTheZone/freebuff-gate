@@ -15,11 +15,17 @@ class RelayWebSocket extends EventEmitter {
     this.closed = false;
     this.closeEmitted = false;
     this.closeTimer = null;
+    this.lastError = null;
 
     socket.setNoDelay(true);
     socket.on('data', (chunk) => this.consume(chunk));
     socket.on('close', () => this.finishClose());
-    socket.on('error', (error) => this.emit('error', error));
+    // A dead peer must cost one connection, never the host process. Neither
+    // the relay nor the agent subscribes to this event, and an EventEmitter
+    // throws on an unheard 'error' -- so re-emitting the raw socket error here
+    // (the previous behavior) killed the whole relay whenever a paired device
+    // or connector socket vanished mid-write.
+    socket.on('error', (error) => this.handleSocketError(error));
     if (this.buffer.length > 0) this.consume();
   }
 
@@ -140,7 +146,16 @@ class RelayWebSocket extends EventEmitter {
       header[1] = 127;
       header.writeBigUInt64BE(BigInt(body.length), 2);
     }
-    this.socket.write(Buffer.concat([header, body]));
+    try {
+      this.socket.write(Buffer.concat([header, body]));
+    } catch (error) {
+      // The peer is gone (ECONNABORTED/EPIPE); tear this connection down
+      // instead of letting the write failure escape into the caller.
+      if (!this.lastError) this.lastError = error;
+      this.socket.destroy();
+      this.finishClose();
+      return false;
+    }
     return true;
   }
 
@@ -157,10 +172,23 @@ class RelayWebSocket extends EventEmitter {
     reasonBuffer.copy(payload, 2);
     if (!this.socket.destroyed) {
       this.sendFrameEvenWhenClosing(0x8, payload);
+      // A failed close frame already finished the connection; no need to arm
+      // the destroy timer for a peer that is gone.
+      if (this.closeEmitted) return;
       this.closeTimer = setTimeout(() => this.socket.destroy(), 1000);
       this.socket.end();
     }
     this.finishClose();
+  }
+
+  // Socket-level failure: record it and terminate this one connection.
+  handleSocketError(error) {
+    if (!this.lastError) this.lastError = error || new Error('Socket error');
+    if (this.closed) {
+      this.finishClose();
+      return;
+    }
+    this.close(1006, 'Socket error');
   }
 
   sendFrameEvenWhenClosing(opcode, payload) {
