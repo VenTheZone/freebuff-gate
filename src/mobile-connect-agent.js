@@ -166,6 +166,16 @@ class RelayAgent {
     }
     this.relayHttpUrl = normalizeHttpUrl(options.relayHttpUrl || process.env.FB_MOBILE_RELAY_HTTP_URL || DEFAULT_RELAY_HTTP_URL);
     this.relayWsUrl = toWsUrl(options.relayWsUrl || process.env.FB_MOBILE_RELAY_WS_URL || this.relayHttpUrl);
+    // Where THIS agent reaches the relay (defaults to the public URL). The
+    // managed launcher runs the agent beside the relay, so it can use
+    // loopback and stay immune to tailnet DNS/TLS outages; paired devices
+    // keep the public URL above.
+    this.connectHttpUrl = normalizeHttpUrl(
+      options.connectHttpUrl || process.env.FB_MOBILE_RELAY_CONNECT_HTTP_URL || this.relayHttpUrl,
+    );
+    this.connectWsUrl = toWsUrl(
+      options.connectWsUrl || process.env.FB_MOBILE_RELAY_CONNECT_WS_URL || this.connectHttpUrl,
+    );
     this.upstreamUrl = normalizeHttpUrl(options.upstreamUrl || process.env.FB_MOBILE_UI_URL || DEFAULT_UPSTREAM_URL);
     this.stateFile = options.stateFile || process.env.FB_MOBILE_AGENT_STATE_FILE || DEFAULT_STATE_FILE;
     const state = readJsonFile(this.stateFile);
@@ -222,7 +232,7 @@ class RelayAgent {
 
   async refreshConnectorToken() {
     if (!this.connectorRefreshToken) throw new Error('Provisioned connector refresh credential is missing');
-    const result = await requestJson(`${this.relayHttpUrl}/v1/relay/refresh`, {
+    const result = await requestJson(`${this.connectHttpUrl}/v1/relay/refresh`, {
       method: 'POST',
       body: {
         connectorId: this.connectorId,
@@ -277,7 +287,7 @@ class RelayAgent {
       this.scheduleReconnect();
       return;
     }
-    const url = `${this.relayWsUrl}/v1/relay/desktop`;
+    const url = `${this.connectWsUrl}/v1/relay/desktop`;
     let socket;
     try {
       socket = new WebSocket(url, ['freebuff-relay-v1', `auth-${this.connectorToken}`]);
@@ -456,7 +466,7 @@ class RelayAgent {
   }
 
   async createPairing(options = {}) {
-    const result = await requestJson(`${this.relayHttpUrl}/v1/pairings`, {
+    const result = await requestJson(`${this.connectHttpUrl}/v1/pairings`, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.connectorToken}` },
       body: {
@@ -494,7 +504,9 @@ Examples:
 
 Environment:
   FB_MOBILE_RELAY_HTTP_URL       Managed relay HTTPS URL
-  FB_MOBILE_RELAY_WS_URL         Managed relay WSS URL
+  FB_MOBILE_RELAY_WS_URL         Managed relay WSS URL (public, given to devices)
+  FB_MOBILE_RELAY_CONNECT_HTTP_URL  Relay URL this agent connects from (default: public)
+  FB_MOBILE_RELAY_CONNECT_WS_URL    Relay WS URL this agent connects from (default: public)
   FB_MOBILE_RELAY_CONNECTOR_TOKEN  Connector token (installer can provision it)
   FB_MOBILE_RELAY_CONNECTOR_CREDENTIAL_FILE  Protected provisioned credential file
   FB_MOBILE_RELAY_CONNECTOR_REFRESH_TOKEN  Provisioned refresh token override

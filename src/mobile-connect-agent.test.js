@@ -227,3 +227,39 @@ test('agent retries when relay is unreachable instead of exiting', async () => {
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test('agent connects through the local relay URL while pairing keeps the public one', async () => {
+  const relay = createRelayServer({
+    stateFile: null,
+    connectorToken: 'connector-secret',
+    publicHttpUrl: 'https://public.example.test',
+    publicWsUrl: 'wss://public.example.test',
+  });
+  const relayPort = await listen(relay);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freebuff-agent-local-'));
+  const agent = new RelayAgent({
+    stateFile: path.join(stateDir, 'agent.json'),
+    connectorToken: 'connector-secret',
+    relayHttpUrl: 'https://public.example.test',
+    relayWsUrl: 'wss://public.example.test',
+    connectHttpUrl: `http://127.0.0.1:${relayPort}`,
+    upstreamUrl: 'http://127.0.0.1:58061',
+    connectorId: 'agent-local',
+  });
+
+  try {
+    assert.equal(agent.connectWsUrl, `ws://127.0.0.1:${relayPort}`);
+    agent.start();
+    await waitUntil(() => relay.hub.connectors.has('agent-local'));
+
+    // The pairing payload is what the phone stores, so it must carry the
+    // public address even though this agent talks to the relay over loopback.
+    const pairing = await agent.createPairing({ ttlSeconds: 600 });
+    assert.match(pairing.pairingUrl, /^https:\/\/public\.example\.test\//);
+  } finally {
+    agent.stop();
+    relay.hub.close();
+    await new Promise((resolve) => relay.close(resolve));
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
