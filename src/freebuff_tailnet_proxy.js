@@ -878,7 +878,7 @@ function patchBundleInfo(body) {
     else if (out.includes(SCROLL_MARK_V0072)) out = out.split(SCROLL_MARK_V0072).join(SCROLL_FIX_V0072);
     // CREATE/SETSTATE/CLOSE/OPEN_THREAD/SKILL: target code removed or
     // rewritten in 0.0.71 — skip (obsolete for this bundle version).
-    return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'] };
+    return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'], recognized: true };
   }
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
@@ -907,7 +907,19 @@ function patchBundleInfo(body) {
   else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
   if (out.includes(SKILL_ORIGIN_FIX)) { /* already applied */ }
   else if (out.includes(SKILL_ORIGIN_MARK)) out = out.split(SKILL_ORIGIN_MARK).join(SKILL_ORIGIN_FIX);
-  return { body: out, obsolete: [] };
+  // An unknown generation has NO stock marker and NO fix content: bundle
+  // churn made every marker check moot while the result still looked
+  // healthy. Flag it so the watchdog can fail loudly instead.
+  const recognized =
+    out.includes(CREATE_MARK) || out.includes(CREATE_REUSE) ||
+    out.includes(SETSTATE_MARK) || out.includes(SETSTATE_FIX) ||
+    out.includes(SCROLL_MARK) || out.includes(SCROLL_MARK_V0071) || out.includes(SCROLL_MARK_V0072) ||
+    out.includes(CLOSE_MARK1) || out.includes(CLOSE_FIX1) ||
+    out.includes(CLOSE_MARK2) || out.includes(CLOSE_MARK3) ||
+    out.includes(CLOSE_BTN_MARK) ||
+    out.includes(OPEN_THREAD_MARK) ||
+    out.includes(SKILL_ORIGIN_MARK) || out.includes(SKILL_ORIGIN_FIX);
+  return { body: out, obsolete: [], recognized };
 }
 
 // ---- Auto-verify: detect + surface post-update UI patch regressions ----
@@ -926,6 +938,9 @@ const UI_PATCH_CHECK_INTERVAL_MS = Math.max(
   30_000,
   Number(process.env.FB_UI_PATCH_CHECK_INTERVAL_MS || 10 * 60 * 1000),
 );
+// Routes the watchdog probes on the upstream (orchestrator on-disk patch).
+// dirlist is served by this proxy itself and is deliberately not probed.
+const UI_PATCH_ROUTES_PROBED = ['/api/fb/perf-report'];
 
 const UI_PATCH_MARKERS = [
   ['CREATE_REUSE', CREATE_REUSE],
@@ -1001,13 +1016,20 @@ async function checkUiPatches(up, log) {
           return !patched.body.includes(mark);
         })
         .map(([name]) => name);
-      if (missing.length > 0) {
+      if (patched.recognized === false) {
+        // Unknown bundle generation: the patch pass skipped everything but
+        // the result is NOT healthy. Name the skipped patches so the next
+        // session knows exactly which anchors to re-derive.
+        report.errors.push(
+          `bundle ${bundleName}: unrecognized generation - patch pass skipped ${missing.length > 0 ? missing.join(', ') : 'all UI patches'}; derive new anchors for this Desktop version`,
+        );
+      } else if (missing.length > 0) {
         report.errors.push(`bundle ${bundleName}: missing patch marker(s): ${missing.join(', ')} (app update likely replaced it; re-run install)`);
       } else if (obsolete.length > 0) {
         report.warnings.push(`bundle ${bundleName}: ${obsolete.length} patch(es) obsolete for this app version (skipped): ${obsolete.join(', ')}`);
       }
     }
-    for (const route of ['/api/fb/dirlist?path=/', '/api/fb/perf-report']) {
+    for (const route of UI_PATCH_ROUTES_PROBED) {
       try {
         const probe = await fetchUpstream(up, route);
         if (probe.status === 404) report.errors.push(`${route} route missing (app update replaced orchestrator.js; re-run install)`);
@@ -1299,6 +1321,27 @@ function createProxyServer(options = {}) {
     req.on('error', () => res.destroy());
     return;
   }
+  // Server-side folder listing for the file picker. Served locally (not
+  // forwarded): the orchestrator's on-disk route dies with every Desktop
+  // update, while this proxy survives them. Same wire shape the old
+  // orchestrator route returned: { path, entries: [{ name, dir }] }.
+  if (req.method === 'GET' && pathname === '/api/fb/dirlist') {
+    let requested = '';
+    try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || '/'; } catch (e) { /* keep default */ }
+    fs.readdir(requested, { withFileTypes: true }, (err, items) => {
+      if (err) {
+        res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+      const entries = items
+        .map((it) => ({ name: it.name, dir: it.isDirectory() }))
+        .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ path: requested, entries }));
+    });
+    return;
+  }
   if (req.method === 'GET' && pathname === '/api/fb/read-file') {
     let requested = '';
     try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || ''; } catch (e) { /* keep empty */ }
@@ -1584,6 +1627,7 @@ module.exports = {
   SHIM,
   UI_PATCH_MARKERS,
   UI_PATCH_STATUS_FILE,
+  UI_PATCH_ROUTES_PROBED,
   UPLOADS_DIR,
   FB_MAX_UPLOAD_BYTES,
   CODEX_DEVICE_URL,

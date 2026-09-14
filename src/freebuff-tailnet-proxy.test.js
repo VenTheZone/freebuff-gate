@@ -347,7 +347,7 @@ function createWatchUpstream(state) {
         : 'var x = 1;');
       return;
     }
-    if (pathname === '/api/fb/dirlist' || pathname === '/api/fb/perf-report') {
+    if (pathname === '/api/fb/perf-report') {
       res.writeHead(state.healthy ? 200 : 404, { 'content-type': 'application/json' });
       res.end(state.healthy ? '{}' : '');
       return;
@@ -381,7 +381,74 @@ test('ui-patch watchdog flags every missing marker after a simulated update', as
     assert.equal(report.ok, false);
     assert.ok(report.errors.some((e) => e.includes('fb-desktop-shim')), 'shim loss reported');
     assert.ok(report.errors.some((e) => e.includes('index-ABC.js') && e.includes('CREATE_REUSE')), 'bundle marker loss reported');
-    assert.ok(report.errors.some((e) => e.includes('dirlist')), 'dirlist route loss reported');
+    assert.ok(report.errors.some((e) => e.includes('perf-report')), 'perf-report route loss reported');
+  } finally {
+    await close(upstream);
+  }
+});
+
+test('proxy serves /api/fb/dirlist locally for the folder picker', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-dirlist-'));
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'zeta.txt'), 'x');
+  fs.writeFileSync(path.join(dir, 'alpha.txt'), 'x');
+  const upstream = http.createServer((req, res) => {
+    // The orchestrator has no dirlist route anymore (Desktop update); a
+    // forwarded call would 404. The proxy must answer locally.
+    res.writeHead(404);
+    res.end();
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
+  const proxyPort = await listen(proxy);
+  try {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(dir)}`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.path, dir);
+    // Dirs first, then files, alphabetical within each group.
+    assert.deepEqual(
+      body.entries.map((e) => e.name),
+      ['sub', 'alpha.txt', 'zeta.txt'],
+    );
+    assert.deepEqual(body.entries.map((e) => e.dir), [true, false, false]);
+    // Missing path -> 400 with the error, not a crash.
+    const bad = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(path.join(dir, 'nope'))}`);
+    assert.equal(bad.status, 400);
+    assert.ok((await bad.json()).error);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    await close(proxy);
+    await close(upstream);
+  }
+});
+
+test('ui-patch watchdog fails loudly on an unrecognized bundle generation', async () => {
+  // A bundle with none of our stock markers and none of our fixes: the
+  // patch pass skips everything but must NOT report healthy.
+  const upstream = http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://x').pathname;
+    if (pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html><head><script id="fb-desktop-shim">x</script><script src="assets/index-NEW.js"></script></head></html>');
+      return;
+    }
+    if (pathname === '/assets/index-NEW.js') {
+      res.writeHead(200, { 'content-type': 'text/javascript' });
+      res.end('var brandNewBundle = 1;');
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await listen(upstream);
+  try {
+    const report = await checkUiPatches(new URL(`http://127.0.0.1:${port}`), () => {});
+    assert.equal(report.ok, false);
+    assert.ok(
+      report.errors.some((e) => e.includes('unrecognized generation') && e.includes('index-NEW.js')),
+      JSON.stringify(report.errors),
+    );
   } finally {
     await close(upstream);
   }
