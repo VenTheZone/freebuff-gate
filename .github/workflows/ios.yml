@@ -206,10 +206,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP_DIR=$(find "$RUNNER_TEMP/app" -name 'FreebuffGate.app' -type d | head -1)
-          test -n "$APP_DIR"
-          cd "$(dirname "$APP_DIR")"
-          zip -qry "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" "$(basename "$APP_DIR")"
+          # upload-artifact v4 stores a single-directory path FLATTENED: the
+          # artifact root IS the app contents (Info.plist, Frameworks/, ...),
+          # there is no FreebuffGate.app/ directory inside. Rebuild it.
+          test -f "$RUNNER_TEMP/app/Info.plist"
+          mkdir -p "$RUNNER_TEMP/staged/FreebuffGate.app"
+          cp -R "$RUNNER_TEMP/app/." "$RUNNER_TEMP/staged/FreebuffGate.app/"
+          cd "$RUNNER_TEMP/staged"
+          zip -qry "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" FreebuffGate.app
           sha256sum "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
             | tee "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256"
 
