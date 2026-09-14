@@ -18,27 +18,30 @@ jobs:
           fetch-depth: 0
       - name: Reject unapproved authors and committers
         env:
-          APPROVED_USERNAME: venthezone
-          APPROVED_EMAIL: kytusdevenn@gmail.com
+          APPROVED_EMAILS: >-
+            kytusdevenn@gmail.com
+            youlianvr@gmail.com
+            youlianvr2@gmail.com
+            noreply@github.com
         shell: bash
         run: |
           set -euo pipefail
           failures=0
-          while IFS=$'\t' read -r commit author_name author_email committer_name committer_email; do
-            if [[ "$author_name" != "$APPROVED_USERNAME" || "$author_email" != "$APPROVED_EMAIL" ]]; then
-              printf 'Unapproved author: %s %s <%s>\n' "$commit" "$author_name" "$author_email" >&2
+          while IFS=$'\t' read -r commit author_email committer_email; do
+            if ! grep -qxF "$author_email" <<< "$APPROVED_EMAILS"; then
+              printf 'Unapproved author email: %s <%s>\n' "$commit" "$author_email" >&2
               failures=1
             fi
-            if [[ "$committer_name" != "$APPROVED_USERNAME" || "$committer_email" != "$APPROVED_EMAIL" ]]; then
-              printf 'Unapproved committer: %s %s <%s>\n' "$commit" "$committer_name" "$committer_email" >&2
+            if ! grep -qxF "$committer_email" <<< "$APPROVED_EMAILS"; then
+              printf 'Unapproved committer email: %s <%s>\n' "$commit" "$committer_email" >&2
               failures=1
             fi
-          done < <(git log --all --format='%H%x09%an%x09%ae%x09%cn%x09%ce')
+          done < <(git log --all --format='%H%x09%ae%x09%ce')
 
           if (( failures )); then
             echo "Commit identity check failed." >&2
-            echo "Expected: $APPROVED_USERNAME <$APPROVED_EMAIL>" >&2
+            echo "Approved emails: $APPROVED_EMAILS" >&2
             exit 1
           fi
 
-          echo "All reachable commits use $APPROVED_USERNAME <$APPROVED_EMAIL>."
+          echo "All reachable commits use an approved identity."
