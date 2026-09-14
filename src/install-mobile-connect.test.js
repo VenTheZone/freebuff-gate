@@ -115,7 +115,9 @@ test('installer writes companion files and never stores connector credentials', 
     assert.equal(fs.existsSync(path.join(result.paths.installDir, 'mobile-connect-qr.js')), true);
 
     childProcess.execFileSync(process.execPath, ['--check', path.join(result.paths.installDir, 'freebuff-mobile-connect.js')]);
-    const help = childProcess.execFileSync(result.paths.launcher, ['--help'], { encoding: 'utf8' });
+    // Run the node wrapper directly: the launcher is a shell/batch script
+    // that is not directly spawnable from execFileSync on Windows.
+    const help = childProcess.execFileSync(process.execPath, [path.join(result.paths.installDir, 'freebuff-mobile-connect.js'), '--help'], { encoding: 'utf8' });
     assert.match(help, /Freebuff mobile desktop relay agent/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -415,6 +417,8 @@ test('ui stack registers proxy auto-start on macOS and Windows', () => {
         ? 'C:\\Program Files\\Freebuff\\freebuff-setup.exe'
         : '/Applications/Freebuff/freebuff-setup';
       options.proxyRuntimeArgs = ['--run-proxy'];
+      // macOS launchctl bootstrap needs a gui/<uid> target.
+      options.uid = 501;
       const recording = recordingCommands();
       installUiStack(options, {}, recording);
       const names = recording.calls.map((call) => call.command);
