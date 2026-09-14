@@ -36,12 +36,14 @@ function fakeArtifacts(version) {
   return dir;
 }
 
+// GNU tar treats a colon in a path (e.g. 'C:\\...') as a remote host spec,
+// so tarball paths are passed relative to the tarball's directory.
 function tarPackageJson(tarball) {
-  return JSON.parse(runCommand('tar', ['-xOf', tarball, 'package/package.json']));
+  return JSON.parse(runCommand('tar', ['-xOf', path.basename(tarball), 'package/package.json'], { cwd: path.dirname(tarball) }));
 }
 
 function tarEntries(tarball) {
-  return runCommand('tar', ['-tf', tarball]).split('\n').filter(Boolean);
+  return runCommand('tar', ['-tf', path.basename(tarball)], { cwd: path.dirname(tarball) }).split('\n').filter(Boolean);
 }
 
 test('npm stubs carry expected names, os/cpu fields, main, and bin wiring', () => {
