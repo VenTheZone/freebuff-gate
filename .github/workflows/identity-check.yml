@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
       - name: Reject unapproved authors and committers
         env:
-          APPROVED_EMAILS: >-
+          APPROVED_EMAILS: |
             kytusdevenn@gmail.com
             youlianvr@gmail.com
             youlianvr2@gmail.com
