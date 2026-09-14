@@ -976,24 +976,16 @@ function applyIndexShim(indexFile) {
   return { file: indexFile, outcome: 'patched' };
 }
 
-// Inserted route block: dirlist + perf-report + upload + read-file. These are
-// additive inserts anchored after the terminal-upgrade route; they reuse the
+// Inserted route block: perf-report + upload + read-file. These are additive
+// inserts anchored after the terminal-upgrade route; they reuse the
 // orchestrator's own json3/url2 helpers. configDir is where the perf log
-// lands; uploadsDir is where browser-attached files are stored.
+// lands; uploadsDir is where browser-attached files are stored. dirlist is
+// served by the tailnet proxy (see freebuff_tailnet_proxy.js) and is
+// deliberately not patched on disk here.
 function orchestratorRouteBlock(configDir, uploadsDir) {
-  return `      if (pathname === "/api/fb/dirlist") {
-        let root = url2.searchParams.get("path") || "/";
-        let entries = [];
-        try {
-          let { readdir } = await import("fs/promises");
-          let items = await readdir(root, { withFileTypes: true });
-          entries = items.map((it) => ({ name: it.name, dir: it.isDirectory() })).sort((a, b) => a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1);
-        } catch (error47) {
-          return json3({ error: error47 instanceof Error ? error47.message : String(error47) }, 400);
-        }
-        return json3({ path: root, entries });
-      }
-      if (pathname === "/api/fb/perf-report") {
+  // dirlist is NOT here: the tailnet proxy serves /api/fb/dirlist itself,
+  // so the folder picker survives Desktop updates that replace this file.
+  return `      if (pathname === "/api/fb/perf-report") {
         let body = "";
         try {
           body = await req.text();
@@ -1068,15 +1060,20 @@ function perfHelperSource(perfProbePath) {
 `;
 }
 
-const ORCH_ROUTE_MARK = 'if (pathname === "/api/fb/dirlist")';
+const ORCH_ROUTE_MARK = 'if (pathname === "/api/fb/perf-report")';
 const ORCH_ROUTE_MARKS = [
-  'if (pathname === "/api/fb/dirlist")',
   'if (pathname === "/api/fb/perf-report")',
   'if (pathname === "/api/fb/upload")',
   'if (pathname === "/api/fb/read-file")',
 ];
-const ORCH_ROUTE_TAIL = 'let match12 = findRoute(routes, req.method, pathname);';
-const ORCH_ROUTE_ANCHOR = `return json3({ error: "upgrade required" }, 426);\n      }\n      ${ORCH_ROUTE_TAIL}`;
+// The minified match counter (match12/match14/...) churns between Desktop
+// versions, so anchors that pin a literal counter break on every update.
+// Anchor by structure instead: the upgrade-required close followed by the
+// findRoute dispatch (any counter), captured to splice the block in.
+const ORCH_ROUTE_TAIL_RE = /let (match\d+) = findRoute\(routes, req\.method, pathname\);/;
+const ORCH_ROUTE_ANCHOR_RE = new RegExp(
+  `return json3\\({ error: "upgrade required" }, 426\\);\\n      }\\n      (let match\\d+ = findRoute\\(routes, req\\.method, pathname\\);)`,
+);
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
 const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
 // ---------------------------------------------------------------------------
@@ -1216,22 +1213,36 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
   if (routeMarksPresent.length < ORCH_ROUTE_MARKS.length) {
     const block = orchestratorRouteBlock(configDir, uploadsDir);
     if (routeMarksPresent.length === 0) {
-      // Fresh insert: anchor on the stock upgrade-required route.
-      if (!out.includes(ORCH_ROUTE_ANCHOR)) {
-        throw new Error(`orchestrator route anchor not found (app update may have renamed helpers); expected: ${ORCH_ROUTE_ANCHOR.slice(0, 80)}…`);
+      // Fresh insert: anchor on the stock upgrade-required route + findRoute
+      // dispatch (regex, so the minified match counter may churn freely).
+      const anchor = ORCH_ROUTE_ANCHOR_RE.exec(out);
+      if (!anchor) {
+        throw new Error('orchestrator route anchor not found (app update may have renamed helpers); expected: return json3({ error: "upgrade required" }, 426); + findRoute dispatch');
       }
-      out = out.split(ORCH_ROUTE_ANCHOR).join(`return json3({ error: "upgrade required" }, 426);\n      }\n${block}      ${ORCH_ROUTE_TAIL}`);
+      const [full, tail] = anchor;
+      out = out.replace(
+        full,
+        `return json3({ error: "upgrade required" }, 426);\n      }\n${block}      ${tail}`,
+      );
       performed.push('routes');
     } else {
-      // Partial block: an older patch left dirlist/perf-report but predates
-      // the upload/read-file routes. Replace the existing block span with
-      // the full current block so the on-disk routes catch up.
+      // Partial block: an older patch left some routes but predates the
+      // current set. Cut everything from the first patched route to the
+      // findRoute dispatch and replace it with the full current block, so
+      // stale branches (e.g. a dirlist now served by the proxy) go away.
       const start = out.indexOf(ORCH_ROUTE_MARK);
-      const end = out.indexOf(ORCH_ROUTE_TAIL, start);
-      if (start < 0 || end < 0) {
-        throw new Error(`orchestrator stale route block cannot be located (app update may have moved it); expected: ${ORCH_ROUTE_MARK.slice(0, 60)}… → ${ORCH_ROUTE_TAIL.slice(0, 60)}…`);
+      const tailMatch = ORCH_ROUTE_TAIL_RE.exec(out.slice(start));
+      if (start < 0 || !tailMatch) {
+        throw new Error(`orchestrator stale route block cannot be located (app update may have moved it); expected: ${ORCH_ROUTE_MARK.slice(0, 60)}… → findRoute dispatch`);
       }
-      out = `${out.slice(0, start)}${block}${out.slice(end)}`;
+      const end = start + tailMatch.index;
+      // A legacy block may START earlier than our first mark (e.g. with a
+      // dirlist branch); walk back over a directly preceding route-shaped
+      // branch so the replaced span swallows it too.
+      const before = out.slice(0, start);
+      const headMatch = /(?:^|\n)(      if \(pathname === "\/api\/fb\/dirlist"\) \{[\s\S]*?\n      \}\n)(      )?$/.exec(before.replace(/\r/g, ''));
+      const cut = headMatch ? start - headMatch[1].length : start;
+      out = `${out.slice(0, cut)}${block}${out.slice(end)}`;
       performed.push('routes');
     }
   }
@@ -1564,9 +1575,7 @@ function collectProblems(desktopDir, options = {}) {
     problems.push({ level: 'error', item: 'orchestrator', message: `missing orchestrator.js: ${orchFile}` });
   } else {
     const src = fs.readFileSync(orchFile, 'utf8');
-    if (!src.includes('/api/fb/dirlist')) {
-      problems.push({ level: 'error', item: 'orchestrator.routes', message: 'dirlist route missing (app update replaced orchestrator.js; re-run install)' });
-    }
+    // dirlist is served by the tailnet proxy; only on-disk routes below.
     if (!src.includes('/api/fb/perf-report')) {
       problems.push({ level: 'error', item: 'orchestrator.routes', message: 'perf-report route missing (app update replaced orchestrator.js; re-run install)' });
     }
