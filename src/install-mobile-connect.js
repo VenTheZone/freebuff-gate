@@ -1073,7 +1073,7 @@ const ORCH_ROUTE_MARKS = [
 // findRoute dispatch (any counter), captured to splice the block in.
 const ORCH_ROUTE_TAIL_RE = /let (match\d+) = findRoute\(routes, req\.method, pathname\);/;
 const ORCH_ROUTE_ANCHOR_RE = new RegExp(
-  `return json3\\({ error: "upgrade required" }, 426\\);\\n      }\\n      (let match\\d+ = findRoute\\(routes, req\\.method, pathname\\);)`,
+  `return json3\\(\\{ error: "upgrade required" \\}, 426\\);\\n\\s+}\\n\\s+(let match\\d+ = findRoute\\(routes, req\\.method, pathname\\);)`,
 );
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
 const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
