@@ -207,6 +207,9 @@ class RelayWebSocket extends EventEmitter {
     this.closeTimer = null;
     this.closed = true;
     this.closeEmitted = true;
+    if (this.lastError) {
+      console.error(`[relay-ws] connection terminated: ${this.lastError.message || this.lastError}`);
+    }
     this.emit('close');
   }
 }
