@@ -30,6 +30,7 @@ const PROXY_FILES = Object.freeze([
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
+  'discover-orchestrator.ps1',
 ]);
 const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
 // Sidecar written next to the deployed proxy: records the directory the UI
