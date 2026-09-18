@@ -1325,10 +1325,19 @@ function createProxyServer(options = {}) {
   // forwarded): the orchestrator's on-disk route dies with every Desktop
   // update, while this proxy survives them. Same wire shape the old
   // orchestrator route returned: { path, entries: [{ name, dir }] }.
+  // Restricted to FB_DIRLIST_ROOT (default: the user's home directory) —
+  // outside paths get 403, mirroring read-file's uploads-root guard.
   if (req.method === 'GET' && pathname === '/api/fb/dirlist') {
     let requested = '';
     try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || '/'; } catch (e) { /* keep default */ }
-    fs.readdir(requested, { withFileTypes: true }, (err, items) => {
+    const dirRoot = path.resolve(process.env.FB_DIRLIST_ROOT || os.homedir()) + path.sep;
+    const dirFull = path.resolve(requested);
+    if (!dirFull.startsWith(dirRoot) && dirFull + path.sep !== dirRoot) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden path' }));
+      return;
+    }
+    fs.readdir(dirFull, { withFileTypes: true }, (err, items) => {
       if (err) {
         res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify({ error: err.message }));
@@ -1338,7 +1347,7 @@ function createProxyServer(options = {}) {
         .map((it) => ({ name: it.name, dir: it.isDirectory() }))
         .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ path: requested, entries }));
+      res.end(JSON.stringify({ path: dirFull, entries }));
     });
     return;
   }
@@ -1507,6 +1516,9 @@ function createProxyServer(options = {}) {
   });
   preq.on('error', (err) => {
     // Orchestrator may have restarted on a new port — re-discover and retry once.
+    // Safe to retry because ECONNREFUSED/ECONNRESET here means the request never
+    // reached a listening socket (or was reset before the response began), so no
+    // bytes have been streamed to the client yet; non-connect errors must not retry.
     if (err && (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') && !req._retried && !preq._retried) {
       const port = discoverOrchestratorPort();
       if (port && String(port) !== String(up.port)) {
