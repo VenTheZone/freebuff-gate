@@ -123,7 +123,10 @@ test('connected folder selector uses readable desktop and mobile grids', () => {
 
 function isExecutable(file) {
   try {
-    return fs.statSync(file).isFile() && (fs.statSync(file).mode & 0o111) !== 0;
+    if (!fs.statSync(file).isFile()) return false;
+    // Windows does not carry Unix execute bits: an existing file is runnable.
+    if (process.platform === 'win32') return true;
+    return (fs.statSync(file).mode & 0o111) !== 0;
   } catch {
     return false;
   }
@@ -133,10 +136,19 @@ function findChrome() {
   const candidates = [
     process.env.FB_CHROME_BIN,
     process.env.CHROME_BIN,
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
+    ...(process.platform === 'win32'
+      ? [
+          'C:/Program Files/Google/Chrome/Application/chrome.exe',
+          'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+          'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+          'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+        ]
+      : [
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium',
+          '/usr/bin/chromium-browser',
+        ]),
   ].filter(Boolean);
 
   for (const root of [
@@ -462,7 +474,10 @@ async function evaluate(cdp, expression) {
     awaitPromise: true,
   });
   if (result.exceptionDetails) {
-    throw new Error('Fixture evaluation failed');
+    const detail = result.exceptionDetails.exception
+      ? result.exceptionDetails.exception.description
+      : result.exceptionDetails.text;
+    throw new Error(`Fixture evaluation failed: ${detail}`);
   }
   return result.result ? result.result.value : undefined;
 }
@@ -485,7 +500,15 @@ function hasAccessibleStatus(nodes, text) {
 async function waitFor(cdp, expression, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const value = await evaluate(cdp, expression);
+    // The fixture page reloads periodically and destroys the execution
+    // context; a failing evaluation is a not-yet-met condition, not a bug.
+    let value;
+    try {
+      value = await evaluate(cdp, expression);
+    } catch {
+      await delay(50);
+      continue;
+    }
     if (value) return value;
     await delay(50);
   }
@@ -811,9 +834,14 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
     await waitFor(cdp, "!document.querySelector('.fb-codex-overlay')");
     await evaluate(cdp, "document.querySelector('.fb-model-pill').click()");
     await waitFor(cdp, "Boolean(document.querySelector('.fb-model-session-summary')) && Boolean(document.querySelector('.fb-codex-connect'))");
-    const availability = await evaluate(
+    // The usage fetch (/api/projects) resolves asynchronously; snapshotting
+    // right after the summary appears races the first render that still says
+    // "Session names unavailable". Wait atomically for the real names.
+    const availability = await waitFor(
       cdp,
-      `(() => ({
+      `(() => {
+        if (!document.querySelector('.fb-model-session-summary')) return null;
+        const snap = (() => ({
         summary: document.querySelector('.fb-model-session-summary').textContent,
         role: document.querySelector('.fb-model-session-summary').getAttribute('role'),
         live: document.querySelector('.fb-model-session-summary').getAttribute('aria-live'),
@@ -849,7 +877,11 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
             optionAria: option && option.getAttribute('aria-label'),
           };
         }),
-      }))()`,
+        }))();
+        const first = snap.counts[0];
+        if (!first || first.usersText !== 'Used by: Mobile screenshot review') return null;
+        return snap;
+      })()`,
     );
     assert.equal(
       availability.summary,
@@ -1256,14 +1288,15 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
         return true;
       })()`,
     );
-    await waitFor(
-      cdp,
-      "document.querySelector('.fb-session-menu-filter-empty').hidden === false && document.querySelector('.fb-session-menu-filter-empty').textContent === 'No sessions use Sonnet 5.'",
-    );
-    const noMatchFilter = await evaluate(
+    // The session-menu status poll (1 s) rebuilds the model filter and resets
+    // a model whose rows are gone back to "all", so the empty state must be
+    // captured atomically with the wait condition: waitFor() returns the
+    // first truthy polled value, i.e. the snapshot itself.
+    const noMatchFilter = await waitFor(
       cdp,
       `(() => {
         const empty = document.querySelector('.fb-session-menu-filter-empty');
+        if (!empty || empty.hidden || empty.textContent !== 'No sessions use Sonnet 5.') return null;
         return {
           text: empty.textContent,
           role: empty.getAttribute('role'),

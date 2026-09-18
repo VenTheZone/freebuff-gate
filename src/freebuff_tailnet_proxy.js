@@ -12,7 +12,7 @@
  * Port defaults to 58061; override with FREEBUFF_PROXY_PORT.
  */
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const { createPiAgentController, readJsonBody: readPiJsonBody } = require('./pi-agent-bridge');
 const { injectSkills } = require('./freebuff-skill-loader');
 const fs = require('fs');
@@ -20,8 +20,28 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const UPSTREAM = process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
+
+// ---- Orchestrator auto-discovery ----
+// The orchestrator (bun.exe) picks a random port on every restart.
+// Discover it by finding which port bun.exe listens on, then re-check
+// periodically so the proxy survives orchestrator restarts.
+const DISCOVER_SCRIPT = path.join(__dirname, 'discover-orchestrator.ps1');
+function discoverOrchestratorPort() {
+  try {
+    const out = execFileSync('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
+    ], { timeout: 8000, encoding: 'utf8' }).trim();
+    const port = parseInt(out, 10);
+    if (port > 0 && port < 65536) return port;
+  } catch (e) { /* discovery failed, keep old */ }
+  return null;
+}
+
+const FREEBUFF_UPSTREAM_ENV = process.env.FREEBUFF_UPSTREAM;
+let currentPort = null;
+if (!FREEBUFF_UPSTREAM_ENV) currentPort = discoverOrchestratorPort();
+const UPSTREAM = FREEBUFF_UPSTREAM_ENV || (currentPort ? `http://127.0.0.1:${currentPort}` : 'http://127.0.0.1:58060');
 
 const REPO = __dirname;
 
@@ -858,7 +878,7 @@ function patchBundleInfo(body) {
     else if (out.includes(SCROLL_MARK_V0072)) out = out.split(SCROLL_MARK_V0072).join(SCROLL_FIX_V0072);
     // CREATE/SETSTATE/CLOSE/OPEN_THREAD/SKILL: target code removed or
     // rewritten in 0.0.71 — skip (obsolete for this bundle version).
-    return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'] };
+    return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'], recognized: true };
   }
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
@@ -887,7 +907,19 @@ function patchBundleInfo(body) {
   else if (out.includes(OPEN_THREAD_MARK)) out = out.split(OPEN_THREAD_MARK).join(OPEN_THREAD_FIX);
   if (out.includes(SKILL_ORIGIN_FIX)) { /* already applied */ }
   else if (out.includes(SKILL_ORIGIN_MARK)) out = out.split(SKILL_ORIGIN_MARK).join(SKILL_ORIGIN_FIX);
-  return { body: out, obsolete: [] };
+  // An unknown generation has NO stock marker and NO fix content: bundle
+  // churn made every marker check moot while the result still looked
+  // healthy. Flag it so the watchdog can fail loudly instead.
+  const recognized =
+    out.includes(CREATE_MARK) || out.includes(CREATE_REUSE) ||
+    out.includes(SETSTATE_MARK) || out.includes(SETSTATE_FIX) ||
+    out.includes(SCROLL_MARK) || out.includes(SCROLL_MARK_V0071) || out.includes(SCROLL_MARK_V0072) ||
+    out.includes(CLOSE_MARK1) || out.includes(CLOSE_FIX1) ||
+    out.includes(CLOSE_MARK2) || out.includes(CLOSE_MARK3) ||
+    out.includes(CLOSE_BTN_MARK) ||
+    out.includes(OPEN_THREAD_MARK) ||
+    out.includes(SKILL_ORIGIN_MARK) || out.includes(SKILL_ORIGIN_FIX);
+  return { body: out, obsolete: [], recognized };
 }
 
 // ---- Auto-verify: detect + surface post-update UI patch regressions ----
@@ -906,6 +938,9 @@ const UI_PATCH_CHECK_INTERVAL_MS = Math.max(
   30_000,
   Number(process.env.FB_UI_PATCH_CHECK_INTERVAL_MS || 10 * 60 * 1000),
 );
+// Routes the watchdog probes on the upstream (orchestrator on-disk patch).
+// dirlist is served by this proxy itself and is deliberately not probed.
+const UI_PATCH_ROUTES_PROBED = ['/api/fb/perf-report'];
 
 const UI_PATCH_MARKERS = [
   ['CREATE_REUSE', CREATE_REUSE],
@@ -981,13 +1016,20 @@ async function checkUiPatches(up, log) {
           return !patched.body.includes(mark);
         })
         .map(([name]) => name);
-      if (missing.length > 0) {
+      if (patched.recognized === false) {
+        // Unknown bundle generation: the patch pass skipped everything but
+        // the result is NOT healthy. Name the skipped patches so the next
+        // session knows exactly which anchors to re-derive.
+        report.errors.push(
+          `bundle ${bundleName}: unrecognized generation - patch pass skipped ${missing.length > 0 ? missing.join(', ') : 'all UI patches'}; derive new anchors for this Desktop version`,
+        );
+      } else if (missing.length > 0) {
         report.errors.push(`bundle ${bundleName}: missing patch marker(s): ${missing.join(', ')} (app update likely replaced it; re-run install)`);
       } else if (obsolete.length > 0) {
         report.warnings.push(`bundle ${bundleName}: ${obsolete.length} patch(es) obsolete for this app version (skipped): ${obsolete.join(', ')}`);
       }
     }
-    for (const route of ['/api/fb/dirlist?path=/', '/api/fb/perf-report']) {
+    for (const route of UI_PATCH_ROUTES_PROBED) {
       try {
         const probe = await fetchUpstream(up, route);
         if (probe.status === 404) report.errors.push(`${route} route missing (app update replaced orchestrator.js; re-run install)`);
@@ -1033,8 +1075,20 @@ function maybeProbeUiPatches(up, force) {
 }
 
 function createProxyServer(options = {}) {
-  const upstream = options.upstream || process.env.FREEBUFF_UPSTREAM || 'http://127.0.0.1:58060';
-  const up = new URL(upstream);
+  const staticUpstream = options.upstream || process.env.FREEBUFF_UPSTREAM;
+  let up = new URL(staticUpstream || UPSTREAM);
+  // Auto-refresh: re-discover the orchestrator port every 30s when no static override
+  if (!staticUpstream) {
+    const refreshTimer = setInterval(() => {
+      const port = discoverOrchestratorPort();
+      if (port && String(port) !== String(up.port)) {
+        const oldPort = up.port;
+        up = new URL(`http://127.0.0.1:${port}`);
+        console.log(`[proxy] orchestrator port changed ${oldPort} -> ${port}`);
+      }
+    }, 30000);
+    if (refreshTimer.unref) refreshTimer.unref();
+  }
   // Local chat-server that speaks the same AI SDK /api/chat wire protocol as
   // the orchestrator. Set FB_CHAT_UPSTREAM=off to disable the /api/chat
   // override entirely; any other value overrides the default endpoint.
@@ -1267,6 +1321,36 @@ function createProxyServer(options = {}) {
     req.on('error', () => res.destroy());
     return;
   }
+  // Server-side folder listing for the file picker. Served locally (not
+  // forwarded): the orchestrator's on-disk route dies with every Desktop
+  // update, while this proxy survives them. Same wire shape the old
+  // orchestrator route returned: { path, entries: [{ name, dir }] }.
+  // Restricted to FB_DIRLIST_ROOT (default: the user's home directory) —
+  // outside paths get 403, mirroring read-file's uploads-root guard.
+  if (req.method === 'GET' && pathname === '/api/fb/dirlist') {
+    let requested = '';
+    try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || '/'; } catch (e) { /* keep default */ }
+    const dirRoot = path.resolve(process.env.FB_DIRLIST_ROOT || os.homedir()) + path.sep;
+    const dirFull = path.resolve(requested);
+    if (!dirFull.startsWith(dirRoot) && dirFull + path.sep !== dirRoot) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden path' }));
+      return;
+    }
+    fs.readdir(dirFull, { withFileTypes: true }, (err, items) => {
+      if (err) {
+        res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+      const entries = items
+        .map((it) => ({ name: it.name, dir: it.isDirectory() }))
+        .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ path: dirFull, entries }));
+    });
+    return;
+  }
   if (req.method === 'GET' && pathname === '/api/fb/read-file') {
     let requested = '';
     try { requested = new URL(req.url || '/', 'http://x').searchParams.get('path') || ''; } catch (e) { /* keep empty */ }
@@ -1430,7 +1514,29 @@ function createProxyServer(options = {}) {
     pres.pipe(res);
     pres.on('error', () => res.destroy());
   });
-  preq.on('error', () => res.destroy());
+  preq.on('error', (err) => {
+    // Orchestrator may have restarted on a new port — re-discover and retry once.
+    // Safe to retry because ECONNREFUSED/ECONNRESET here means the request never
+    // reached a listening socket (or was reset before the response began), so no
+    // bytes have been streamed to the client yet; non-connect errors must not retry.
+    if (err && (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') && !req._retried && !preq._retried) {
+      const port = discoverOrchestratorPort();
+      if (port && String(port) !== String(up.port)) {
+        const oldPort = up.port;
+        up = new URL(`http://127.0.0.1:${port}`);
+        console.log(`[proxy] upstream gone, re-discovered orchestrator on :${port} (was :${oldPort})`);
+        preq._retried = true;
+        req._retried = true;
+        const retry = http.request({
+          host: up.hostname, port: up.port || 80,
+          method: req.method, path: req.url, headers,
+        }, (rpres) => { res.writeHead(rpres.statusCode || 200, rpres.headers); rpres.pipe(res); });
+        retry.on('error', () => res.destroy());
+        return;
+      }
+    }
+    res.destroy();
+  });
   if (sniffAd) {
     req.on('end', () => preq.end(Buffer.concat(reqChunks)));
   } else {
@@ -1533,6 +1639,7 @@ module.exports = {
   SHIM,
   UI_PATCH_MARKERS,
   UI_PATCH_STATUS_FILE,
+  UI_PATCH_ROUTES_PROBED,
   UPLOADS_DIR,
   FB_MAX_UPLOAD_BYTES,
   CODEX_DEVICE_URL,

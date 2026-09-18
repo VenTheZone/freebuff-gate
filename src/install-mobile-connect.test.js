@@ -115,7 +115,9 @@ test('installer writes companion files and never stores connector credentials', 
     assert.equal(fs.existsSync(path.join(result.paths.installDir, 'mobile-connect-qr.js')), true);
 
     childProcess.execFileSync(process.execPath, ['--check', path.join(result.paths.installDir, 'freebuff-mobile-connect.js')]);
-    const help = childProcess.execFileSync(result.paths.launcher, ['--help'], { encoding: 'utf8' });
+    // Run the node wrapper directly: the launcher is a shell/batch script
+    // that is not directly spawnable from execFileSync on Windows.
+    const help = childProcess.execFileSync(process.execPath, [path.join(result.paths.installDir, 'freebuff-mobile-connect.js'), '--help'], { encoding: 'utf8' });
     assert.match(help, /Freebuff mobile desktop relay agent/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -415,6 +417,8 @@ test('ui stack registers proxy auto-start on macOS and Windows', () => {
         ? 'C:\\Program Files\\Freebuff\\freebuff-setup.exe'
         : '/Applications/Freebuff/freebuff-setup';
       options.proxyRuntimeArgs = ['--run-proxy'];
+      // macOS launchctl bootstrap needs a gui/<uid> target.
+      options.uid = 501;
       const recording = recordingCommands();
       installUiStack(options, {}, recording);
       const names = recording.calls.map((call) => call.command);
@@ -436,7 +440,8 @@ test('applyOrchestratorPatches upgrades a stale partial route block', () => {
   // Regression: an older patch left dirlist+perf-report but predates the
   // upload/read-file routes. The marker check (dirlist present) used to skip
   // the re-patch, so upload/read-file were never added on-disk. The patcher
-  // must replace the stale block with the full current one.
+  // must replace the stale block with the full current one (dirlist dropped:
+  // it is served by the proxy now).
   const root = tempRoot();
   try {
     const orchFile = path.join(root, 'orchestrator.js');
@@ -490,11 +495,66 @@ test('applyOrchestratorPatches upgrades a stale partial route block', () => {
     });
 
     const out = fs.readFileSync(orchFile, 'utf8');
-    for (const mark of ['/api/fb/dirlist', '/api/fb/perf-report', '/api/fb/upload', '/api/fb/read-file']) {
+    for (const mark of ['/api/fb/perf-report', '/api/fb/upload', '/api/fb/read-file']) {
       assert.equal(out.includes(mark), true, `${mark} present after upgrade`);
     }
-    assert.equal(out.split('/api/fb/dirlist').length - 1, 1, 'dirlist not duplicated');
+    // dirlist is served by the proxy, not patched on disk: the stale legacy
+    // block that carried it must be replaced, not extended.
+    assert.equal(out.includes('/api/fb/dirlist'), false, 'legacy dirlist block replaced');
     assert.equal(out.split('let match12 = findRoute(routes, req.method, pathname);').length - 1, 2, 'route tail intact');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyOrchestratorPatches anchors on findRoute regardless of match counter', () => {
+  // Desktop 0.0.110 renamed the minified counter match12 -> match14; a
+  // literal anchor broke on every app update. The regex anchor must accept
+  // any counter.
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const stock = [
+      'let match14 = findRoute(routes, req.method, pathname);',
+      'return json3({ error: "upgrade required" }, 426);',
+      '      }',
+      '      let match14 = findRoute(routes, req.method, pathname);',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+      '  return new Response(file2, { headers: { ...securityHeaders, "content-type": "text/html" } });',
+      STOCK_REQUEST2,
+      STOCK_ENQUEUE_AUTORUN,
+      'function getDefaultSkillsDirs(cwd) {',
+      '  let home = os5.homedir();',
+      '  return [',
+      '    path11.join(home, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(home, ".agents", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path11.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path7.join(home, ".agents", SKILLS_DIR_NAME),',
+      '  ];',
+      '}',
+      'agentSkillsDirs: [',
+      '          join25(homedir7(), ".claude", "skills"),',
+      '          join25(homedir7(), ".agents", "skills"),',
+      '          join25(root, ".claude", "skills"),',
+      '          join25(root, ".agents", "skills")',
+      '        ]',
+    ].join('\n');
+    fs.writeFileSync(orchFile, stock);
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    const out = fs.readFileSync(orchFile, 'utf8');
+    assert.equal(out.includes('/api/fb/perf-report'), true, 'routes inserted with match14 counter');
+    assert.equal(out.split('let match14 = findRoute(routes, req.method, pathname);').length - 1, 2, 'dispatch intact');
+    assert.equal(out.includes('match14 = findRoute(routes, req.method, pathname);\n      }\n      if (pathname === "/api/fb/perf-report")') || out.includes('if (pathname === "/api/fb/perf-report")'), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -530,7 +590,7 @@ test('ui stack deploys proxy and patches bundle/shim/orchestrator, idempotently'
     assert.equal(html.includes('fb-connected-folder-grid-v2'), true);
     assert.match(html, /fb-desktop-shim[\s\S]*<\/script>[\s\S]*<\/head>/);
     const orch = fs.readFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'utf8');
-    assert.equal(orch.includes('/api/fb/dirlist'), true);
+    assert.equal(orch.includes('/api/fb/dirlist'), false, 'dirlist served by the proxy, not the orchestrator');
     assert.equal(orch.includes('/api/fb/perf-report'), true);
     assert.equal(orch.includes('/api/fb/upload'), true);
     assert.equal(orch.includes('/api/fb/read-file'), true);

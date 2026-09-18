@@ -48,7 +48,7 @@ jobs:
           node-version: "22"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # The emulator enforces a 6GiB minimum userdata partition (API >= 24) and
       # needs 1.2x that free, so the ~14GB runner can run short. Drop the
@@ -229,7 +229,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         shell: bash
@@ -322,7 +322,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # The emulator needs ~7.4GB free for its userdata partition; drop the
       # preinstalled NDK/CMake this no-native job never uses.
@@ -509,7 +509,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         shell: bash

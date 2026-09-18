@@ -35,7 +35,7 @@
   } catch (e) {
     native = null;
   }
-  if (native && typeof native.writeText === 'function') return;
+  if (native && typeof native.writeText === 'function' && !window.FreebuffNative) return;
   function fallbackCopy(text) {
     var ta = document.createElement('textarea');
     ta.value = String(text);
@@ -66,6 +66,11 @@
   }
   var shim = {
     writeText: function (text) {
+      // Prefer native Android clipboard bridge (works on all API levels)
+      if (window.FreebuffNative && typeof window.FreebuffNative.copyToClipboard === 'function') {
+        window.FreebuffNative.copyToClipboard(String(text));
+        return Promise.resolve();
+      }
       if (native && typeof native.writeText === 'function') {
         return native.writeText(text);
       }
@@ -4105,6 +4110,9 @@
       var pickerOpenedAt = 0;
       var popupEl = null;
       var closingTimer = null;
+      // Bumped on every open() so a close callback that was armed before the
+      // reopen cannot hide the card the user just opened.
+      var closeEpoch = 0;
       var lastCtxThread = null;
       var composerObserver = null;
       var observedComposer = null;
@@ -4146,6 +4154,11 @@
       }
       function isOpen() {
         return root.classList.contains('fb-ctx-open');
+      }
+      // A card that is sliding away still has fb-ctx-open, so isOpen() alone
+      // would report it as open and every caller would skip the reopen.
+      function isClosing() {
+        return !!(popupEl && popupEl.classList.contains('fb-ctx-closing'));
       }
       function makeStreamingIndicator() {
         var status = document.createElement('span');
@@ -4198,6 +4211,7 @@
         fab.setAttribute('aria-expanded', String(open));
       }
       function open() {
+        closeEpoch += 1;
         clearTimeout(closingTimer);
         if (popupEl) popupEl.classList.remove('fb-ctx-closing');
         root.classList.add('fb-ctx-open');
@@ -4246,7 +4260,9 @@
           return;
         }
         popupEl.classList.add('fb-ctx-closing');
+        var epoch = closeEpoch;
         var done = function () {
+          if (epoch !== closeEpoch) return;
           finishClose();
         };
         popupEl.addEventListener('transitionend', done, { once: true });
@@ -4442,7 +4458,7 @@
         if (tid !== lastCtxThread) {
           lastCtxThread = tid;
           var wantedOpen = tid && threadStateHas(STORE_KEY, tid);
-          if (wantedOpen && !isOpen()) open();
+          if (wantedOpen && (!isOpen() || isClosing())) open();
           else if (tid && !wantedOpen && isOpen()) close();
         }
         if (!actions || !composer) return;
@@ -4481,7 +4497,7 @@
         p.appendChild(chev);
         p.addEventListener('click', function (ev) {
           ev.stopPropagation();
-          if (!isOpen()) {
+          if (!isOpen() || isClosing()) {
             open(); // card becomes the picker menu's parent
             pickerOpenedAt = Date.now();
           }
@@ -4514,7 +4530,7 @@
           var c = getComposer();
           var t = c ? c.querySelector('.effort-trigger') : null;
           if (!t || t.disabled) return;
-          if (!isOpen()) {
+          if (!isOpen() || isClosing()) {
             open(); // card becomes the effort menu's parent
             pickerOpenedAt = Date.now();
           }
@@ -4544,7 +4560,7 @@
         p.addEventListener('click', function (ev) {
           ev.stopPropagation();
           if (p.disabled) return;
-          if (!isOpen()) open();
+          if (!isOpen() || isClosing()) open();
         });
         return p;
       }

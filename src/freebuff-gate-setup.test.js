@@ -173,9 +173,11 @@ test('parseArgs parses flags and defaults', () => {
   assert.equal(options.skipTailscale, true);
   assert.equal(options.release, 'v0.1.13');
   assert.equal(options.repository, 'owner/repo');
-  assert.equal(options.cacheDir, '/tmp/cache');
-  assert.equal(options.sourceDir, '/tmp/src');
-  assert.equal(options.desktopDir, '/tmp/desk');
+  // The source resolves path options; assert the resolved form so the
+  // expectation is platform-neutral.
+  assert.equal(options.cacheDir, path.resolve('/tmp/cache'));
+  assert.equal(options.sourceDir, path.resolve('/tmp/src'));
+  assert.equal(options.desktopDir, path.resolve('/tmp/desk'));
 });
 
 test('parseArgs accepts -y and -h aliases', () => {
