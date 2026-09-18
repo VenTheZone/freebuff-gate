@@ -401,6 +401,10 @@ test('proxy serves /api/fb/dirlist locally for the folder picker', async () => {
   const upstreamPort = await listen(upstream);
   const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}` });
   const proxyPort = await listen(proxy);
+  // Restrict the browse root to the temp dir (os.tmpdir() may live outside
+  // the user's home directory, the default root).
+  const prevRoot = process.env.FB_DIRLIST_ROOT;
+  process.env.FB_DIRLIST_ROOT = dir;
   try {
     const res = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(dir)}`);
     assert.equal(res.status, 200);
@@ -416,7 +420,17 @@ test('proxy serves /api/fb/dirlist locally for the folder picker', async () => {
     const bad = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(path.join(dir, 'nope'))}`);
     assert.equal(bad.status, 400);
     assert.ok((await bad.json()).error);
+    // Outside the browse root -> 403 (path traversal or sibling dirs).
+    const outside = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(path.join(os.tmpdir()))}`);
+    assert.equal(outside.status, 403);
+    const traversal = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(path.join(dir, '..', '..'))}`);
+    assert.equal(traversal.status, 403);
+    // The root itself is listable.
+    const rootRes = await fetch(`http://127.0.0.1:${proxyPort}/api/fb/dirlist?path=${encodeURIComponent(dir)}`);
+    assert.equal(rootRes.status, 200);
   } finally {
+    if (prevRoot === undefined) delete process.env.FB_DIRLIST_ROOT;
+    else process.env.FB_DIRLIST_ROOT = prevRoot;
     fs.rmSync(dir, { recursive: true, force: true });
     await close(proxy);
     await close(upstream);
