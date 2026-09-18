@@ -63,3 +63,6 @@ android/.cxx/
 *.swo
 .DS_Store
 Thumbs.db
+
+# ── Gate runtime (tokens, logs) ─────────────────────
+_runtime/
