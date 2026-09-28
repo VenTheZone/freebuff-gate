@@ -74,18 +74,22 @@ jobs:
           sed -i '' 's/^\([[:space:]]*\)objectVersion = [0-9]*;/\1objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
           grep -q 'objectVersion = 56;' FreebuffGate.xcodeproj/project.pbxproj
 
-      - name: Build for simulator (no signing)
+      - name: Build for simulator (ad-hoc signed)
         working-directory: ios
         run: |
           set -euo pipefail
-          # Simulator builds never need Apple signing; no secrets are required.
+          # Simulator builds need no Apple certificate and no secrets: Xcode
+          # signs them ad-hoc ("-"). Suppressing that step with
+          # CODE_SIGNING_ALLOWED=NO also strips the app's simulated
+          # entitlements, and the Keychain then refuses every item with
+          # errSecMissingEntitlement (-34018) - DeviceIdentity keeps the
+          # pairing key there, so the unit test needs the ad-hoc signature.
           xcodebuild \
             -project FreebuffGate.xcodeproj \
             -scheme FreebuffGate \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Run unit tests on simulator
@@ -98,7 +102,6 @@ jobs:
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 15' \
-            CODE_SIGNING_ALLOWED=NO \
             test
 
       - name: Locate built app
