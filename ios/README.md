@@ -12,14 +12,16 @@ restricted WKWebView, and reconnect with jittered exponential backoff.
 | `FreebuffGate/FreebuffGateApp.swift` | App entry point |
 | `FreebuffGate/MainView.swift` | SwiftUI setup form, QR scanner, WebView host, session controller |
 | `FreebuffGate/PairingModels.swift` | Pairing payload/session parsing, connection states |
-| `FreebuffGate/PairingApi.swift` | Claim/refresh/session-cookie HTTP calls |
-| `FreebuffGate/DeviceIdentity.swift` | EC P-256 keypair in the Keychain (Secure Enclave) |
+| `FreebuffGate/PairingApi.swift` | Claim/refresh/session-cookie/push-token HTTP calls |
+| `FreebuffGate/DeviceIdentity.swift` | EC P-256 keypair (Secure Enclave, Keychain fallback) |
 | `FreebuffGate/SecureSessionStore.swift` | AES-GCM encrypted session in the Keychain |
 | `FreebuffGate/QrScannerView.swift` | AVFoundation QR scanner |
-| `FreebuffGate/RestrictedWebViewController.swift` | WKWebView locked to the relay origin |
-| `FreebuffGate/ReconnectController.swift` | Network monitoring + jittered backoff |
-| `FreebuffGateTests/` | Unit tests for parsing and backoff math |
-| `ExportOptions.plist` | ad-hoc export options for the signed CI job |
+| `FreebuffGate/RestrictedWebViewController.swift` | WKWebView locked to the relay origin and validates cookie installation |
+| `FreebuffGate/ReconnectController.swift` | Network monitoring, serialized connect, jittered backoff |
+| `FreebuffGate/WebSessionLoadGuard.swift` | Suppresses duplicate web-session loads and tracks cookie expiry |
+| `FreebuffGate/OriginConfig.swift` | Parses configured relay origins and pins UI origin |
+| `FreebuffGateTests/` | Unit tests (see below) |
+| `ExportOptions.plist` | Local ad-hoc export template; CI generates a filled copy |
 
 ## Build locally (macOS)
 
@@ -45,48 +47,118 @@ xcodebuild \
   test
 ```
 
+## Origin pinning
+
+`MainView` reads two Info.plist keys, both filled from build settings so no
+production origin is hardcoded in Swift:
+
+- `FBDefaultPairingOrigin` ← `FB_DEFAULT_PAIRING_ORIGIN`
+- `FBDefaultWebOrigin` ← `FB_DEFAULT_WEB_ORIGIN`
+
+Both default to empty. A generic build pairs against the HTTPS origin in the
+scanned QR and pins the WebView to that pairing relay origin. A claimed UI URL
+on another origin is rejected, so the bearer access token is never sent to an
+unrelated host. A production or CI build may configure a separate, known UI
+origin:
+
+```bash
+xcodebuild ... \
+  FB_DEFAULT_PAIRING_ORIGIN=https://relay.example.com \
+  FB_DEFAULT_WEB_ORIGIN=https://ui.example.com
+```
+
+An insecure, credentialed, or malformed value is rejected at parse time, never
+accepted. An invalid non-empty configuration fails closed; it is not treated as
+an absent pin.
+
+## Web session cookie
+
+The app requests `/v1/mobile/session` with native HTTPS and keeps the access
+token out of page JavaScript. It accepts only `__Host-freebuff_session` with
+`Secure`, `HttpOnly`, host-only scope and root path. WebKit cookie installation
+is verified before navigation; missing or rejected cookies never fall through
+to an unauthenticated UI load.
+
+The relay returns cookie expiry metadata. iOS preserves the loaded page across
+ordinary access-token rotations, but refreshes the cookie after foreground
+resume when it is within 24 hours of expiry. That avoids unnecessary reloads
+while covering an app left in the background beyond the relay's seven-day
+cookie lifetime.
+
+## APNs environment
+
+`FreebuffGate.entitlements` sets `aps-environment` from the
+`FB_APS_ENVIRONMENT` build setting: `development` for Debug, `production` for
+Release. It must match the relay's APNs host (`FB_APNS_SANDBOX`). The APNs
+device token is uploaded with the active session and deleted
+(`DELETE /v1/mobile/push-token`) when the user disconnects or the pairing is
+revoked. If its access token has expired, cleanup attempts a device-session
+refresh first and still treats deletion as best-effort.
+
 ## CI
 
 `.github/workflows/ios.yml` builds on macOS runners:
 
-- `build-test`: generates the project, builds for the simulator without
-  signing, runs the unit tests, and uploads the unsigned `.app`.
-- `signed-ipa`: skipped unless the `IOS_SIGNING_CERT_BASE64` and
-  `IOS_SIGNING_CERT_PASSWORD` secrets exist. It imports the distribution
-  certificate, archives, and exports an ad-hoc IPA.
+- `build-test`: installs a pinned XcodeGen, generates the project, normalizes
+  the emitted project format, builds for the simulator without signing, runs
+  the unit tests, and uploads the unsigned `.app`.
+- `signed-ipa`: runs only when **all** signing secrets are present. If some but
+  not all are set, the job fails immediately naming the missing ones. It
+  imports the distribution certificate, installs the provisioning profile,
+  archives, and exports an ad-hoc IPA.
 - `attach-release` (main only): publishes the unsigned simulator build as
-  `freebuff-gate-simulator.app.zip` on the `ios-debug-latest` rolling
-  release. When signing secrets are set and the IPA was produced, it also
-  publishes `freebuff-gate.ipa` on the `ios-latest` rolling release, each
-  with a SHA-256 checksum.
+  `freebuff-gate-simulator.app.zip` on the `ios-debug-latest` rolling release,
+  and the signed IPA as `freebuff-gate.ipa` on `ios-latest`, each with a
+  SHA-256 checksum.
+
+Signing secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `IOS_SIGNING_CERT_BASE64` | base64 of the `.p12` distribution certificate |
+| `IOS_SIGNING_CERT_PASSWORD` | password for that `.p12` |
+| `IOS_TEAM_ID` | Apple Developer Team ID |
+| `IOS_PROVISIONING_PROFILE_BASE64` | base64 of the ad-hoc `.mobileprovision` |
+| `IOS_PROVISIONING_PROFILE_NAME` | profile name shown in the Apple Developer portal |
+
+The repository never stores a Team ID or profile name.
 
 ## Signing for a real device
 
-A device-installable build needs an Apple Developer account:
-
-1. Create an iOS distribution certificate and an ad-hoc provisioning
-   profile in the Apple Developer portal.
+1. Create an iOS distribution certificate and an ad-hoc provisioning profile
+   in the Apple Developer portal for bundle id `com.freebuff.gate` (the value in
+   `ios/project.yml`).
 2. Export the certificate as a `.p12` with a password.
-3. Add `IOS_SIGNING_CERT_BASE64` (base64 of the `.p12`) and
-   `IOS_SIGNING_CERT_PASSWORD` to the repository secrets.
-4. Set the bundle id in `ios/project.yml` (`com.freebuff.gate`) in the
-   provisioning profile, and update `ExportOptions.plist` if you prefer
-   App Store export over ad-hoc.
+3. Base64-encode the `.p12` and the `.mobileprovision` and add the five secrets
+   above to the repository.
+4. For an App Store/TestFlight export instead, change `method` in the generated
+   export options (and set `FB_APS_ENVIRONMENT` accordingly).
 
-Ad-hoc signed IPAs install on up to 100 registered devices via Apple Configurator
-or a web distribution link; they do not need App Store review. TestFlight
-requires an App Store export method and App Store Connect setup instead.
+Ad-hoc signed IPAs install on up to 100 registered devices via Apple
+Configurator or a web distribution link; TestFlight needs an App Store export.
 
 ## Security notes
 
 Same posture as the Android app:
 
 - Pairing URLs must be HTTPS with the token in the URL fragment; the token is
-  never logged.
-- Device identity lives in the Keychain (Secure Enclave when available);
-  only the public key is sent to the relay.
+  never logged. Invalid URLs fail through the normal error path.
+- Device identity lives in the Secure Enclave when available, with a
+  Keychain-persisted P-256 fallback when it is not (for example the Simulator).
+  Only the public key is sent to the relay and it has the same encoding either
+  way.
 - The session is stored encrypted with AES-GCM under a Keychain key.
-- The WKWebView is restricted to the exact relay origin: no other scheme or
-  host is ever loaded, downloads are rejected, and the access token is never
-  exposed to page JavaScript (only the relay-issued cookie is installed).
+- The WKWebView is restricted to the exact pinned HTTPS origin: no other
+  scheme, host, subdomain, or port is ever loaded. The access token is used
+  only by native requests; only the relay-issued HttpOnly cookie reaches WebView.
 - Non-HTTPS origins, cleartext, and certificate bypasses are refused.
+
+## Tests
+
+`FreebuffGateTests` covers URL normalization and failure modes, configured
+origin parsing and fallback pinning, exact-origin WebView navigation, secure
+cookie parsing and installation policy, cookie expiry tracking, device identity
+stability, connect-gate serialization, backoff/token-freshness math, and
+push-token upload/cleanup (including expired-token refresh selection).
+All run on the Simulator; a device-only run additionally exercises the Secure
+Enclave path.

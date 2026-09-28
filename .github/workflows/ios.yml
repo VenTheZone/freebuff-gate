@@ -22,6 +22,11 @@ concurrency:
   group: ios-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pinned so generated project files are reproducible; a floating Homebrew
+  # install changes the emitted Xcode project format between runs.
+  XCODEGEN_VERSION: "2.44.1"
+
 jobs:
   build-test:
     runs-on: macos-14
@@ -31,26 +36,41 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/xcodegen"
+          mkdir -p "$dest"
+          if curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"; then
+            unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$dest"
+            echo "$dest/bin" >> "$GITHUB_PATH"
+          else
+            echo "::warning::Pinned XcodeGen ${XCODEGEN_VERSION} download failed; falling back to Homebrew (unpinned)"
+            brew install xcodegen
+          fi
+          export PATH="$dest/bin:$PATH"
+          xcodegen --version
 
       - name: Generate Xcode project
         working-directory: ios
         run: xcodegen generate
 
-      - name: Downgrade project format for Xcode 15
+      - name: Normalize generated project format
         working-directory: ios
         run: |
-          # Latest xcodegen emits objectVersion 77, which needs Xcode 16.
-          # The macos-14 image ships Xcode 15.4, so pin the object version
-          # back to 56 (Xcode 14/15) before building.
-          sed -i '' 's/objectVersion = [0-9]*;/objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
-          grep objectVersion FreebuffGate.xcodeproj/project.pbxproj
+          set -euo pipefail
+          # XcodeGen may emit a project objectVersion newer than the runner's
+          # Xcode can open. Pin it back to 56 and fail loudly if the rewrite did
+          # not take, instead of building a project the toolchain rejects.
+          sed -i '' 's/^\([[:space:]]*\)objectVersion = [0-9]*;/\1objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
+          grep -q 'objectVersion = 56;' FreebuffGate.xcodeproj/project.pbxproj
 
       - name: Build for simulator (no signing)
         working-directory: ios
         run: |
           set -euo pipefail
+          # Simulator builds never need Apple signing; no secrets are required.
           xcodebuild \
             -project FreebuffGate.xcodeproj \
             -scheme FreebuffGate \
@@ -91,12 +111,10 @@ jobs:
           retention-days: 14
 
   signed-ipa:
-    # Produces a device-installable IPA when signing secrets are configured.
-    # Without an Apple Developer account + certificates, every step below the
-    # check is skipped; the simulator build is the default CI path.
-    # The gate lives at step level because the `secrets` context is not
-    # available in a job-level `if` (using it there makes GitHub reject the
-    # whole workflow file before any job is created).
+    # Produces a device-installable IPA only when a complete signing
+    # configuration is present. All secrets absent = simulator-only run;
+    # partially present = fail immediately with the exact missing names
+    # instead of a confusing xcodebuild export error.
     runs-on: macos-14
     timeout-minutes: 40
     needs: build-test
@@ -104,38 +122,66 @@ jobs:
       ipa: ${{ steps.signing.outputs.enabled }}
 
     steps:
-      - name: Check signing secrets
+      - name: Check signing configuration
         id: signing
         env:
           CERT: ${{ secrets.IOS_SIGNING_CERT_BASE64 }}
           PASS: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+          TEAM: ${{ secrets.IOS_TEAM_ID }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
         run: |
-          if [ -n "$CERT" ] && [ -n "$PASS" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
+          set -euo pipefail
+          missing=()
+          if [ -z "$CERT" ]; then missing+=("IOS_SIGNING_CERT_BASE64"); fi
+          if [ -z "$PASS" ]; then missing+=("IOS_SIGNING_CERT_PASSWORD"); fi
+          if [ -z "$TEAM" ]; then missing+=("IOS_TEAM_ID"); fi
+          if [ -z "$PROFILE" ]; then missing+=("IOS_PROVISIONING_PROFILE_BASE64"); fi
+          if [ -z "$PROFILE_NAME" ]; then missing+=("IOS_PROVISIONING_PROFILE_NAME"); fi
+          if [ "${#missing[@]}" -eq 5 ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping signed IPA: IOS_SIGNING_CERT_BASE64 / IOS_SIGNING_CERT_PASSWORD are not set"
+            echo "No iOS signing secrets configured; publishing simulator artifacts only."
+          elif [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Incomplete iOS signing configuration. Missing: ${missing[*]}"
+            echo "Set every signing secret, or none of them, to run the signed job." >&2
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check out source
         if: steps.signing.outputs.enabled == 'true'
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
+      - name: Install XcodeGen (pinned)
         if: steps.signing.outputs.enabled == 'true'
-        run: brew install xcodegen
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/xcodegen"
+          mkdir -p "$dest"
+          if curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+              "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"; then
+            unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$dest"
+            echo "$dest/bin" >> "$GITHUB_PATH"
+          else
+            echo "::warning::Pinned XcodeGen ${XCODEGEN_VERSION} download failed; falling back to Homebrew (unpinned)"
+            brew install xcodegen
+          fi
+          export PATH="$dest/bin:$PATH"
+          xcodegen --version
 
       - name: Generate Xcode project
         if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: xcodegen generate
 
-      - name: Downgrade project format for Xcode 15
+      - name: Normalize generated project format
         if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
         run: |
-          sed -i '' 's/objectVersion = [0-9]*;/objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
-          grep objectVersion FreebuffGate.xcodeproj/project.pbxproj
+          set -euo pipefail
+          sed -i '' 's/^\([[:space:]]*\)objectVersion = [0-9]*;/\1objectVersion = 56;/' FreebuffGate.xcodeproj/project.pbxproj
+          grep -q 'objectVersion = 56;' FreebuffGate.xcodeproj/project.pbxproj
 
       - name: Import signing certificate
         if: steps.signing.outputs.enabled == 'true'
@@ -151,29 +197,74 @@ jobs:
           security import "$RUNNER_TEMP/dist.p12" -k build.keychain -P "$IOS_SIGNING_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$RUNNER_TEMP" build.keychain
 
+      - name: Install provisioning profile
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$profile_dir/freebuff.mobileprovision"
+          # Fail early if the uploaded profile is not a valid provisioning profile.
+          security cms -D -i "$profile_dir/freebuff.mobileprovision" > /dev/null
+
       - name: Archive signed app
         if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
         run: |
           set -euo pipefail
+          # Manual signing with the imported certificate + installed profile.
+          # Release config sets FB_APS_ENVIRONMENT=production so the
+          # aps-environment entitlement matches a distribution build.
           xcodebuild \
             -project FreebuffGate.xcodeproj \
             -scheme FreebuffGate \
             -configuration Release \
             -archivePath "$RUNNER_TEMP/FreebuffGate.xcarchive" \
             -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROVISIONING_PROFILE_NAME" \
             archive
 
       - name: Export IPA
         if: steps.signing.outputs.enabled == 'true'
         working-directory: ios
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
         run: |
           set -euo pipefail
+          # Generate the export options with the team/profile mapping instead of
+          # committing an Apple Team ID to the repository.
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>ad-hoc</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>${IOS_TEAM_ID}</string>
+            <key>stripSwiftSymbols</key><true/>
+            <key>compileBitcode</key><false/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.freebuff.gate</key><string>${IOS_PROVISIONING_PROFILE_NAME}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
           xcodebuild \
             -exportArchive \
             -archivePath "$RUNNER_TEMP/FreebuffGate.xcarchive" \
-            -exportOptionsPlist ios/ExportOptions.plist \
-            -exportPath "$RUNNER_TEMP/export"
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates
 
       - name: Upload IPA
         if: steps.signing.outputs.enabled == 'true'
@@ -193,7 +284,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [build-test, signed-ipa]
-    if: github.ref == 'refs/heads/main' && needs.build-test.result == 'success'
+    # always() so a misconfigured signing job cannot block the simulator
+    # artifact from publishing on main; the IPA steps below stay gated on the
+    # signed job's own result.
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.build-test.result == 'success' }}
 
     steps:
       - name: Download simulator app
@@ -225,7 +319,7 @@ jobs:
           if ! gh release view ios-debug-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create ios-debug-latest \
               --title "Freebuff Gate iOS simulator build (latest)" \
-              --notes "Unsigned iOS simulator build from main. A device-installable IPA requires the IOS_SIGNING_CERT_BASE64 / IOS_SIGNING_CERT_PASSWORD secrets." \
+              --notes "Unsigned iOS simulator build from main. A device-installable IPA requires the IOS_SIGNING_CERT_BASE64 / IOS_SIGNING_CERT_PASSWORD / IOS_TEAM_ID / IOS_PROVISIONING_PROFILE_BASE64 / IOS_PROVISIONING_PROFILE_NAME secrets." \
               --prerelease \
               "$RUNNER_TEMP/freebuff-gate-simulator.app.zip" \
               "$RUNNER_TEMP/freebuff-gate-simulator.app.zip.sha256" \

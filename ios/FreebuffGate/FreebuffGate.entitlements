@@ -2,7 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Set from the FB_APS_ENVIRONMENT build setting: "development" for
+	     Debug/sandbox builds, "production" for Release/TestFlight builds.
+	     It must match the APNs host the relay uses (FB_APNS_SANDBOX). -->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>$(FB_APS_ENVIRONMENT)</string>
 </dict>
 </plist>

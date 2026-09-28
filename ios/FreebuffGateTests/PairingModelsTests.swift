@@ -32,8 +32,8 @@ final class PairingModelsTests: XCTestCase {
         )
     }
 
-    func testNormalizeBaseUrlLowercasesHostAndDropsPath() {
-        let normalized = PairingApi.normalizeBaseUrl("https://Relay.Example.Test:8443/pair#x")
+    func testNormalizeBaseUrlLowercasesHostAndDropsPath() throws {
+        let normalized = try PairingApi.normalizeBaseUrl("https://Relay.Example.Test:8443/pair#x")
         XCTAssertEqual(normalized, "https://relay.example.test:8443")
     }
 

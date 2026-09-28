@@ -51,7 +51,7 @@ struct PairingPayload: Equatable {
         guard !pairingId.isEmpty && !token.isEmpty else {
             throw PairingError.invalidUrl("Pairing URL fragment is incomplete")
         }
-        let base = PairingApi.normalizeBaseUrl("\(uri.scheme!)://\(uri.host!)\(uri.port.map { ":\($0)" } ?? "")")
+        let base = try PairingApi.normalizeBaseUrl("\(uri.scheme!)://\(uri.host!)\(uri.port.map { ":\($0)" } ?? "")")
         return PairingPayload(baseUrl: base, pairingId: pairingId, token: token)
     }
 }

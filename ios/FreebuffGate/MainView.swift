@@ -13,18 +13,60 @@ struct MainView: View {
     @State private var pairing = false
     @State private var hasSession = false
     @State private var blockedExternalUrl: URL?
+    @State private var webSessionError: String?
+    @State private var webSessionRetry = 0
+    @State private var webSessionExpiresAt: Date?
 
     @StateObject private var controller = SessionController()
+
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var webSessionCookieExpiring: Bool {
+        guard let webSessionExpiresAt else { return false }
+        return webSessionExpiresAt.timeIntervalSinceNow <= WebSessionLoadGuard.cookieRefreshMargin
+    }
 
     var body: some View {
         ZStack {
             Color(.systemBackground).ignoresSafeArea()
 
             if showWebView, let webTarget {
-                RestrictedWebViewHost(url: webTarget, controller: controller, onBlockedNavigation: { raw in
-                    blockedExternalUrl = URL(string: raw)
-                })
-                .transition(.opacity)
+                ZStack {
+                    RestrictedWebViewHost(
+                        url: webTarget,
+                        controller: controller,
+                        retryID: webSessionRetry,
+                        onBlockedNavigation: { raw in
+                            blockedExternalUrl = URL(string: raw)
+                        },
+                        onSessionError: { message in
+                            webSessionError = message
+                        },
+                        onSessionReady: { expiresAt in
+                            webSessionExpiresAt = expiresAt
+                            webSessionError = nil
+                        }
+                    )
+                    .transition(.opacity)
+
+                    if let webSessionError {
+                        VStack(spacing: 12) {
+                            Text("Could not establish relay web session")
+                                .font(.headline)
+                            Text(webSessionError)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button("Retry") {
+                                controller.reconnect()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(24)
+                        .background(.regularMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .padding()
+                    }
+                }
             } else if showScanner {
                 scannerView
             } else {
@@ -41,13 +83,36 @@ struct MainView: View {
                     // Keep the push token registered with the relay for the
                     // active session so background notifications work.
                     PushTokenStore.shared.setSession(session)
-                    if let session, let target = webTargetFor(session) {
-                        webTarget = target
-                        showWebView = true
+                    if webSessionError != nil || webSessionCookieExpiring {
+                        // Refresh token before replacing cookie so the web
+                        // session exchange cannot race an access-token rotation.
+                        webSessionRetry += 1
+                        webSessionError = nil
+                    }
+                    if let session {
+                        do {
+                            if let target = try webTargetFor(session) {
+                                webTarget = target
+                                showWebView = true
+                            } else {
+                                state = .error
+                                stateDetail = "Connected, but relay did not provide a valid HTTPS UI URL"
+                                showWebView = false
+                            }
+                        } catch {
+                            state = .error
+                            stateDetail = "Connected, but relay origin configuration is invalid: \(error.localizedDescription)"
+                            showWebView = false
+                        }
                     }
                 case .unpaired, .pairingRequired, .revoked, .disconnected:
+                    // Drop the active session and, best effort, clear the
+                    // relay-side APNs token so a disconnected or revoked
+                    // pairing stops receiving pushes.
                     PushTokenStore.shared.setSession(nil)
+                    PushTokenStore.shared.unregister()
                     showWebView = false
+                    webSessionExpiresAt = nil
                 default:
                     break
                 }
@@ -55,6 +120,15 @@ struct MainView: View {
             controller.start()
         }
         .onDisappear { controller.close() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                if webSessionCookieExpiring {
+                    controller.reconnect()
+                } else {
+                    controller.onResume()
+                }
+            }
+        }
         .alert(
             "Open in browser?",
             isPresented: Binding(
@@ -112,6 +186,7 @@ struct MainView: View {
                 if hasSession {
                     Button("Disconnect", role: .destructive) {
                         controller.disconnect(clearSession: true)
+                        PushTokenStore.shared.unregister()
                         webTarget = nil
                         showWebView = false
                         pairingUrl = ""
@@ -167,7 +242,7 @@ struct MainView: View {
         Task {
             do {
                 let payload = try PairingPayload.parse(raw: raw)
-                if let configured = Self.configuredOrigin() {
+                if let configured = try Self.configuredPairingOrigin() {
                     guard payload.baseUrl == configured else {
                         throw PairingError.invalidUrl("Pairing URL is not from configured Freebuff relay")
                     }
@@ -196,51 +271,126 @@ struct MainView: View {
         }
     }
 
-    private func webTargetFor(_ session: PairingSession) -> URL? {
+    private func webTargetFor(_ session: PairingSession) throws -> URL? {
         guard let candidate = session.uiUrl ?? session.relayUrl?.replacingOccurrences(of: "wss://", with: "https://"),
               let url = URL(string: candidate),
               url.scheme == "https", url.host != nil else {
             return nil
         }
-        if let configured = Self.configuredOrigin(), RestrictedWebViewController.originOf(url.absoluteString) != configured {
-            return nil
-        }
+        let originAllowed = try OriginConfig.allowsWebUrl(
+            url.absoluteString,
+            configuredWebOrigin: Bundle.main.object(forInfoDictionaryKey: "FBDefaultWebOrigin") as? String,
+            pairingOrigin: session.gatewayBaseUrl
+        )
+        guard originAllowed else { return nil }
         return url
     }
 
-    private static func configuredOrigin() -> String? {
-        let raw = Bundle.main.object(forInfoDictionaryKey: "FBDefaultWebOrigin") as? String ?? ""
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return PairingApi.normalizeBaseUrl(trimmed)
+    private static func configuredPairingOrigin() throws -> String? {
+        try OriginConfig.configuredOrigin(Bundle.main.object(forInfoDictionaryKey: "FBDefaultPairingOrigin") as? String)
     }
 }
 
-/// Wraps the restricted WKWebView controller and installs the session cookie
-/// before the first load.
+/// Hosts the restricted WKWebView and establishes the relay web session once
+/// per device and UI URL, renewing its cookie after long periods in background.
 struct RestrictedWebViewHost: UIViewControllerRepresentable {
     let url: URL
     let controller: SessionController
+    var retryID = 0
     var onBlockedNavigation: (String) -> Void = { _ in }
+    var onSessionError: (String) -> Void = { _ in }
+    var onSessionReady: (Date) -> Void = { _ in }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeUIViewController(context: Context) -> RestrictedWebViewController {
-        let vc = RestrictedWebViewController(
+        RestrictedWebViewController(
             allowedOrigin: RestrictedWebViewController.originOf(url.absoluteString) ?? "",
             onBlockedNavigation: onBlockedNavigation
         )
-        return vc
     }
 
-    func updateUIViewController(_ vc: RestrictedWebViewController, context: Context) {
-        Task {
-            // Establish the session cookie first, then load: the relay's UI
-            // page requires it before any API call succeeds.
-            if let session = controller.sessionStore.load(),
-               let cookie = try? await PairingApi(rawBaseUrl: session.gatewayBaseUrl)
-                   .establishWebSession(webBaseUrl: url.absoluteString, accessToken: session.accessToken) {
-                await vc.installCookie(cookie, for: url)
+    func updateUIViewController(_ viewController: RestrictedWebViewController, context: Context) {
+        context.coordinator.loadIfNeeded(
+            viewController: viewController,
+            url: url,
+            sessionStore: controller.sessionStore,
+            retryID: retryID,
+            onSessionError: onSessionError,
+            onSessionReady: onSessionReady
+        )
+    }
+
+    static func dismantleUIViewController(
+        _ viewController: RestrictedWebViewController,
+        coordinator: Coordinator
+    ) {
+        coordinator.cancel()
+    }
+
+    /// SwiftUI re-invokes `updateUIViewController` on every state change, so
+    /// the guard prevents duplicate exchange and load work.
+    final class Coordinator {
+        private let loadGuard = WebSessionLoadGuard()
+        private var lastRetryID = 0
+        private var activeKey: String?
+        private var task: Task<Void, Never>?
+
+        @MainActor
+        func loadIfNeeded(
+            viewController: RestrictedWebViewController,
+            url: URL,
+            sessionStore: SecureSessionStore,
+            retryID: Int,
+            onSessionError: @escaping (String) -> Void,
+            onSessionReady: @escaping (Date) -> Void
+        ) {
+            guard let session = sessionStore.load() else {
+                cancel()
+                return
             }
-            vc.loadRemoteUi(url: url)
+            let key = WebSessionKey.make(session: session, url: url)
+            if activeKey != nil && activeKey != key {
+                cancel()
+            }
+            activeKey = key
+            if retryID != lastRetryID {
+                lastRetryID = retryID
+                loadGuard.retry(key: key)
+                loadGuard.refreshIfCookieExpiresSoon(key: key)
+            }
+            guard loadGuard.shouldLoad(key: key) else { return }
+            loadGuard.begin(key: key)
+            task = Task { @MainActor in
+                do {
+                    let credential = try await PairingApi(rawBaseUrl: session.gatewayBaseUrl)
+                        .establishWebSession(webBaseUrl: url.absoluteString, accessToken: session.accessToken)
+                    try Task.checkCancellation()
+                    guard self.activeKey == key else { return }
+                    try await viewController.installCookie(credential.cookieHeader, for: url)
+                    try Task.checkCancellation()
+                    guard self.activeKey == key else { return }
+                    loadGuard.finish(key: key, cookieExpiresAt: credential.expiresAt)
+                    task = nil
+                    onSessionReady(credential.expiresAt)
+                    viewController.loadRemoteUi(url: url)
+                } catch {
+                    guard self.activeKey == key else { return }
+                    loadGuard.fail(key: key)
+                    task = nil
+                    onSessionError(error.localizedDescription)
+                }
+            }
+        }
+
+        @MainActor
+        func cancel() {
+            task?.cancel()
+            task = nil
+            activeKey = nil
+            loadGuard.invalidate()
         }
     }
 }

@@ -44,11 +44,20 @@
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>armv7</string>
+		<string>arm64</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<!-- Filled from the FB_DEFAULT_PAIRING_ORIGIN / FB_DEFAULT_WEB_ORIGIN
+	     build settings. Empty on a generic build: pairing then trusts the
+	     exact HTTPS origin in the scanned QR and pins the relay origin
+	     returned by the claim. A production build sets these so only one
+	     known relay origin is accepted. -->
+	<key>FBDefaultPairingOrigin</key>
+	<string>$(FB_DEFAULT_PAIRING_ORIGIN)</string>
+	<key>FBDefaultWebOrigin</key>
+	<string>$(FB_DEFAULT_WEB_ORIGIN)</string>
 </dict>
 </plist>

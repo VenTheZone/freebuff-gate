@@ -1,5 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Local/manual export template.
+
+  This file intentionally carries no team id or provisioning-profile mapping so
+  it never hardcodes an Apple Team ID. The signed CI job generates a filled
+  copy at $RUNNER_TEMP/ExportOptions.plist from the IOS_TEAM_ID and
+  IOS_PROVISIONING_PROFILE_NAME secrets and exports with that file. For a local
+  export, copy this file, add:
+
+    <key>teamID</key><string>YOUR_TEAM_ID</string>
+    <key>provisioningProfiles</key>
+    <dict>
+      <key>com.freebuff.gate</key><string>Your Profile Name</string>
+    </dict>
+
+  and pass it with -exportOptionsPlist.
+-->
 <plist version="1.0">
 <dict>
 	<key>method</key>
@@ -9,6 +26,8 @@
 	<key>stripSwiftSymbols</key>
 	<true/>
 	<key>compileBitcode</key>
+	<false/>
+	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 </dict>
 </plist>

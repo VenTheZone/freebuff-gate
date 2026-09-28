@@ -14,8 +14,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.freebuff.gate
-        MARKETING_VERSION: "0.1.12"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "0.1.13"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_FILE: FreebuffGate/Info.plist
@@ -23,9 +23,21 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: FreebuffGate/FreebuffGate.entitlements
+        # Empty by default: a generic build pairs against the exact HTTPS
+        # origin carried by the QR code and pins the relay origin returned by
+        # the claim. A production/CI build overrides these on the xcodebuild
+        # command line (xcodebuild ... FB_DEFAULT_WEB_ORIGIN=https://relay...).
+        # Never hardcode a production origin in Swift source.
+        FB_DEFAULT_WEB_ORIGIN: ""
+        FB_DEFAULT_PAIRING_ORIGIN: ""
+        FB_APS_ENVIRONMENT: development
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG"
+        Release:
+          # The APNs environment must match the signing/provisioning path:
+          # development for sandbox builds, production for TestFlight/App Store.
+          FB_APS_ENVIRONMENT: production
   FreebuffGateTests:
     type: bundle.unit-test
     platform: iOS
