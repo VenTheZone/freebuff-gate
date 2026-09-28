@@ -82,23 +82,27 @@ final class PushTokenStoreTests: XCTestCase {
     }
 
     func testUploadDoesNotReoccurAfterUnregisterWithoutNewSession() async {
-        let uploaded = expectation(description: "single upload")
-        uploaded.expectedFulfillmentCount = 1
-        uploaded.assertForOverFulfill = true
+        let order = OrderRecorder()
+        let firstUpload = expectation(description: "single upload")
         let store = PushTokenStore(
-            upload: { _, _ in uploaded.fulfill() },
+            upload: { _, _ in
+                order.append("upload")
+                firstUpload.fulfill()
+            },
             erase: { _ in }
         )
 
         store.setDeviceToken("apns-token")
         store.setSession(makeSession())
-        await fulfillment(of: [uploaded], timeout: 2)
+        await fulfillment(of: [firstUpload], timeout: 2)
 
         store.unregister()
         store.uploadIfPossible()
 
         try? await Task.sleep(nanoseconds: 200_000_000)
-        await fulfillment(of: [uploaded], timeout: 0.3)
+        // XCTest refuses a second wait on the same expectation, so the guard
+        // against a repeated upload is the recorded call count.
+        XCTAssertEqual(order.values, ["upload"])
     }
 
     func testPairingAgainUploadsRetainedDeviceToken() async {
