@@ -27,6 +27,7 @@ const PROXY_SERVICE_NAME = 'freebuff-tailnet-proxy.service';
 const PROXY_FILES = Object.freeze([
   'freebuff_tailnet_proxy.js',
   'pi-agent-bridge.js',
+  'freebuff-skill-loader.js',
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
@@ -952,7 +953,9 @@ function applyBundlePatch(bundleFile) {
   const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'];
   const already = fixed.every((mark) => body.includes(mark));
   if (already) return { file: bundleFile, outcome: 'already-patched' };
-  const patched = proxy.patchBundle(body);
+  const info = proxy.patchBundleInfo(body);
+  if (info.recognized && info.body === body && info.obsolete.length > 0) return { file: bundleFile, outcome: 'obsolete' };
+  const patched = info.body;
   if (patched === body) throw new Error(`bundle did not match any patch anchor: ${bundleFile} (app updated its bundle; update the patch anchors)`);
   const stillMissing = names.filter((mark, index) => !patched.includes(fixed[index]));
   if (stillMissing.length > 0) throw new Error(`bundle patch incomplete after apply; missing markers: ${stillMissing.join(', ')}`);
@@ -1075,6 +1078,7 @@ const ORCH_ROUTE_TAIL_RE = /let (match\d+) = findRoute\(routes, req\.method, pat
 const ORCH_ROUTE_ANCHOR_RE = new RegExp(
   `return json3\\(\\{ error: "upgrade required" \\}, 426\\);\\n\\s+}\\n\\s+(let match\\d+ = findRoute\\(routes, req\\.method, pathname\\);)`,
 );
+const LAUNCH_GUARD_MARK = 'function presentedLaunchTokens(';
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
 const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
 // ---------------------------------------------------------------------------
@@ -1210,6 +1214,7 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
   const changes = [];
   let out = src;
   const performed = [];
+  let bestEffortRoutes = false;
   const routeMarksPresent = ORCH_ROUTE_MARKS.filter((mark) => out.includes(mark));
   if (routeMarksPresent.length < ORCH_ROUTE_MARKS.length) {
     const block = orchestratorRouteBlock(configDir, uploadsDir);
@@ -1217,15 +1222,21 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
       // Fresh insert: anchor on the stock upgrade-required route + findRoute
       // dispatch (regex, so the minified match counter may churn freely).
       const anchor = ORCH_ROUTE_ANCHOR_RE.exec(out);
-      if (!anchor) {
+      if (anchor) {
+        const [full, tail] = anchor;
+        out = out.replace(
+          full,
+          `return json3({ error: "upgrade required" }, 426);\n      }\n${block}      ${tail}`,
+        );
+        performed.push('routes');
+      } else if (out.includes(LAUNCH_GUARD_MARK)) {
+        // Desktop 0.0.151+ moved the terminal route out of the dispatcher and
+        // 401s any /api/ call without the launch secret, so direct 58060
+        // browser clients cannot use these routes; the proxy serves all three.
+        bestEffortRoutes = true;
+      } else {
         throw new Error('orchestrator route anchor not found (app update may have renamed helpers); expected: return json3({ error: "upgrade required" }, 426); + findRoute dispatch');
       }
-      const [full, tail] = anchor;
-      out = out.replace(
-        full,
-        `return json3({ error: "upgrade required" }, 426);\n      }\n${block}      ${tail}`,
-      );
-      performed.push('routes');
     } else {
       // Partial block: an older patch left some routes but predates the
       // current set. Cut everything from the first patched route to the
@@ -1247,21 +1258,27 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
       performed.push('routes');
     }
   }
+  const bestEffort = [];
+  if (bestEffortRoutes) bestEffort.push('routes:skipped (launch-guarded orchestrator; proxy serves them)');
   if (!out.includes(ORCH_HELPER_MARK)) {
-    if (!out.includes(ORCH_HELPER_ANCHOR)) {
+    if (out.includes(ORCH_HELPER_ANCHOR)) {
+      out = out.split(ORCH_HELPER_ANCHOR).join(perfHelperSource(perfProbePath) + ORCH_HELPER_ANCHOR);
+      performed.push('perf-helper');
+    } else if (bestEffortRoutes) {
+      bestEffort.push('perf-helper:skipped (proxy injects the perf probe)');
+    } else {
       throw new Error(`orchestrator serveSpa anchor not found; expected: ${ORCH_HELPER_ANCHOR}`);
     }
-    out = out.split(ORCH_HELPER_ANCHOR).join(perfHelperSource(perfProbePath) + ORCH_HELPER_ANCHOR);
-    performed.push('perf-helper');
   }
-  const bestEffort = [];
+  let cachePatched = false;
   for (const [stock, patched] of SERVE_SPA_CACHE_CANDIDATES) {
     if (out.includes(stock)) {
       out = out.split(stock).join(patched);
       bestEffort.push(`cache:${stock.slice(0, 60)}`);
+      cachePatched = true;
     }
   }
-  if (bestEffort.length > 0) performed.push('cache-headers');
+  if (cachePatched) performed.push('cache-headers');
   const piPatch = (() => {
     // ponytail: pi-skills anchors renamed in Desktop 0.0.71 — best-effort,
     // skip instead of failing the routes/shim patch (upgrade path: refresh
@@ -1577,13 +1594,15 @@ function collectProblems(desktopDir, options = {}) {
   } else {
     const src = fs.readFileSync(orchFile, 'utf8');
     // dirlist is served by the tailnet proxy; only on-disk routes below.
-    if (!src.includes('/api/fb/perf-report')) {
+    // Launch-guarded orchestrators (0.0.151+) get these from the proxy only.
+    const guarded = src.includes(LAUNCH_GUARD_MARK);
+    if (!guarded && !src.includes('/api/fb/perf-report')) {
       problems.push({ level: 'error', item: 'orchestrator.routes', message: 'perf-report route missing (app update replaced orchestrator.js; re-run install)' });
     }
-    if (!src.includes('/api/fb/upload')) {
+    if (!guarded && !src.includes('/api/fb/upload')) {
       problems.push({ level: 'error', item: 'orchestrator.routes', message: 'upload route missing (app update replaced orchestrator.js; re-run install)' });
     }
-    if (!src.includes('async function injectPerfProbe(')) {
+    if (!guarded && !src.includes('async function injectPerfProbe(')) {
       problems.push({ level: 'error', item: 'orchestrator.perf', message: 'injectPerfProbe helper missing (app update replaced orchestrator.js; re-run install)' });
     }
     if (!src.includes('"cache-control": "no-store"')) {
