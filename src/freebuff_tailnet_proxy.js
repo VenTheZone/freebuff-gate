@@ -23,25 +23,186 @@ const crypto = require('crypto');
 const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
 
 // ---- Orchestrator auto-discovery ----
-// The orchestrator (bun.exe) picks a random port on every restart.
-// Discover it by finding which port bun.exe listens on, then re-check
+// The orchestrator picks a random port on every restart, and since Desktop
+// 0.0.151 every /api/ request must carry that launch's secret
+// (x-freebuff-launch-id). Electron hands the secret to the orchestrator only
+// through its spawn environment, so read it from there: the orchestrator is
+// the process whose environment holds FREEBUFF_LAUNCH_ID. Re-checked
 // periodically so the proxy survives orchestrator restarts.
+const LAUNCH_HEADER = 'x-freebuff-launch-id';
 const DISCOVER_SCRIPT = path.join(__dirname, 'discover-orchestrator.ps1');
-function discoverOrchestratorPort() {
+
+function linuxListenPorts(pid) {
+  const inodes = new Set();
+  for (const fd of fs.readdirSync(`/proc/${pid}/fd`)) {
+    try {
+      const m = /^socket:\[(\d+)\]$/.exec(fs.readlinkSync(`/proc/${pid}/fd/${fd}`));
+      if (m) inodes.add(m[1]);
+    } catch (e) { /* fd closed meanwhile */ }
+  }
+  const ports = [];
+  for (const table of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    let rows = [];
+    try { rows = fs.readFileSync(table, 'utf8').trim().split('\n').slice(1); } catch (e) { continue; }
+    for (const row of rows) {
+      const cols = row.trim().split(/\s+/);
+      if (cols[3] === '0A' && inodes.has(cols[9])) ports.push(parseInt(cols[1].split(':')[1], 16));
+    }
+  }
+  return ports;
+}
+
+function discoverLinux() {
+  let found = null;
+  for (const pid of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(pid)) continue;
+    let env;
+    try { env = fs.readFileSync(`/proc/${pid}/environ`, 'utf8'); } catch (e) { continue; }
+    const id = /(?:^|\0)FREEBUFF_LAUNCH_ID=([^\0]+)/.exec(env);
+    if (!id) continue;
+    const fixed = Number((/(?:^|\0)PORT=(\d+)/.exec(env) || [])[1]);
+    let ports = [];
+    try { ports = linuxListenPorts(pid); } catch (e) { continue; }
+    // ponytail: first listening socket wins when PORT=0; verify via /healthz if the orchestrator ever opens a second listener.
+    const port = fixed && ports.includes(fixed) ? fixed : ports[0];
+    // Highest pid = most recently launched orchestrator.
+    if (port && (!found || Number(pid) > found.pid)) found = { pid: Number(pid), port, launchId: id[1] };
+  }
+  return found;
+}
+
+// ponytail: macOS path is untested; relies on `ps eww` exposing the env of same-user processes.
+function discoverMac() {
+  const out = execFileSync('ps', ['-axww', '-E', '-o', 'pid=,command='], { timeout: 8000, encoding: 'utf8' });
+  for (const line of out.split('\n')) {
+    const id = /\bFREEBUFF_LAUNCH_ID=(\S+)/.exec(line);
+    if (!id) continue;
+    const pid = line.trim().split(/\s+/)[0];
+    const lsof = execFileSync('lsof', ['-nP', '-a', '-p', pid, '-iTCP', '-sTCP:LISTEN', '-Fn'], { timeout: 8000, encoding: 'utf8' });
+    const m = /\nn[^\n]*:(\d+)/.exec('\n' + lsof);
+    if (m) return { pid: Number(pid), port: Number(m[1]), launchId: id[1] };
+  }
+  return null;
+}
+
+// ponytail: Windows discovers the port only; set FB_LAUNCH_ID by hand until the PS script can read another process's env.
+function discoverWindows() {
+  const out = execFileSync('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
+  ], { timeout: 8000, encoding: 'utf8' }).trim();
+  const port = parseInt(out, 10);
+  return port > 0 && port < 65536 ? { port, launchId: process.env.FB_LAUNCH_ID || null } : null;
+}
+
+function discoverOrchestrator() {
   try {
-    const out = execFileSync('powershell.exe', [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
-    ], { timeout: 8000, encoding: 'utf8' }).trim();
-    const port = parseInt(out, 10);
-    if (port > 0 && port < 65536) return port;
+    if (process.platform === 'linux') return discoverLinux();
+    if (process.platform === 'darwin') return discoverMac();
+    if (process.platform === 'win32') return discoverWindows();
   } catch (e) { /* discovery failed, keep old */ }
   return null;
 }
 
 const FREEBUFF_UPSTREAM_ENV = process.env.FREEBUFF_UPSTREAM;
-let currentPort = null;
-if (!FREEBUFF_UPSTREAM_ENV) currentPort = discoverOrchestratorPort();
-const UPSTREAM = FREEBUFF_UPSTREAM_ENV || (currentPort ? `http://127.0.0.1:${currentPort}` : 'http://127.0.0.1:58060');
+const initialDiscovery = FREEBUFF_UPSTREAM_ENV ? null : discoverOrchestrator();
+let launchId = process.env.FB_LAUNCH_ID || (initialDiscovery && initialDiscovery.launchId) || null;
+const UPSTREAM = FREEBUFF_UPSTREAM_ENV || (initialDiscovery ? `http://127.0.0.1:${initialDiscovery.port}` : 'http://127.0.0.1:58060');
+
+function withLaunchId(headers) {
+  if (launchId) headers[LAUNCH_HEADER] = launchId;
+  else delete headers[LAUNCH_HEADER];
+  return headers;
+}
+
+// ---- Proxy access token ----
+// The launch secret keeps other local processes (including an agent run's
+// shell) off the orchestrator API. This proxy attaches that secret, so it
+// must not be an open door itself: every request needs the gate token, as
+// an x-fb-gate header (the mobile-connect agent) or an fb_gate cookie (a
+// browser, planted once by opening /?fb_gate=<token>). The token lives in a
+// 0600 file next to the rest of the Gate config.
+const GATE_HEADER = 'x-fb-gate';
+const GATE_COOKIE = 'fb_gate';
+const GATE_TOKEN_FILE = process.env.FB_GATE_TOKEN_FILE
+  || path.join(os.homedir(), '.config', 'freebuff', 'gate-proxy.token');
+
+function loadOrCreateGateToken(file = GATE_TOKEN_FILE) {
+  try {
+    const existing = fs.readFileSync(file, 'utf8').trim();
+    if (existing) return existing;
+  } catch (e) { /* create below */ }
+  const token = crypto.randomBytes(24).toString('base64url');
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, token + '\n', { mode: 0o600 });
+  return token;
+}
+
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
+}
+
+function gateCookie(header) {
+  for (const part of String(header || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq > 0 && part.slice(0, eq).trim() === GATE_COOKIE) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+// Returns true when the request may pass. Handles the ?fb_gate= bootstrap
+// (sets the cookie and redirects to the clean URL) and strips gate
+// credentials so they never reach the orchestrator.
+function checkGate(token, req, res) {
+  const url = new URL(req.url || '/', 'http://x');
+  const offered = url.searchParams.get(GATE_COOKIE);
+  if (offered !== null) {
+    url.searchParams.delete(GATE_COOKIE);
+    const clean = url.pathname + (url.search || '');
+    if (!safeEqual(offered, token)) {
+      console.warn(`[gate] 401 invalid ?${GATE_COOKIE}= on ${url.pathname} (length ${offered.length})`);
+      if (res) { res.writeHead(401, { 'content-type': 'text/plain' }); res.end('invalid gate token'); }
+      return false;
+    }
+    if (res && req.headers.upgrade === undefined) {
+      res.writeHead(302, {
+        location: clean,
+        'set-cookie': `${GATE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+        'cache-control': 'no-store',
+      });
+      res.end();
+      return false;
+    }
+    req.url = clean;
+    return true;
+  }
+  const ok = safeEqual(req.headers[GATE_HEADER], token) || safeEqual(gateCookie(req.headers.cookie), token);
+  delete req.headers[GATE_HEADER];
+  if (!ok && res) {
+    console.warn(`[gate] 401 ${req.method} ${url.pathname} cookie=${gateCookie(req.headers.cookie) ? 'wrong' : 'none'} ua=${String(req.headers['user-agent'] || '').slice(0, 80)}`);
+    res.writeHead(401, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+    res.end(`Freebuff Gate: open the proxy URL with ?${GATE_COOKIE}=<token> once (token file: ${GATE_TOKEN_FILE}).`);
+  }
+  return ok;
+}
+
+// Desktop 0.0.151+ sends a CSP whose script-src admits only the hashes of
+// the inline scripts it served. The proxy adds inline scripts (mobile layer,
+// shim, perf probe), so re-hash the final document.
+function rehashCsp(csp, html) {
+  if (!csp) return csp;
+  const hashes = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    if (/\bsrc\s*=/i.test(m[1])) continue;
+    hashes.push(`'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`);
+  }
+  return String(csp).replace(/script-src\s([^;]*)/, (_, sources) => {
+    const kept = sources.split(/\s+/).filter((s) => s && !/^'sha(256|384|512)-/.test(s));
+    return `script-src ${[...new Set([...kept, ...hashes])].join(' ')}`;
+  });
+}
 
 const REPO = __dirname;
 
@@ -259,7 +420,7 @@ function bodyWithFreebuffSkills(body, options = {}) {
 }
 
 function postToTarget(target, req, body, res, onFail) {
-  const headers = { ...req.headers };
+  const headers = withLaunchId({ ...req.headers });
   headers.host = target.host;
   headers['accept-encoding'] = 'identity';
   headers['content-length'] = body.length;
@@ -330,6 +491,8 @@ const SNIFF_REDACT_HEADERS = new Set([
   'proxy-authorization',
   'x-api-key',
   'set-cookie',
+  'x-fb-gate',
+  'x-freebuff-launch-id',
 ]);
 function sniffHeaders(headers) {
   const out = {};
@@ -880,6 +1043,13 @@ function patchBundleInfo(body) {
     // rewritten in 0.0.71 — skip (obsolete for this bundle version).
     return { body: out, obsolete: ['CREATE_REUSE', 'SETSTATE_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'OPEN_THREAD_FIX', 'SKILL_ORIGIN_FIX'], recognized: true };
   }
+  // 0.0.126+ (spaces/threads store): openTab no longer has a home-tab
+  // branch, so the home-thread reuse and phantom-close patches have nothing
+  // to fix. The store still names openTab/closeTab, which identifies it.
+  const isSpacesStore = !body.includes('lr(t,()=>') && /async openTab\(\w,\w,\w\)\{/.test(body) && /async closeTab\(\w,\w=!1\)\{/.test(body);
+  if (isSpacesStore) {
+    return { body: out, obsolete: UI_PATCH_MARKERS.map(([name]) => name).concat('CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'), recognized: true };
+  }
   if (out.includes(CREATE_MARK)) out = out.split(CREATE_MARK).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V1)) out = out.split(CREATE_REUSE_V1).join(CREATE_REUSE);
   else if (out.includes(CREATE_REUSE_V2)) out = out.split(CREATE_REUSE_V2).join(CREATE_REUSE);
@@ -939,8 +1109,9 @@ const UI_PATCH_CHECK_INTERVAL_MS = Math.max(
   Number(process.env.FB_UI_PATCH_CHECK_INTERVAL_MS || 10 * 60 * 1000),
 );
 // Routes the watchdog probes on the upstream (orchestrator on-disk patch).
-// dirlist is served by this proxy itself and is deliberately not probed.
-const UI_PATCH_ROUTES_PROBED = ['/api/fb/perf-report'];
+// Every /api/fb/* route (dirlist, upload, read-file, perf-report) is served
+// by this proxy itself, so nothing upstream needs probing.
+const UI_PATCH_ROUTES_PROBED = [];
 
 const UI_PATCH_MARKERS = [
   ['CREATE_REUSE', CREATE_REUSE],
@@ -955,7 +1126,7 @@ const UI_PATCH_MARKERS = [
 
 function fetchUpstream(up, pathname) {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: up.hostname, port: up.port || 80, path: pathname }, (res) => {
+    const req = http.get({ host: up.hostname, port: up.port || 80, path: pathname, headers: withLaunchId({}) }, (res) => {
       if ((res.statusCode || 0) >= 500) {
         res.resume();
         reject(new Error(`upstream ${pathname} returned ${res.statusCode}`));
@@ -1077,16 +1248,24 @@ function maybeProbeUiPatches(up, force) {
 function createProxyServer(options = {}) {
   const staticUpstream = options.upstream || process.env.FREEBUFF_UPSTREAM;
   let up = new URL(staticUpstream || UPSTREAM);
-  // Auto-refresh: re-discover the orchestrator port every 30s when no static override
+  const gateToken = options.gateToken || null;
+  // Returns true when the orchestrator moved (new port or new launch secret).
+  const rediscover = () => {
+    if (staticUpstream) return false;
+    const found = discoverOrchestrator();
+    if (!found) return false;
+    const moved = String(found.port) !== String(up.port) || (found.launchId && found.launchId !== launchId);
+    if (found.launchId && !process.env.FB_LAUNCH_ID) launchId = found.launchId;
+    if (String(found.port) !== String(up.port)) {
+      console.log(`[proxy] orchestrator port changed ${up.port} -> ${found.port}`);
+      up = new URL(`http://127.0.0.1:${found.port}`);
+    }
+    if (moved) maybeProbeUiPatches(up, true);
+    return moved;
+  };
+  // Auto-refresh: re-discover the orchestrator every 30s when no static override
   if (!staticUpstream) {
-    const refreshTimer = setInterval(() => {
-      const port = discoverOrchestratorPort();
-      if (port && String(port) !== String(up.port)) {
-        const oldPort = up.port;
-        up = new URL(`http://127.0.0.1:${port}`);
-        console.log(`[proxy] orchestrator port changed ${oldPort} -> ${port}`);
-      }
-    }, 30000);
+    const refreshTimer = setInterval(rediscover, 30000);
     if (refreshTimer.unref) refreshTimer.unref();
   }
   // Local chat-server that speaks the same AI SDK /api/chat wire protocol as
@@ -1104,7 +1283,8 @@ function createProxyServer(options = {}) {
   const piAgent = createPiAgentController(options.pi || {});
   const skillOptions = options.skills || {};
   const server = http.createServer((req, res) => {
-  const headers = { ...req.headers };
+  if (gateToken && !checkGate(gateToken, req, res)) return;
+  const headers = withLaunchId({ ...req.headers });
   headers.host = up.host;
   if (headers.origin) {
     try { headers.origin = up.origin; } catch (e) { /* keep as-is */ }
@@ -1453,6 +1633,9 @@ function createProxyServer(options = {}) {
         // transfer-encoding (chunked upstream) would make the response invalid.
         delete outHeaders['transfer-encoding'];
         outHeaders['content-length'] = Buffer.byteLength(out);
+        if (outHeaders['content-security-policy']) {
+          outHeaders['content-security-policy'] = rehashCsp(outHeaders['content-security-policy'], out);
+        }
         // The HTML is rewritten per request (shim + bundle patch + mobile
         // layer), so a cached copy can silently serve stale UI (e.g. the old
         // folder picker that opens the phone's own file browser). Force
@@ -1520,16 +1703,12 @@ function createProxyServer(options = {}) {
     // reached a listening socket (or was reset before the response began), so no
     // bytes have been streamed to the client yet; non-connect errors must not retry.
     if (err && (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET') && !req._retried && !preq._retried) {
-      const port = discoverOrchestratorPort();
-      if (port && String(port) !== String(up.port)) {
-        const oldPort = up.port;
-        up = new URL(`http://127.0.0.1:${port}`);
-        console.log(`[proxy] upstream gone, re-discovered orchestrator on :${port} (was :${oldPort})`);
+      if (rediscover()) {
         preq._retried = true;
         req._retried = true;
         const retry = http.request({
           host: up.hostname, port: up.port || 80,
-          method: req.method, path: req.url, headers,
+          method: req.method, path: req.url, headers: withLaunchId({ ...headers, host: up.host }),
         }, (rpres) => { res.writeHead(rpres.statusCode || 200, rpres.headers); rpres.pipe(res); });
         retry.on('error', () => res.destroy());
         return;
@@ -1545,7 +1724,11 @@ function createProxyServer(options = {}) {
 });
 
 server.on('upgrade', (req, socket, head) => {
-  const headers = { ...req.headers };
+  if (gateToken && !checkGate(gateToken, req, null)) {
+    socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n');
+    return;
+  }
+  const headers = withLaunchId({ ...req.headers });
   headers.host = up.host;
   if (headers.origin) {
     try { headers.origin = up.origin; } catch (e) { /* keep as-is */ }
@@ -1646,7 +1829,11 @@ module.exports = {
   parseCodexDeviceAuthOutput,
   createCodexDeviceAuthController,
   checkUiPatches,
+  checkGate,
   createProxyServer,
+  loadOrCreateGateToken,
+  rehashCsp,
+  GATE_TOKEN_FILE,
   patchBundle,
   patchBundleInfo,
   UI_SOURCE_SIDECAR,
@@ -1655,8 +1842,10 @@ module.exports = {
 };
 
 if (require.main === module) {
-  const server = createProxyServer();
+  const gateToken = process.env.FB_GATE_AUTH === 'off' ? null : loadOrCreateGateToken();
+  const server = createProxyServer({ gateToken });
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`freebuff tailnet proxy on 127.0.0.1:${PORT} -> ${UPSTREAM}`);
+    console.log(`freebuff tailnet proxy on 127.0.0.1:${PORT} -> ${UPSTREAM}${launchId ? '' : ' (no launch id found; /api/ will 401 on Desktop 0.0.151+)'}`);
+    if (gateToken) console.log(`open once: http://127.0.0.1:${PORT}/?${GATE_COOKIE}=<token from ${GATE_TOKEN_FILE}>`);
   });
 }
