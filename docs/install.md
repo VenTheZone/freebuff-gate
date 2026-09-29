@@ -168,7 +168,19 @@ app).
   curl -s http://127.0.0.1:58061/api/fb/ui-patch-status
   Tune it with FB_UI_PATCH_CHECK_INTERVAL_MS (min 30 s, default 10 min) and
   FB_UI_PATCH_STATUS_FILE (default ~/.local/share/freebuff/ui-patch-status.json).
-- Verify: curl http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
+- **Desktop 0.0.151+ (launch guard).** The orchestrator binds a random port
+  and rejects API calls without its per-launch secret (`FREEBUFF_LAUNCH_ID`).
+  The proxy finds both itself (Linux: /proc; macOS: ps/lsof; Windows: set
+  `FB_LAUNCH_ID` by hand) and re-discovers every 30 s, so a Desktop restart
+  is picked up. The bundle patches are obsolete on 0.0.151 (native fixes);
+  the installer reports them as skipped, not failed.
+- **Gate token.** Because the proxy injects that secret, it now requires its
+  own token: open `http://127.0.0.1:58061/?fb_gate=<token>` once per browser
+  (sets an HttpOnly cookie). The token lives in
+  `~/.config/freebuff/gate-proxy.token` (override: `FB_GATE_TOKEN_FILE`), is
+  printed at proxy start, and the mobile agent sends it automatically.
+  `FB_GATE_AUTH=off` disables the check (only if nothing else runs locally).
+- Verify: curl -H "x-fb-gate: $(cat ~/.config/freebuff/gate-proxy.token)" http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
 - Verify the shim on the direct UI: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
 - Verify the dirlist route: curl -s 'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.
 - Verify the browser works: open the UI, click "New session", click the
@@ -232,6 +244,14 @@ If the phone app is used:
   the relay's 8795 port stays private to the Docker network.
 - Tailscale deployment: use the private `docker-compose.tailscale.yml` variant
   or `tailscale serve`; phones and server must share a tailnet.
+- Phone browser, no relay: `tailscale serve --bg --https=443 http://127.0.0.1:58061`,
+  then open `https://<host>.<tailnet>.ts.net/?fb_gate=<token>` once on the
+  phone. Tailnet-only (not Funnel); the gate token still applies. If the
+  phone says "address not found", enable "Use Tailscale DNS" in its
+  Tailscale app and set Android Private DNS to Off/Automatic, or use the IP:
+  `tailscale serve --bg --tcp=8061 tcp://127.0.0.1:58061` and open
+  `http://<tailscale-ip>:8061/?fb_gate=<token>` (the HTTP serve mode only
+  answers the ts.net name, so the bare IP needs the TCP forward).
 - 58061 (proxy) is loopback-only; the relay is the public face for phones. Do
   NOT open raw relay or proxy ports to the internet.
 

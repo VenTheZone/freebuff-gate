@@ -8,6 +8,10 @@ Freebuff Gate adapts the **Freebuff Desktop** UI for two uses:
 
 - **Gate Desktop**: the full desktop UI in a plain web browser. The server
   exposes it on 127.0.0.1:58060, or through the tailnet proxy on 58061.
+  Desktop 0.0.151+ guards its API with a per-launch secret; the proxy
+  discovers it and requires a gate token instead: open
+  `http://127.0.0.1:58061/?fb_gate=<token>` once (token printed at proxy
+  start, stored in `~/.config/freebuff/gate-proxy.token`).
 - **Gate Mobile**: the same UI adapted for phones and tablets. The tailnet
   proxy injects the mobile layer, and the Freebuff Gate Android/iOS apps
   provide the companion clients.
