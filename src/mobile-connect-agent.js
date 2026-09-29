@@ -121,11 +121,20 @@ function requestJson(target, options = {}) {
   });
 }
 
+// The tailnet proxy requires this token (see freebuff_tailnet_proxy.js). Read
+// per request: the proxy may create the file after the agent starts.
+const GATE_TOKEN_FILE = process.env.FB_GATE_TOKEN_FILE
+  || path.join(os.homedir(), '.config', 'freebuff', 'gate-proxy.token');
+function gateToken() {
+  try { return fs.readFileSync(GATE_TOKEN_FILE, 'utf8').trim(); } catch { return ''; }
+}
+
 function filterUpstreamHeaders(headers) {
   const result = {};
   for (const [name, value] of Object.entries(headers || {})) {
     const lower = name.toLowerCase();
     if (
+      lower === 'x-fb-gate' ||
       HOP_BY_HOP_HEADERS.has(lower) ||
       lower === 'host' ||
       lower === 'content-length' ||
@@ -136,6 +145,8 @@ function filterUpstreamHeaders(headers) {
     ) continue;
     result[name] = Array.isArray(value) ? value.join(', ') : String(value ?? '');
   }
+  const token = gateToken();
+  if (token) result['x-fb-gate'] = token;
   return result;
 }
 
@@ -426,6 +437,8 @@ class RelayAgent {
     if (!id || this.upstreamSockets.has(id)) return;
     const target = new URL(String(message.path || '/'), `${this.upstreamUrl}/`);
     target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
+    const token = gateToken();
+    if (token) target.searchParams.set('fb_gate', token);
     let socket;
     try {
       socket = new WebSocket(target.toString());

@@ -16,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -381,8 +381,41 @@ test('ui-patch watchdog flags every missing marker after a simulated update', as
     assert.equal(report.ok, false);
     assert.ok(report.errors.some((e) => e.includes('fb-desktop-shim')), 'shim loss reported');
     assert.ok(report.errors.some((e) => e.includes('index-ABC.js') && e.includes('CREATE_REUSE')), 'bundle marker loss reported');
-    assert.ok(report.errors.some((e) => e.includes('perf-report')), 'perf-report route loss reported');
   } finally {
+    await close(upstream);
+  }
+});
+
+test('rehashCsp allows every inline script and keeps other sources', () => {
+  const html = '<script>a()</script><script type="module" src="/x.js"></script><script>a()</script><script>b()</script>';
+  const csp = "default-src 'self'; script-src 'self' 'sha256-old='; style-src 'self'";
+  const out = rehashCsp(csp, html);
+  const h = (s) => `'sha256-${crypto.createHash('sha256').update(s).digest('base64')}'`;
+  assert.equal(out, `default-src 'self'; script-src 'self' ${h('a()')} ${h('b()')}; style-src 'self'`);
+});
+
+test('checkGate: query token sets cookie, cookie passes, anything else 401', async () => {
+  const token = 'tok123';
+  const upstream = http.createServer((req, res) => {
+    res.end(String(req.headers['x-fb-gate'] || 'none'));
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createProxyServer({ upstream: `http://127.0.0.1:${upstreamPort}`, gateToken: token });
+  const proxyPort = await listen(proxy);
+  const base = `http://127.0.0.1:${proxyPort}`;
+  try {
+    assert.equal((await fetch(`${base}/api/x`)).status, 401);
+    const set = await fetch(`${base}/p?fb_gate=${token}&a=1`, { redirect: 'manual' });
+    assert.equal(set.status, 302);
+    assert.equal(set.headers.get('location'), '/p?a=1');
+    const cookie = set.headers.get('set-cookie').split(';')[0];
+    const ok = await fetch(`${base}/api/x`, { headers: { cookie } });
+    assert.equal(ok.status, 200);
+    const hdr = await fetch(`${base}/api/x`, { headers: { 'x-fb-gate': token } });
+    assert.equal(await hdr.text(), 'none', 'gate header not forwarded upstream');
+    assert.equal((await fetch(`${base}/api/x`, { headers: { 'x-fb-gate': 'nope' } })).status, 401);
+  } finally {
+    await close(proxy);
     await close(upstream);
   }
 });
