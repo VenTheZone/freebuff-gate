@@ -4727,3 +4727,136 @@ html body .new-thread-project-menu .project-option {
   html body .fb-pi-mode-view .fb-pi-head-actions { gap: 3px; }
   html body .fb-pi-mode-view .fb-pi-head-actions > button { min-width: 0; padding: 4px 6px; font-size: 9px; white-space: nowrap; }
 }
+
+/* ───────────── Desktop 0.0.151: project sidebar + workspace controls ───────────── */
+/* The browser port owns no OS window, so minimize/maximize/close are dead
+   buttons on every viewport (0.0.151 moved them out of .tabbar). */
+.window-controls {
+  display: none !important;
+}
+@media (min-width: 1001px) {
+  /* Reclaim the gutter the native tabbar reserves for the hidden controls. */
+  .project-workspace > .tabbar {
+    padding-right: 76px !important;
+  }
+  .project-workspace .panel-layout-controls {
+    right: 8px !important;
+  }
+}
+.fb-panel-close {
+  display: none;
+}
+@keyframes fb-sidebar-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@media (max-width: 1000px) {
+  /* The left project sidebar is a drawer on phones and tablets: hidden until
+     the header's .sidebar-layout-toggle opens it (mobileSpacePanel). */
+  .project-sidebar {
+    display: none !important;
+  }
+  .project-sidebar.fb-space-panel-open {
+    display: flex !important;
+    position: fixed !important;
+    top: var(--fb-mobile-safe-top, 0px);
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(84vw, 320px) !important;
+    flex-basis: auto !important;
+    padding-top: 10px;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    animation: fb-sidebar-in 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  .project-sidebar .sidebar-resize-handle,
+  .project-sidebar-titlebar {
+    display: none;
+  }
+  /* Right-panel / bottom-terminal toggles float over the slim header; the
+     header's .fb-panel-toggle opens the tools panel instead. */
+  .panel-layout-controls {
+    display: none !important;
+  }
+  .project-workspace {
+    width: 100%;
+    min-width: 0;
+  }
+  .tabbar .sidebar-layout-toggle {
+    flex: none;
+    width: 38px;
+    height: 38px;
+  }
+  /* 0.0.151's composer is already phone-sized (mode switch + one model /
+     effort trigger + send), and has no .composer-context chip row to fold
+     away, so the context card and floating model pills only duplicate it. */
+  :root:not(:has(.composer-context)) .fb-ctx-fab,
+  .composer:not(:has(.composer-context)) .fb-composer-pills {
+    display: none !important;
+  }
+  .composer:not(:has(.composer-context)) .composer-row .send-key {
+    display: inline-flex;
+  }
+  /* 0.0.151 lifts the explorer over the tabbar (.app .explorer{top:-tabbar});
+     the mobile panel starts below the safe area instead. */
+  .app .explorer {
+    top: var(--fb-mobile-safe-top, 0px);
+  }
+  .explorer-header .fb-panel-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 38px;
+    height: 38px;
+    margin: 0 2px 0 auto;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+  }
+  .explorer-header .fb-panel-close:active {
+    background: var(--raised);
+    color: var(--text);
+  }
+  /* 0.0.151 wraps .tabs in .tabs-viewport; it must grow for the slim-header
+     title (the active tab) to get the free width. */
+  .tabbar .tabs-viewport {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* The native tabbar pads its right edge for the panel and window controls
+     hidden above. */
+  .project-workspace > .tabbar {
+    padding-right: 4px !important;
+    gap: 2px;
+  }
+  .project-workspace > .tabbar > button {
+    flex: none;
+    width: 38px;
+    min-width: 38px;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .project-workspace > .tabbar > .fb-pi-mode-toggle {
+    width: auto;
+    padding: 0 8px;
+  }
+}
+@media (max-width: 480px) {
+  /* New chat lives in the sidebar drawer and the session menu; the header
+     needs the width for the thread title. */
+  .project-workspace > .tabbar > .fb-new-session {
+    display: none !important;
+  }
+  .tabbar .tabs-viewport .tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-sidebar.fb-space-panel-open {
+    animation: none;
+  }
+}

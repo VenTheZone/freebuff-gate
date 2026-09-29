@@ -1407,6 +1407,15 @@
     }
   }
 
+  // The explorer's own collapse button until 0.0.126; 0.0.151 moved it to
+  // the workspace-level .panel-layout-controls.
+  function explorerToggle(explorerEl) {
+    return (
+      (explorerEl && explorerEl.querySelector('.explorer-toggle')) ||
+      document.querySelector('.panel-layout-controls [aria-label="Toggle right panel"]')
+    );
+  }
+
   function collapseExplorerForTouch() {
     if (!window.matchMedia(MOBILE).matches) return;
     // Do not click through the app's explorer while its workspace is still
@@ -1430,7 +1439,7 @@
           return;
         }
         open.forEach(function (el) {
-          var toggle = el.querySelector('.explorer-toggle');
+          var toggle = explorerToggle(el);
           if (toggle) toggle.click();
         });
         if (++attempts >= 8) clearInterval(timer);
@@ -3887,7 +3896,7 @@
       function toggleViaApp() {
         var e = explorer();
         if (!e) return;
-        var t = e.querySelector('.explorer-toggle');
+        var t = explorerToggle(e);
         if (t) t.click(); // the app's own expand/collapse control
       }
       function closePanel() {
@@ -3921,6 +3930,23 @@
         observeExplorer();
         var open = isOpen();
         btn.style.display = open ? 'none' : '';
+        // 0.0.151 moved the collapse control out of the explorer header, so
+        // the open panel needs its own close button.
+        var header = open && explorer().querySelector('.explorer-header');
+        if (header && !explorer().querySelector('.explorer-toggle') && !header.querySelector('.fb-panel-close')) {
+          var close = document.createElement('button');
+          close.type = 'button';
+          close.className = 'fb-panel-close';
+          close.setAttribute('aria-label', 'Close tools panel');
+          close.innerHTML =
+            '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+            'stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+          close.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            closePanel();
+          });
+          header.appendChild(close);
+        }
         if (open && !scrim) {
           scrim = document.createElement('div');
           scrim.className = 'fb-panel-scrim';
@@ -4009,6 +4035,12 @@
   // untouched. The top-row .fb-space-toggle summons it; tapping a space or
   // the scrim closes it. We only override the rail's mobile display:none
   // while open, so desktop layout is never touched.
+  // 0.0.151 replaced the rail with a full .project-sidebar (projects, threads,
+  // search, settings). Same treatment: on phones it becomes a left drawer,
+  // summoned by the app's own .sidebar-layout-toggle in the header, whose
+  // desktop collapse action is intercepted while the mobile layout is active.
+  var SIDEBAR_CLOSE_TARGETS =
+    '.space, .sidebar-thread-select, .sidebar-new-chat, .sidebar-project-new, [aria-label="Settings"]';
   var spaceBound = false;
   function mobileSpacePanel() {
     if (spaceBound) return;
@@ -4017,24 +4049,26 @@
     waitForEl('.tabbar:not(.threadbar)', function () {
       var tabbar = document.querySelector('.tabbar:not(.threadbar)');
       if (!tabbar) return;
+      var mq = window.matchMedia(MOBILE);
 
       var railEl = null;
-      function rail() { return document.querySelector('.rail'); }
+      function rail() { return document.querySelector('.project-sidebar') || document.querySelector('.rail'); }
       function activeSpace() {
         var s = document.querySelector('.rail .space.active') || document.querySelector('.space.active');
         return s ? (s.getAttribute('aria-label') || s.innerText || 'SPACE').trim().slice(0, 8) : 'SPACE';
       }
+      var sidebarMode = !!document.querySelector('.project-sidebar');
 
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'fb-space-toggle';
-      btn.setAttribute('aria-label', 'Manage workspaces');
-      btn.title = 'Workspaces';
-      function refresh() { btn.textContent = activeSpace(); }
-      refresh();
+      var btn = null;
+      function refresh() { if (btn) btn.textContent = activeSpace(); }
+      function setExpanded(v) {
+        var t = btn || document.querySelector('.sidebar-layout-toggle');
+        if (t) t.setAttribute('aria-expanded', v ? 'true' : 'false');
+      }
 
       var scrim = null;
       var open = false;
+      var passNative = false;
       function closePanel() {
         if (!open) return;
         open = false;
@@ -4043,7 +4077,8 @@
         }
         if (scrim) { scrim.remove(); scrim = null; }
         document.removeEventListener('keydown', onKey, true);
-        btn.setAttribute('aria-expanded', 'false');
+        setExpanded(false);
+        mobileOverlay.dismiss('sidebar');
       }
       function onKey(ev) {
         if (ev.key === 'Escape') closePanel();
@@ -4052,8 +4087,14 @@
         railEl = rail();
         if (!railEl) return;
         open = true;
-        // CSS .rail.fb-space-panel-open (inside the <=700px media query) wins
-        // over the .rail{display:none!important} rule — no inline style needed.
+        // A desktop-collapsed sidebar is an 80px icon rail; expand it
+        // natively so the drawer shows full project and thread rows.
+        if (railEl.getAttribute('data-collapsed') === 'true') {
+          var toggle = document.querySelector('.sidebar-layout-toggle');
+          if (toggle) { passNative = true; toggle.click(); passNative = false; }
+        }
+        // CSS .rail.fb-space-panel-open / .project-sidebar.fb-space-panel-open
+        // (mobile media queries) win over their display:none!important rules.
         railEl.classList.add('fb-space-panel-open');
         scrim = document.createElement('div');
         scrim.className = 'fb-panel-scrim';
@@ -4061,24 +4102,40 @@
         scrim.addEventListener('click', closePanel);
         document.body.appendChild(scrim);
         document.addEventListener('keydown', onKey, true);
-        btn.setAttribute('aria-expanded', 'true');
-        // A native space click switches space; close to reveal the chat.
-        railEl.querySelectorAll('.space').forEach(function (s) {
-          s.addEventListener('click', function () { setTimeout(closePanel, 120); });
-        });
+        setExpanded(true);
+        mobileOverlay.open('sidebar', closePanel);
       }
-
-      btn.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        if (open) closePanel(); else openPanel();
+      // Opening a thread, a new chat, or settings reveals the chat again.
+      document.addEventListener('click', function (ev) {
+        if (!open || !railEl || !ev.target.closest) return;
+        if (railEl.contains(ev.target) && ev.target.closest(SIDEBAR_CLOSE_TARGETS)) setTimeout(closePanel, 120);
       });
 
-      var anchor = tabbar.querySelector('.fb-session-switch') || tabbar.querySelector('.conn-status') || null;
-      tabbar.insertBefore(btn, anchor);
+      if (sidebarMode) {
+        document.addEventListener('click', function (ev) {
+          if (passNative || !mq.matches || !ev.target.closest) return;
+          if (!ev.target.closest('.sidebar-layout-toggle')) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (open) closePanel(); else openPanel();
+        }, true);
+      } else {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'fb-space-toggle';
+        btn.setAttribute('aria-label', 'Manage workspaces');
+        btn.title = 'Workspaces';
+        refresh();
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (open) closePanel(); else openPanel();
+        });
+        var anchor = tabbar.querySelector('.fb-session-switch') || tabbar.querySelector('.conn-status') || null;
+        tabbar.insertBefore(btn, anchor);
+        watchMobileBody(refresh);
+      }
 
-      var mq = window.matchMedia(MOBILE);
-      mq.addEventListener('change', function (ev) { if (!ev.matches) { btn.style.display = 'none'; closePanel(); } });
-      watchMobileBody(refresh);
+      mq.addEventListener('change', function (ev) { if (!ev.matches) { if (btn) btn.style.display = 'none'; closePanel(); } });
     });
   }
 
