@@ -18,6 +18,9 @@ const RELEASE_FILES = Object.freeze([
   // the mobile UI layer it reads per request, and the perf probe.
   'freebuff_tailnet_proxy.js',
   'pi-agent-bridge.js',
+  'freebuff-skill-loader.js',
+  'sync-pi-assets.js',
+  'discover-orchestrator.ps1',
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',

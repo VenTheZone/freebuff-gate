@@ -268,7 +268,7 @@ Desktop files.
 After a tagged release, one command installs the verified companion:
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.0/install-mobile-connect.sh \
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.2/install-mobile-connect.sh \
   | bash -s -- \
       --relay-http-url https://relay.example.com \
       --enrollment-token '<relay-bootstrap-token>'

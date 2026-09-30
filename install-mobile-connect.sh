@@ -407,16 +407,6 @@ RELEASE_BASE_URL="${RELEASE_BASE_URL%/}"
 ASSET_PREFIX="freebuff-mobile-connect-${VERSION}"
 MANIFEST_ASSET="${ASSET_PREFIX}-manifest.json"
 CHECKSUM_ASSET="${ASSET_PREFIX}-SHA256SUMS"
-LOGICAL_FILES=(
-  'install-mobile-connect.js'
-  'mobile-connect-agent.js'
-  'mobile-connect-protocol.js'
-  'mobile-connect-qr.js'
-  'freebuff_tailnet_proxy.js'
-  'mobile-ui.css'
-  'mobile-ui.js'
-  'perf-probe.js'
-)
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/freebuff-mobile-connect.XXXXXXXX")"
 cleanup() {
@@ -439,7 +429,10 @@ printf 'Downloading versioned installer files...\n'
 download_asset "$MANIFEST_ASSET"
 download_asset "$CHECKSUM_ASSET"
 
-EXPECTED_VERSION="$VERSION" MANIFEST_FILE="$DOWNLOAD_DIR/$MANIFEST_ASSET" ASSET_PREFIX="$ASSET_PREFIX" node <<'NODE'
+# The file list comes from the manifest (the packager owns it), so a release
+# that ships a new module does not need a bootstrap edit. Every file is still
+# size- and SHA-256-checked below.
+EXPECTED_VERSION="$VERSION" MANIFEST_FILE="$DOWNLOAD_DIR/$MANIFEST_ASSET" ASSET_PREFIX="$ASSET_PREFIX" node >"$TEMP_DIR/files.txt" <<'NODE'
 const fs = require('node:fs');
 const expectedVersion = process.env.EXPECTED_VERSION;
 const assetPrefix = process.env.ASSET_PREFIX;
@@ -451,15 +444,10 @@ try {
   console.error(`release manifest is invalid: ${error.message}`);
   process.exit(1);
 }
-const expected = [
+const required = [
   'install-mobile-connect.js',
   'mobile-connect-agent.js',
-  'mobile-connect-protocol.js',
-  'mobile-connect-qr.js',
   'freebuff_tailnet_proxy.js',
-  'mobile-ui.css',
-  'mobile-ui.js',
-  'perf-probe.js',
 ];
 if (manifest.product !== 'freebuff-mobile-connect' || manifest.version !== expectedVersion) {
   console.error('release manifest version or product does not match requested release');
@@ -469,18 +457,18 @@ if (manifest.requiredNodeMajor !== 22) {
   console.error('release manifest requires unsupported Node major');
   process.exit(1);
 }
-if (!Array.isArray(manifest.files) || manifest.files.length !== expected.length) {
+if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
   console.error('release manifest has unexpected file list');
   process.exit(1);
 }
-const names = manifest.files.map((file) => file.logicalName).sort();
-if (JSON.stringify(names) !== JSON.stringify([...expected].sort())) {
-  console.error('release manifest file list is not the expected installer set');
+const names = manifest.files.map((file) => file.logicalName);
+if (new Set(names).size !== names.length || required.some((name) => !names.includes(name))) {
+  console.error('release manifest file list is not a valid installer set');
   process.exit(1);
 }
 for (const file of manifest.files) {
   const expectedAsset = `${assetPrefix}-${file.logicalName}`;
-  if (file.assetName !== expectedAsset || !/^freebuff-mobile-connect-v[^/]+-[A-Za-z0-9._-]+\.js$/.test(file.assetName)) {
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(js|css|ps1)$/.test(String(file.logicalName)) || file.assetName !== expectedAsset) {
     console.error(`release manifest contains unexpected asset name: ${file.assetName}`);
     process.exit(1);
   }
@@ -489,7 +477,9 @@ for (const file of manifest.files) {
     process.exit(1);
   }
 }
+console.log(names.join('\n'));
 NODE
+mapfile -t LOGICAL_FILES <"$TEMP_DIR/files.txt"
 
 for logical in "${LOGICAL_FILES[@]}"; do
   download_asset "${ASSET_PREFIX}-${logical}"
