@@ -691,7 +691,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
     assert.deepEqual(layout.viewport, { width: 390, height: 844 });
     assert.equal(layout.title, 'Mobile screenshot review');
     assert.ok(layout.header);
-    assert.ok(layout.header.height >= 47 && layout.header.height <= 50);
+    assert.ok(layout.header.height >= 55 && layout.header.height <= 58);
     assert.ok(layout.sessionButton && layout.sessionButton.width >= 40);
     assert.ok(layout.contextButton && layout.contextButton.width >= 40);
     assert.ok(layout.streaming && layout.streaming.display !== 'none');
@@ -776,7 +776,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
         };
       })()`,
     );
-    assert.ok(piLayout.view.width >= 389 && piLayout.view.height >= 790 && piLayout.view.top >= 47, JSON.stringify(piLayout));
+    assert.ok(piLayout.view.width >= 389 && piLayout.view.height >= 785 && piLayout.view.top >= 55, JSON.stringify(piLayout));
     assert.equal(piLayout.position, 'fixed');
     assert.ok(piLayout.chat.width >= 370, `Pi chat too narrow: ${JSON.stringify(piLayout)}`);
     assert.ok(piLayout.messages.width >= 370 && piLayout.messages.height >= 400, `Pi message area too small: ${JSON.stringify(piLayout)}`);
