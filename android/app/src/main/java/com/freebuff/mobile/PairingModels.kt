@@ -21,7 +21,11 @@ data class PairingPayload(
                 "Pairing URL must have a normal HTTPS host"
             }
 
-            val fragment = uri.rawFragment ?: throw IllegalArgumentException("Pairing URL has no token fragment")
+            val fragment = uri.rawFragment ?: throw IllegalArgumentException(
+                "Pairing URL has no token fragment. This is a browser link (it sets a cookie " +
+                    "in Chrome); the app needs the pairing URL printed by " +
+                    "'freebuff-mobile-connect pair' — it ends with #pairingId=...&token=...",
+            )
             val values = fragment.split('&')
                 .filter { it.isNotBlank() }
                 .associate { part ->
@@ -34,7 +38,7 @@ data class PairingPayload(
             val pairingId = values["pairingId"].orEmpty()
             val token = values["token"].orEmpty()
             require(pairingId.isNotBlank() && token.isNotBlank()) {
-                "Pairing URL fragment is incomplete"
+                "Pairing URL fragment is incomplete (expected #pairingId=...&token=...)"
             }
 
             return PairingPayload(
