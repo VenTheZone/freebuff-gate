@@ -541,6 +541,38 @@ function windowsTaskRun(nodePath, wrapperPath, runtimeArgs = []) {
     .join(' ');
 }
 
+// Windows logon tasks via `schtasks /SC ONLOGON` need elevation on some
+// machines ("Access is denied" for standard users). The Task Scheduler
+// PowerShell API registers the same per-user, RunLevel-Limited logon task
+// without admin rights, so fall back to it. Returns { ok, method, error? }
+// and never throws: auto-start is optional garnish and must not abort the
+// install before the UI patches run.
+function windowsLogonTaskPsScript(name, taskRun) {
+  const match = /^"([^"]+)"\s+([\s\S]+)$/.exec(taskRun);
+  const exe = match ? match[1] : taskRun;
+  const args = match ? match[2] : '';
+  const q = (value) => `'${String(value).replace(/'/g, "''")}'`;
+  return (
+    `$a = New-ScheduledTaskAction -Execute ${q(exe)} -Argument ${q(args)}; ` +
+    `$t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; ` +
+    `Register-ScheduledTask -TaskName ${q(name)} -Action $a -Trigger $t -RunLevel Limited -Force | Out-Null`
+  );
+}
+
+function windowsRegisterLogonTask(execute, name, taskRun) {
+  try {
+    execute('schtasks.exe', ['/Create', '/TN', name, '/SC', 'ONLOGON', '/TR', taskRun, '/RL', 'LIMITED', '/F']);
+    return { ok: true, method: 'schtasks' };
+  } catch (error) {
+    try {
+      execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsLogonTaskPsScript(name, taskRun)]);
+      return { ok: true, method: 'powershell' };
+    } catch (psError) {
+      return { ok: false, method: 'powershell', error: `schtasks: ${error.message}; powershell: ${psError.message}` };
+    }
+  }
+}
+
 function ensureManagedAutoStartFile(file, options) {
   if (!file || !fs.existsSync(file)) return;
   if (!isManagedFile(file) && !options.force) {
@@ -631,15 +663,13 @@ function applyAutoStart(options, wrapperPath, { previouslyEnabled = false } = {}
 
   if (registration.type === 'task-scheduler') {
     if (enabled) {
-      execute('schtasks.exe', [
-        '/Create',
-        '/TN', registration.name,
-        '/SC', 'ONLOGON',
-        '/TR', windowsTaskRun(nodePath, wrapperPath, runtimeArgs),
-        '/RL', 'LIMITED',
-        '/F',
-      ]);
-      return { ...registration, enabled: true, changed: true };
+      const taskRun = windowsTaskRun(nodePath, wrapperPath, runtimeArgs);
+      const result = windowsRegisterLogonTask(execute, registration.name, taskRun);
+      if (!result.ok) {
+        console.warn(`Warning: auto-start registration failed (${result.error}); the companion runs only when started manually.`);
+        return { ...registration, enabled: false, changed: true, registrationError: result.error };
+      }
+      return { ...registration, enabled: true, changed: true, registrationMethod: result.method };
     }
     if (!exists) return { ...registration, enabled: false, changed: false };
     execute('schtasks.exe', ['/Delete', '/TN', registration.name, '/F']);
@@ -872,15 +902,13 @@ function applyProxyAutoStart(options, proxyDir, { runPlatformCommand = DEFAULT_R
   }
 
   if (registration.type === 'task-scheduler') {
-    execute('schtasks.exe', [
-      '/Create',
-      '/TN', registration.name,
-      '/SC', 'ONLOGON',
-      '/TR', proxyWindowsTaskRun(nodePath, proxyPath, runtimeArgs),
-      '/RL', 'LIMITED',
-      '/F',
-    ]);
-    return { ...registration, enabled: true, changed: true };
+    const taskRun = proxyWindowsTaskRun(nodePath, proxyPath, runtimeArgs);
+    const result = windowsRegisterLogonTask(execute, registration.name, taskRun);
+    if (!result.ok) {
+      console.warn(`Warning: proxy auto-start registration failed (${result.error}); start the proxy manually.`);
+      return { ...registration, enabled: false, changed: true, registrationError: result.error };
+    }
+    return { ...registration, enabled: true, changed: true, registrationMethod: result.method };
   }
   return { ...registration, enabled: false, changed: false };
 }
