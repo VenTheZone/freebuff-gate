@@ -26,7 +26,7 @@ implementation in `src/folder-select.js`.
 | You want to... | Start here |
 | --- | --- |
 | Open the Freebuff UI in a browser on this machine | [docs/install.md](docs/install.md): install guide with the setup wizard and one-command installers |
-| Use it on a phone or tablet | [docs/mobile.md](docs/mobile.md): mobile adaptation, then the Android/iOS apps under `android/` and `ios/` |
+| Use it on a phone or tablet | [docs/install.md § Quick start: pair a phone](docs/install.md#quick-start-pair-a-phone): install the app, generate the pairing QR, scan it in the app; [docs/mobile.md](docs/mobile.md) explains the mobile UI layer |
 | Run your own relay for phones | [docker/relay/README.md](docker/relay/README.md): self-hosted Caddy or Tailscale deployment |
 | Install the companion without reading anything | `install-mobile-connect.sh` (Desktop companion), `install-release-apk.sh` (Android APK) |
 | See what every file does | the Contents table below |
@@ -127,6 +127,12 @@ in the URL fragment and is the pairing secret by itself, so keep the pairing
 URL private. The Android scanner reads the QR directly; `--no-qr` keeps
 URL-only output for CI or piped logs. The Android scanner scaffold lives under
 `android/`.
+
+**Pairing URL vs browser link.** The pairing URL (`…#pairingId=…&token=…`)
+is for the Gate **app** only. The `?fb_gate=<token>` links used for
+phone/desktop **browsers** (cookie flow) are a different thing; the app
+rejects those with "Pairing URL has no token fragment". Full phone
+walkthrough: [docs/install.md § Quick start: pair a phone](docs/install.md#quick-start-pair-a-phone).
 
 Manage paired devices:
 
