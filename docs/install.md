@@ -5,6 +5,110 @@ Buffy or Codebuff. The prompt sets up the Freebuff Gate stack on one machine:
 the desktop orchestrator, tailnet proxy, mobile UI patches, server-side folder
 browser, and optional mobile relay and connector.
 
+## Quick start: pair a phone
+
+The whole phone path in one place. Three pieces are involved: **Freebuff
+Desktop** on the PC (already installed), the **Gate stack** on the PC
+(companion installer below), and the **Gate app** on the phone (Android APK
+or iOS build).
+
+### The two URLs — do not mix them up
+
+| URL | Looks like | Open with | What it does |
+| --- | --- | --- | --- |
+| **Pairing URL** | `https://<relay>/pair#pairingId=…&token=…` (token after `#`) | The **Gate app** (its QR scanner or paste field) | Claims the device, stores credentials, connects. One-use, expires in 10 minutes. |
+| **Browser link** | `https://<host>…/?fb_gate=<token>` | A **phone/desktop browser** (Chrome, Safari) | Sets an HttpOnly cookie and lands on the Gate home screen. No app involved. |
+
+The app rejects a browser link with *"Pairing URL has no token fragment"* —
+that means the wrong URL type was pasted. Generate the right one with the
+pair command below.
+
+### 1. Install the Gate app on the phone
+
+- **Android**: download and install the APK from the
+  [`mobile-debug-latest` release](https://github.com/youlianvr/freebuff-gate/releases/tag/mobile-debug-latest)
+  (tap the `.apk`, allow installation from this browser/file manager when
+  Android asks, then Open). From a PC with `adb`:
+  `bash install-release-apk.sh` downloads, verifies the SHA-256 checksum and
+  installs it. The app is not on Play Store — the APK **is** the app.
+- **iOS**: build `ios/` with Xcode (see `ios/README.md`) or use the
+  `ios-debug-latest` CI build.
+
+Leave the app on its "Pair device" screen — it is now waiting for a QR.
+
+### 2. Install the Gate stack on the PC
+
+One command (needs Node 22+; the script checks and can install it):
+
+```bash
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.2/install-mobile-connect.sh | bash
+```
+
+or run `node src/freebuff-gate-setup.js` from a repo checkout — it detects
+the Desktop install and repairs whatever is missing. Details and flags:
+[Install with freebuff-setup](#install-with-freebuff-setup) below.
+
+### 3. Connect the phone to the PC
+
+The phone must reach the PC's proxy (`58061`). Two supported ways:
+
+- **Tailscale (recommended, private).** Install Tailscale on the PC and the
+  phone, log both into the same tailnet. Then expose the proxy:
+  `tailscale serve --bg --https=443 http://127.0.0.1:58061` and use
+  `https://<host>.<tailnet>.ts.net` as the public URL. DNS troubleshooting
+  (phone says "address not found"): enable "Use Tailscale DNS" in the phone's
+  Tailscale app and set Android Private DNS to Off/Automatic — or use the
+  bare-IP variant `tailscale serve --bg --tcp=8061 tcp://127.0.0.1:58061` →
+  `http://<tailscale-ip>:8061`.
+- **Public relay (self-hosted).** `docker compose up -d` from `docker/relay/`
+  gives a public `https://<domain>` (Caddy + Let's Encrypt). Heavier setup;
+  see `docker/relay/README.md`.
+
+### 4. Generate the pairing QR — this is the command
+
+```bash
+freebuff-mobile-connect pair        # installed launcher
+# or, from a repo checkout:
+node src/mobile-connect-agent.js pair
+```
+
+It prints an ANSI QR code and the pairing URL (the one with
+`#pairingId=…&token=…`). The URL is the secret — anyone holding it can claim
+the device, so don't post it. `--ttl 600` sets expiry, `--no-qr` prints the
+URL only.
+
+### 5. Scan it with the Gate app
+
+In the Gate app: **Pair device → Scan QR** (or paste the URL). Scan the QR
+with the **Gate app's scanner — not with the phone camera and not in Chrome**;
+a camera/Chrome scan opens the URL in a browser instead of feeding it to the
+app. After a successful claim the app connects and loads the UI; reconnects
+later need no new QR.
+
+### Does Freebuff need to be running?
+
+The PC is the host and the phone is a remote screen, so the PC stack
+(Desktop + Gate stack) must be up whenever the phone connects. **Pairing is
+one-time** — the device credential persists and reconnects automatically —
+but a fresh pairing QR is needed only when adding a new device or after a
+revocation. Enable auto-start during install
+(`freebuff-gate-connect` / `install-mobile-connect.js install --auto-start`)
+so the stack survives reboots.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| App says *"Pairing URL has no token fragment"* | A browser link (`?fb_gate=…`) or bare URL was pasted — wrong URL type | Run `freebuff-mobile-connect pair` and scan/paste **that** URL (it ends in `#pairingId=…&token=…`) |
+| *"Pairing URL fragment is incomplete"* | URL fragment missing `pairingId` or `token` params (truncated copy/paste) | Copy the full URL or re-scan the QR; regenerating is easiest |
+| Pairing QR expired / already used | Pairings are one-use and expire in 10 minutes | Run the pair command again |
+| Agent says "there is no app" or produces a cookie link | Agent worked from the wrong docs section | Point it at **this** guide (Quick start above); the app is the APK from the release |
+| Agent says "Desktop is too new (0.0.154, gate supports 0.0.151)" | Misreading of verify output — the Gate supports Desktop **0.0.151 and newer** (launch guard handled) | Nothing to downgrade. `N patch(es) obsolete for this app version (skipped)` in verify output is **expected** on 0.0.126+ (those fixes are native in Desktop now) — it is not an incompatibility |
+| Verify reports missing shim/markers after a Desktop update | App updates overwrite the patched files | Re-run the install command (or `node src/freebuff-gate-setup.js --yes`) to re-apply |
+| Phone can't reach the host | Tailscale DNS / Android Private DNS | See step 3 DNS notes above |
+
+---
+
 ## Install with freebuff-setup
 
 `freebuff-setup` is a Node single-executable companion binary. Users do not
@@ -172,14 +276,19 @@ app).
   and rejects API calls without its per-launch secret (`FREEBUFF_LAUNCH_ID`).
   The proxy finds both itself (Linux: /proc; macOS: ps/lsof; Windows: set
   `FB_LAUNCH_ID` by hand) and re-discovers every 30 s, so a Desktop restart
-  is picked up. The bundle patches are obsolete on 0.0.151 (native fixes);
-  the installer reports them as skipped, not failed.
+  is picked up. Supported Desktop versions are 0.0.151 and NEWER — a
+  0.0.154 install is fine. The bundle patches are obsolete on 0.0.126+
+  (native fixes); the installer reports "N patch(es) obsolete for this app
+  version (skipped)" as an expected warning, not a failure. Treat that line
+  as informational; only MISSING markers are a problem.
 - **Gate token.** Because the proxy injects that secret, it now requires its
   own token: open `http://127.0.0.1:58061/?fb_gate=<token>` once per browser
   (sets an HttpOnly cookie). The token lives in
   `~/.config/freebuff/gate-proxy.token` (override: `FB_GATE_TOKEN_FILE`), is
   printed at proxy start, and the mobile agent sends it automatically.
   `FB_GATE_AUTH=off` disables the check (only if nothing else runs locally).
+  NOTE: `?fb_gate=` links are for BROWSERS only. The Gate phone app needs the
+  pairing URL from the pair command in step 3b.
 - Verify: curl -H "x-fb-gate: $(cat ~/.config/freebuff/gate-proxy.token)" http://127.0.0.1:58061/ | grep fb-mobile-ui  (should match)
 - Verify the shim on the direct UI: curl -s http://127.0.0.1:58060/ | grep -c fb-desktop-shim  (should be 1)
 - Verify the dirlist route: curl -s 'http://127.0.0.1:58060/api/fb/dirlist?path=/home' returns JSON entries.
@@ -199,10 +308,10 @@ If the phone app is used:
   `ghcr.io/venthezone/freebuff-gate-relay` image; falls back to building from
   source when the tag is not published) and use its public `https://<domain>`
   URL for the agent and phone.
-- Android release APK: `install-release-apk.sh` downloads, verifies the
-  SHA-256 checksum, and installs `freebuff-gate-release.apk` from the
-  `mobile-release-latest` GitHub release (`--gecko` for the GeckoView spike
-  from `mobile-gecko-latest`). Requires `gh`, `adb`, and `sha256sum`.
+- Android app: the APK is the app — install it from the `mobile-debug-latest`
+  GitHub release (or `mobile-release-latest` for the signed release track;
+  `install-release-apk.sh` downloads, verifies the SHA-256 checksum, and
+  installs it via `adb` — requires `gh`, `adb`, `sha256sum`).
 - A systemd USER relay remains valid for non-Docker deployments; install a
   unit like the existing `freebuff-mobile-relay.service` on the reference
   machine (see `~/.config/systemd/user/`), with the agent unit already managed
@@ -237,6 +346,20 @@ If the phone app is used:
   relay runs unchanged and only the turn-finished push path stays off. The
   iOS `aps-environment` entitlement must match: `development` for sandbox
   builds, `production` for TestFlight/App Store (see docs/mobile.md).
+
+### 3b. Generate the pairing QR for the Gate app
+When the user wants the phone app paired, THIS is the only correct command:
+- freebuff-mobile-connect pair        (or: node src/mobile-connect-agent.js pair)
+- It prints an ANSI QR plus a pairing URL ending in
+  #pairingId=...&token=... — that URL/QR is what the Gate APP scans
+  (in-app scanner or paste field). One-use; default TTL 10 minutes.
+- NEVER hand the app a ?fb_gate= browser link or a bare UI URL: those are
+  for phone/desktop BROWSERS (cookie flow) and the app rejects them with
+  "Pairing URL has no token fragment".
+- Scan with the app's scanner, not the phone camera/Chrome. The pairing URL
+  is a bearer secret; do not paste it into chats or logs.
+- Re-pairing needs a new QR only for a new device or after revoke; normal
+  reconnects reuse the stored device credential.
 
 ### 4. Exposure
 - Caddy deployment: create a public DNS record for the relay host and allow
