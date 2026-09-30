@@ -31,8 +31,10 @@ pair command below.
   Android asks, then Open). From a PC with `adb`:
   `bash install-release-apk.sh` downloads, verifies the SHA-256 checksum and
   installs it. The app is not on Play Store — the APK **is** the app.
-- **iOS**: build `ios/` with Xcode (see `ios/README.md`) or use the
-  `ios-debug-latest` CI build.
+- **iOS**:
+  - **Option A (Free & instant — Safari PWA / Add to Home Screen, no setup needed)**: Open the browser link (`https://<host>…/?fb_gate=<token>`) in Safari on your iPhone, tap **Share** (square with arrow up) → **Add to Home Screen**. It launches in standalone full-screen mode without address bars, has full touch-target optimizations, and keeps persistent session cookies.
+  - **Option B (Free native install via free Apple ID — Sideloadly / AltStore)**: To install the native IPA with QR scanning without a paid $99/yr Apple Developer account, sideload the `.ipa` using [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/) with your personal free Apple ID.
+  - **Option C (Build locally with Xcode)**: Build `ios/` on macOS with XcodeGen (see [`ios/README.md`](../ios/README.md)).
 
 Leave the app on its "Pair device" screen — it is now waiting for a QR.
 
