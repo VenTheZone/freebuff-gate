@@ -1458,6 +1458,21 @@ html.fb-pi-active .global-feedback {
    shows whenever any open session tab has the "unseen" class (mobile-ui.js
    syncs it from the tabbar). Soft pulse so it reads as "something needs
    you" without being noisy. */
+.fb-session-switch[data-tabs]::before {
+  content: attr(data-tabs);
+  position: absolute;
+  right: 3px;
+  bottom: 5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--fb-m-brand);
+  color: var(--chrome);
+  font: 700 9px/14px system-ui, sans-serif;
+  text-align: center;
+}
 .fb-session-switch.fb-has-attention::after {
   content: "";
   position: absolute;
@@ -4798,9 +4813,14 @@ html body .new-thread-project-menu .project-option {
   /* 0.0.151's composer is already phone-sized (mode switch + one model /
      effort trigger + send), and has no .composer-context chip row to fold
      away, so the context card and floating model pills only duplicate it. */
-  :root:not(:has(.composer-context)) .fb-ctx-fab,
+  :root:not(:has(.composer .composer-context)) .fb-ctx-fab,
   .composer:not(:has(.composer-context)) .fb-composer-pills {
     display: none !important;
+  }
+  /* 0.0.151 reuses .composer-context for the new-thread workspace picker,
+     outside the composer; the legacy fold-away rule above must not hide it. */
+  .new-thread-workspace-controls .composer-context {
+    display: flex;
   }
   .composer:not(:has(.composer-context)) .composer-row .send-key {
     display: inline-flex;

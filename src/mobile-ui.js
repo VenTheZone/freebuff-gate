@@ -2713,7 +2713,9 @@
     sessionBound = true;
     waitForEl('.tabbar:not(.threadbar)', function () {
       var tabbar = document.querySelector('.tabbar:not(.threadbar)');
-      if (!tabbar) return;
+      // bindMobileFeatures resets sessionBound on its first mobile bind, so
+      // a tabbar bound at desktop width would get a second switcher.
+      if (!tabbar || tabbar.querySelector('.fb-session-switch')) return;
 
       var btn = null;
       var menu = null;
@@ -3384,7 +3386,10 @@
           [
             'All sessions',
             function () {
-              var h = tabbar.querySelector('.tab.home');
+              // 0.0.151 has no home tab; its project sidebar lists every thread.
+              var h =
+                tabbar.querySelector('.tab.home') ||
+                tabbar.querySelector('.sidebar-layout-toggle');
               if (h) h.click();
             },
           ],
@@ -3458,10 +3463,15 @@
       // revision is ahead of what was acknowledged — see the app's sl()
       // predicate). Mirror it on the switcher button via the tabbar observer.
       function syncAttention() {
-        var needsAttention = sessionTabs().some(function (t) {
+        var tabs = sessionTabs();
+        var needsAttention = tabs.some(function (t) {
           return t.classList.contains('unseen');
         });
         btn.classList.toggle('fb-has-attention', needsAttention);
+        // Phones show only the active tab; the count tells users this button
+        // is where the other open tabs are.
+        if (tabs.length > 1) btn.setAttribute('data-tabs', String(tabs.length));
+        else btn.removeAttribute('data-tabs');
       }
       syncAttention();
 
