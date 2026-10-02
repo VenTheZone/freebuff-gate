@@ -1108,7 +1108,13 @@ const ORCH_ROUTE_ANCHOR_RE = new RegExp(
 );
 const LAUNCH_GUARD_MARK = 'function presentedLaunchTokens(';
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
-const ORCH_HELPER_ANCHOR = 'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {';
+// Desktop 0.0.156 replaced the inline `securityHeaders` object with a
+// `documentHeaders(html)` factory, so serveSpa's signature churns. Try every
+// known shape and fail loudly only when none of them is present.
+const ORCH_HELPER_ANCHORS = [
+  'async function serveSpa(pathname, { uiDir, reportMissingAsset, documentHeaders }) {',
+  'async function serveSpa(pathname, { uiDir, reportMissingAsset, securityHeaders }) {',
+];
 // ---------------------------------------------------------------------------
 // Pi-compatible skill discovery patch (orchestrator).
 // ---------------------------------------------------------------------------
@@ -1150,66 +1156,84 @@ const SHADOW_NOTE_FIX =
 // Order encodes the conflict policy (docs/planning/pi-mode/skill-conflicts.md):
 // `.pi` beats `.agents` at the same level, project beats home. The insertions
 // land the Pi dirs BEFORE the `.agents` entries in each array.
+// Desktop rebuilds renumber every minified import alias (path11 -> path13,
+// join25 -> join44, homedir7 -> homedir10) and upstream also renames the
+// surrounding variables (getDefaultSkillsDirs -> resolveSkillsDirs, and its
+// home parameter home -> homeDir in 0.0.156). Pinning a literal alias broke the
+// patch on every app update, so each anchor is now a regex that captures the
+// live aliases and is scoped to its enclosing function, and each insertion is a
+// builder over those captures.
 const PI_SKILLS_PATCHES = [
   {
-    // sdk getDefaultSkillsDirs
-    anchor: 'path11.join(home, ".agents", SKILLS_DIR_NAME),',
-    insert: [
+    // sdk resolveSkillsDirs (called getDefaultSkillsDirs before Desktop 0.0.156)
+    name: 'sdk resolveSkillsDirs',
+    regex: /(function (?:resolveSkillsDirs|getDefaultSkillsDirs)\([^)]*\) \{[\s\S]{0,800}?)(?<a>path\d+)\.join\((?<home>home\w*), "\.agents", SKILLS_DIR_NAME\),?/,
+    insert: ({ a, home }) => [
       '/* freebuff-pi-skills */',
-      '    path11.join(home, ".pi", "agent", SKILLS_DIR_NAME),',
-      '    path11.join(cwd, ".pi", SKILLS_DIR_NAME),',
+      `    ${a}.join(${home}, ".pi", "agent", SKILLS_DIR_NAME),`,
+      `    ${a}.join(cwd, ".pi", SKILLS_DIR_NAME),`,
     ],
   },
   {
     // agent-runtime skill handler loadSkillFromDisk
-    anchor: 'path7.join(home, ".agents", SKILLS_DIR_NAME),',
-    insert: [
+    name: 'runtime loadSkillFromDisk',
+    regex: /(async function loadSkillFromDisk\([^)]*\) \{[\s\S]{0,800}?)(?<a>path\d+)\.join\((?<home>home\w*), "\.agents", SKILLS_DIR_NAME\),?/,
+    insert: ({ a, home }) => [
       '/* freebuff-pi-skills */',
-      '    path7.join(home, ".pi", "agent", SKILLS_DIR_NAME),',
-      '    path7.join(projectRoot, ".pi", SKILLS_DIR_NAME),',
+      `    ${a}.join(${home}, ".pi", "agent", SKILLS_DIR_NAME),`,
+      `    ${a}.join(projectRoot, ".pi", SKILLS_DIR_NAME),`,
     ],
   },
   {
     // SkillStore.store agentSkillsDirs. The orchestrator lays this array out
-    // one entry per line with 10-space indentation, and merges the entries
-    // with Object.assign — LATER dirs override earlier ones. So the Pi dirs
-    // must go AFTER the `.agents` entries to outrank them. Anchor on the
-    // closing entry (with its trailing close bracket — the bare entry would
-    // also prefix-match the `createSkillsDir` line), splice in the Pi
-    // entries + a comma, and leave the closing entry comma-less last.
-    anchor: '          join25(root, ".agents", "skills")\n        ]',
-    insert: [
-      '          join25(root, ".agents", "skills"),',
-      '          /* freebuff-pi-skills */',
-      '          join25(homedir7(), ".pi", "agent", "skills"),',
-      '          join25(root, ".pi", "skills"),',
-    ],
+    // with the project entries last; Pi dirs must outrank `.agents`, which the
+    // merge order encodes (later wins). The anchor spans the element's leading
+    // indentation plus the element and its closing bracket: the bare element
+    // would also prefix-match the createSkillsDir line, and dropping the indent
+    // would double it on the first inserted line. The Pi entries go in front of
+    // the last element, so its suffix (`,`, newline, close bracket) stays
+    // attached and valid inside the array. The close bracket gained a trailing
+    // comma in 0.0.156; it is matched but never rewritten.
+    name: 'SkillStore agentSkillsDirs',
+    regex: /(?<pad>[ \t]*)(?<a>join\d+)\(root, "\.agents", "skills"\)\n(?<ci>[ \t]*)\]/,
+    insert: ({ a, pad }, out, idx) => {
+      // homedir is aliased too; reuse the alias from the same store config.
+      const before = out.slice(Math.max(0, idx - 600), idx);
+      const hd = (/(homedir\d+)\(\)/.exec(before) || [, 'homedir'])[1];
+      return [
+        `${pad}${a}(root, ".agents", "skills"),`,
+        `${pad}/* freebuff-pi-skills */`,
+        `${pad}${a}(${hd}(), ".pi", "agent", "skills"),`,
+        `${pad}${a}(root, ".pi", "skills"),`,
+      ];
+    },
     spliceBefore: true,
   },
 ];
 
 // Inserts the Pi skill dirs into `out` at every anchor. Returns the updated
 // string plus the number of anchors actually patched (0 when already marked).
+// Inserts the Pi skill dirs into `out` at every anchor. Returns the updated
+// string plus the number of anchors actually patched (0 when already marked).
 function applyPiSkillsPatch(out) {
   if (out.includes(PI_SKILLS_MARK)) return { out, patched: 0 };
   let patched = 0;
   for (const patch of PI_SKILLS_PATCHES) {
-    const insertText = patch.insert.join('\n');
-    if (!out.includes(patch.anchor)) {
-      throw new Error(`orchestrator pi-skills anchor not found; expected: ${patch.anchor.slice(0, 80)}…`);
+    const match = patch.regex.exec(out);
+    if (!match) {
+      throw new Error(`orchestrator pi-skills anchor not found (${patch.name}); expected /${patch.regex.source.slice(0, 80)}…/`);
     }
-    if (patch.spliceBefore) {
-      // The bare closing entry also prefix-matches the `createSkillsDir` line
-      // earlier in the same block, so take the LAST occurrence, which is
-      // always the final element of agentSkillsDirs. Splice the Pi entries in
-      // front of it so its existing suffix (`,`, newline, close bracket)
-      // stays attached and remains valid inside the array.
-      const idx = out.lastIndexOf(patch.anchor);
-      if (idx < 0) throw new Error(`orchestrator pi-skills anchor not found; expected: ${patch.anchor.slice(0, 80)}…`);
-      out = `${out.slice(0, idx)}${insertText}\n${out.slice(idx)}`;
-    } else {
-      out = out.split(patch.anchor).join(`${patch.anchor}\n${insertText}`);
-    }
+    const anchor = match[0];
+    // spliceBefore: take the LAST occurrence, which is always the final
+    // element of agentSkillsDirs, and splice in front of it so its suffix
+    // (`,`, newline, close bracket) stays attached and valid inside the array.
+    // Every other anchor is a prefix of the line it decorates, so the
+    // insertion goes immediately after it.
+    const idx = patch.spliceBefore ? out.lastIndexOf(anchor) : match.index + anchor.length;
+    if (idx < 0) throw new Error(`orchestrator pi-skills anchor not found (${patch.name})`);
+    const insertText = patch.insert(match.groups, out, idx).join('\n');
+    const lead = patch.spliceBefore ? '' : '\n';
+    out = `${out.slice(0, idx)}${lead}${insertText}\n${out.slice(idx)}`;
     patched += 1;
   }
   return { out, patched };
@@ -1234,6 +1258,23 @@ const SERVE_SPA_CACHE_CANDIDATES = [
   [
     'return new Response(index, { headers: { ...securityHeaders } });',
     'let text = await index.text();\n    return new Response(await injectPerfProbe(text), { headers: { ...securityHeaders, "cache-control": "no-store", "content-type": "text/html" } });',
+  ],
+  // Desktop 0.0.156 serves HTML through a documentHeaders(html) factory
+  // instead of a static securityHeaders object. The perf probe is injected by
+  // the proxy on launch-guarded builds, so these candidates only set caching.
+  [
+    'return new Response(html2, {\n        headers: { "content-type": "text/html;charset=utf-8", ...documentHeaders(html2) }\n      });',
+    'return new Response(html2, {\n        headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store", ...documentHeaders(html2) }\n      });',
+  ],
+  [
+    'return new Response(html, {\n    headers: { "content-type": "text/html;charset=utf-8", ...documentHeaders(html) }\n  });',
+    'return new Response(html, {\n    headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store", ...documentHeaders(html) }\n  });',
+  ],
+  // Content-hashed static assets (JS/CSS/fonts/images) are immutable by
+  // construction; serveSpa returns them headerless in 0.0.156.
+  [
+    'if (extname5(path30).toLowerCase() !== ".html")\n        return new Response(file2);',
+    'if (extname5(path30).toLowerCase() !== ".html")\n        return new Response(file2, { headers: { "cache-control": "public, max-age=31536000, immutable" } });',
   ],
 ];
 
@@ -1289,13 +1330,17 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
   const bestEffort = [];
   if (bestEffortRoutes) bestEffort.push('routes:skipped (launch-guarded orchestrator; proxy serves them)');
   if (!out.includes(ORCH_HELPER_MARK)) {
-    if (out.includes(ORCH_HELPER_ANCHOR)) {
-      out = out.split(ORCH_HELPER_ANCHOR).join(perfHelperSource(perfProbePath) + ORCH_HELPER_ANCHOR);
-      performed.push('perf-helper');
-    } else if (bestEffortRoutes) {
+    // Launch-guarded builds (0.0.151+) cannot use direct /api/ clients at all,
+    // so the proxy injects the probe there and an orchestrator-side helper
+    // would be dead code. Skip it before looking for an anchor.
+    const helperAnchor = ORCH_HELPER_ANCHORS.find((anchor) => out.includes(anchor));
+    if (bestEffortRoutes) {
       bestEffort.push('perf-helper:skipped (proxy injects the perf probe)');
+    } else if (helperAnchor) {
+      out = out.split(helperAnchor).join(perfHelperSource(perfProbePath) + helperAnchor);
+      performed.push('perf-helper');
     } else {
-      throw new Error(`orchestrator serveSpa anchor not found; expected: ${ORCH_HELPER_ANCHOR}`);
+      throw new Error(`orchestrator serveSpa anchor not found; expected one of: ${ORCH_HELPER_ANCHORS.join(' | ')}`);
     }
   }
   let cachePatched = false;
