@@ -129,6 +129,18 @@ function gateToken() {
   try { return fs.readFileSync(GATE_TOKEN_FILE, 'utf8').trim(); } catch { return ''; }
 }
 
+// Node's fetch reports every network failure as "fetch failed"; the reason
+// (ECONNREFUSED, ENOTFOUND, ...) is on error.cause.
+function upstreamErrorMessage(error, upstreamUrl) {
+  const cause = error && error.cause;
+  const code = (cause && (cause.code || cause.message)) || '';
+  if (code === 'ECONNREFUSED') {
+    return `Gate proxy not reachable at ${upstreamUrl} (ECONNREFUSED): start Freebuff Desktop and the freebuff-tailnet-proxy service`;
+  }
+  const base = (error && error.message) || 'Upstream request failed';
+  return code ? `${base}: ${code} (${upstreamUrl})` : base;
+}
+
 function filterUpstreamHeaders(headers) {
   const result = {};
   for (const [name, value] of Object.entries(headers || {})) {
@@ -425,7 +437,9 @@ class RelayAgent {
       this.sendJson({ type: 'http.response.end', id });
     } catch (error) {
       if (!controller.signal.aborted) {
-        this.sendJson({ type: 'http.error', id, message: error.message || 'Upstream request failed' });
+        const detail = upstreamErrorMessage(error, this.upstreamUrl);
+        this.logger('upstream_error', { path: String(message.path || ''), message: detail });
+        this.sendJson({ type: 'http.error', id, message: detail });
       }
     } finally {
       this.httpControllers.delete(id);
@@ -630,4 +644,5 @@ module.exports = {
   parseArgs,
   requestJson,
   runCli,
+  upstreamErrorMessage,
 };

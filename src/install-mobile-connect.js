@@ -1398,6 +1398,12 @@ async function install(options) {
   if (!options.relayHttpUrl) options.relayHttpUrl = existing.relayHttpUrl || null;
   if (!options.relayWsUrl) options.relayWsUrl = existing.relayWsUrl || null;
   if (!options.upstreamUrl) options.upstreamUrl = existing.upstreamUrl || null;
+  // Desktop 0.0.151+ binds a random port and 401s without its launch secret,
+  // so the old direct-orchestrator upstream fails with "fetch failed".
+  if (/^http:\/\/(127\.0\.0\.1|localhost):58060\/?$/.test(options.upstreamUrl || '')) {
+    console.log(`Upstream ${options.upstreamUrl} is the pre-0.0.151 orchestrator port; switching the agent to the Gate proxy ${DEFAULT_UPSTREAM_URL}`);
+    options.upstreamUrl = DEFAULT_UPSTREAM_URL;
+  }
   if (!options.connectorId) options.connectorId = existing.connectorId || null;
   if (!options.agentVersion) options.agentVersion = existing.agentVersion || null;
   if (!options.connectorCredentialFile) options.connectorCredentialFile = existing.connectorCredentialFile || null;

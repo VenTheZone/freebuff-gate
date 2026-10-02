@@ -136,6 +136,17 @@ test('installer preserves existing upstream settings and derives relay WebSocket
   }
 });
 
+test('installer moves a pre-0.0.151 direct orchestrator upstream to the Gate proxy', async () => {
+  const root = tempRoot();
+  try {
+    await install(optionsFor(root, ['--upstream-url', 'http://127.0.0.1:58060']));
+    const upgraded = await install(optionsFor(root));
+    assert.equal(upgraded.config.upstreamUrl, 'http://127.0.0.1:58061');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('installer provisions short-lived connector credentials into protected file', async () => {
   const root = tempRoot();
   try {

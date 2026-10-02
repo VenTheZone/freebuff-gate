@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { RelayAgent } = require('./mobile-connect-agent');
+const { RelayAgent, upstreamErrorMessage } = require('./mobile-connect-agent');
 const { createRelayServer } = require('./mobile-connect-relay');
 const { acceptUpgrade } = require('./mobile-connect-websocket');
 
@@ -262,4 +262,19 @@ test('agent connects through the local relay URL while pairing keeps the public 
     await new Promise((resolve) => relay.close(resolve));
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test('upstream errors carry the network cause instead of a bare "fetch failed"', async () => {
+  const net = require('node:net');
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  const url = `http://127.0.0.1:${port}`;
+  const error = await fetch(url).then(() => null, (e) => e);
+  assert.equal(error.message, 'fetch failed');
+  const message = upstreamErrorMessage(error, url);
+  assert.match(message, /ECONNREFUSED/);
+  assert.match(message, /freebuff-tailnet-proxy/);
+  assert.equal(upstreamErrorMessage(new Error('boom'), url), 'boom');
 });
