@@ -35,7 +35,11 @@ struct PairingPayload: Equatable {
             throw PairingError.invalidUrl("Pairing URL must have a normal HTTPS host")
         }
         guard let fragment = uri.fragment, !fragment.isEmpty else {
-            throw PairingError.invalidUrl("Pairing URL has no token fragment")
+            throw PairingError.invalidUrl(
+                "Pairing URL has no token fragment. This is a browser link (it sets a cookie " +
+                    "in Safari); the app needs the pairing URL printed by " +
+                    "'freebuff-mobile-connect pair' — it ends with #pairingId=...&token=..."
+            )
         }
         var values: [String: String] = [:]
         for part in fragment.split(separator: "&") where !part.isEmpty {
@@ -49,7 +53,9 @@ struct PairingPayload: Equatable {
         let pairingId = values["pairingId"] ?? ""
         let token = values["token"] ?? ""
         guard !pairingId.isEmpty && !token.isEmpty else {
-            throw PairingError.invalidUrl("Pairing URL fragment is incomplete")
+            throw PairingError.invalidUrl(
+                "Pairing URL fragment is incomplete (expected #pairingId=...&token=...)"
+            )
         }
         let base = try PairingApi.normalizeBaseUrl("\(uri.scheme!)://\(uri.host!)\(uri.port.map { ":\($0)" } ?? "")")
         return PairingPayload(baseUrl: base, pairingId: pairingId, token: token)

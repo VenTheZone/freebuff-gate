@@ -973,6 +973,60 @@ test('auto-start defaults and lifecycle is opt-in and command-injectable', () =>
   }
 });
 
+test('windows logon registration falls back to PowerShell when schtasks is denied', () => {
+  // schtasks /SC ONLOGON needs elevation on some Windows setups ("Access is
+  // denied" for standard users); the PowerShell Task Scheduler API registers
+  // the same per-user logon task without admin. The install must survive the
+  // schtasks failure and still register auto-start.
+  const root = tempRoot();
+  try {
+    const calls = [];
+    const execute = (command, args) => {
+      calls.push({ command, args });
+      if (command === 'schtasks.exe') throw new Error('schtasks.exe /Create ... failed: Access is denied.');
+      return true;
+    };
+    const registration = applyAutoStart({
+      platform: 'win32',
+      home: root,
+      env: {},
+      autoStart: true,
+      nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+      runPlatformCommand: execute,
+    }, 'C:\\Users\\tester\\wrapper.js');
+    assert.equal(registration.enabled, true);
+    assert.equal(registration.registrationMethod, 'powershell');
+    const ps = calls.find((call) => call.command === 'powershell.exe');
+    assert.ok(ps, 'powershell fallback was not attempted');
+    assert.ok(/Register-ScheduledTask/.test(ps.args[ps.args.length - 1]));
+    assert.ok(/New-ScheduledTaskTrigger -AtLogOn/.test(ps.args[ps.args.length - 1]));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('windows logon registration failure degrades instead of throwing', () => {
+  // Auto-start is optional garnish: when both schtasks and PowerShell are
+  // unavailable the installer must report and continue, not abort before the
+  // UI patches run (that once left installs half-repaired).
+  const root = tempRoot();
+  try {
+    const execute = () => { throw new Error('denied'); };
+    const registration = applyAutoStart({
+      platform: 'win32',
+      home: root,
+      env: {},
+      autoStart: true,
+      nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+      runPlatformCommand: execute,
+    }, 'C:\\Users\\tester\\wrapper.js');
+    assert.equal(registration.enabled, false);
+    assert.ok(registration.registrationError);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('standalone runtime mode is carried into companion launcher and service', async () => {
   const root = tempRoot();
   try {
