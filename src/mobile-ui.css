@@ -24,7 +24,7 @@
 
 :root {
   --fb-mobile-safe-top: env(safe-area-inset-top, 0px);
-  --fb-mobile-header-height: calc(48px + var(--fb-mobile-safe-top));
+  --fb-mobile-header-height: calc(56px + var(--fb-mobile-safe-top));
 }
 
 /* Freebuff brand green for mobile chrome. The app's own --accent is a
@@ -275,24 +275,31 @@
   .tabbar {
     height: var(--fb-mobile-header-height);
     min-height: var(--fb-mobile-header-height);
-    padding: var(--fb-mobile-safe-top) 4px 0;
+    padding: var(--fb-mobile-safe-top) 6px 0;
+  }
+  .tabbar .tab.home svg,
+  .fb-session-switch svg,
+  .fb-new-session svg,
+  .fb-ctx-fab svg {
+    width: 22px;
+    height: 22px;
   }
   .tabbar .tabs .tab:not(.home):not(.active) {
     display: none;
   }
   .tabbar .tabs .tab.home {
-    flex: 0 0 44px;
-    min-width: 44px;
-    max-width: 44px;
-    height: 44px;
-    margin: 2px 2px;
+    flex: 0 0 48px;
+    min-width: 48px;
+    max-width: 48px;
+    height: 48px;
+    margin: 4px 3px;
     border-radius: 8px;
   }
   .tabbar .tab.active {
     flex: 1 1 auto;
     min-width: 0;
     max-width: none;
-    height: 48px;
+    height: 56px;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
@@ -303,8 +310,8 @@
   }
   .tabbar .tab.active .tab-title {
     height: auto;
-    line-height: 48px;
-    font-size: 14.5px;
+    line-height: 56px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--text);
   }
@@ -331,7 +338,7 @@
     display: none;
   }
   .tabbar .tab.active .tab-time {
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     white-space: nowrap;
   }
@@ -448,8 +455,8 @@
     border-radius: 10px;
   }
   .thread-bottom:has(.fb-composer-pills) > .sponsored-ad.ad-banner {
-    /* 38px pill + 6px gap + 6px breathing room. */
-    margin-bottom: 50px;
+    /* 44px pill + 8px gap + 6px breathing room. */
+    margin-bottom: 58px;
   }
   .thread-bottom > .sponsored-ad.ad-banner .ad-head,
   .thread-bottom > .sponsored-ad.ad-banner .ad-detail {
@@ -1062,15 +1069,15 @@
   align-items: center;
   flex: none;
   gap: 5px;
-  max-width: 82px;
-  height: 30px;
+  max-width: 92px;
+  height: 34px;
   margin: 0 2px;
   padding: 0 7px;
   border: 1px solid var(--fb-m-brand-ring);
   border-radius: 999px;
   background: var(--fb-m-brand-soft);
   color: var(--fb-m-brand);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1;
   white-space: nowrap;
@@ -1110,8 +1117,8 @@
 }
 @media (max-width: 480px) {
   .fb-streaming-indicator {
-    width: 28px;
-    height: 30px;
+    width: 32px;
+    height: 34px;
     justify-content: center;
     padding: 0;
     border-color: transparent;
@@ -1131,9 +1138,9 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -1230,7 +1237,7 @@
   z-index: 55;
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   pointer-events: none;
   overflow: hidden;
@@ -1248,15 +1255,15 @@
   flex: 1 1 0;
   min-width: 0;
   max-width: none;
-  min-height: 38px;
-  gap: 5px;
-  padding: 6px 10px;
+  min-height: 44px;
+  gap: 6px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-2) 90%, transparent);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -1331,9 +1338,9 @@ html.fb-pi-active .global-feedback {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -1367,9 +1374,9 @@ html.fb-pi-active .global-feedback {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -1435,9 +1442,9 @@ html.fb-pi-active .global-feedback {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -1492,9 +1499,9 @@ html.fb-pi-active .global-feedback {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
@@ -2733,9 +2740,9 @@ body {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 44px;
-  height: 44px;
-  margin: 0 2px;
+  width: 48px;
+  height: 48px;
+  margin: 0 4px;
   padding: 0;
   border: 0;
   border-radius: 8px;
