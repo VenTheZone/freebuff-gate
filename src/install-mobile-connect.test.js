@@ -705,6 +705,99 @@ test('applyOrchestratorPatches adds Pi skill dirs to all orchestrator discovery 
   }
 });
 
+test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and renames', () => {
+  // Desktop 0.0.156 renumbers every minified import alias (path11 -> path13,
+  // join25 -> join44, homedir7 -> homedir10), renames getDefaultSkillsDirs to
+  // resolveSkillsDirs with its home parameter renamed home -> homeDir, drops the
+  // trailing comma on the last home entry, and serves HTML through a
+  // documentHeaders(html) factory instead of a static securityHeaders object.
+  // Pinning any of those literals silently skipped the patch on every update.
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const stock = [
+      'function presentedLaunchTokens(x) { return x; }',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, documentHeaders }) {',
+      '  if (extname5(path30).toLowerCase() !== ".html")',
+      '        return new Response(file2);',
+      '  let html2 = await file2.text();',
+      '      return new Response(html2, {',
+      '        headers: { "content-type": "text/html;charset=utf-8", ...documentHeaders(html2) }',
+      '      });',
+      '}',
+      'function resolveSkillsDirs(options2) {',
+      '  let { cwd, skillsPath, homeDir } = options2;',
+      '  return [',
+      '    ...homeDir ? [',
+      '      path13.join(homeDir, ".claude", SKILLS_DIR_NAME),',
+      '      path13.join(homeDir, ".agents", SKILLS_DIR_NAME)',
+      '    ] : [],',
+      '    path13.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path13.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path9.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path9.join(home, ".agents", SKILLS_DIR_NAME),',
+      '  ];',
+      '}',
+      'agentSkillsDirs: [',
+      '          join44(homedir10(), ".claude", "skills"),',
+      '          join44(homedir10(), ".agents", "skills"),',
+      '          join44(root, ".claude", "skills"),',
+      '          join44(root, ".agents", "skills")',
+      '        ],',
+      'personalAgentSkillsDirs: [',
+      '          join44(homedir10(), ".claude", "skills"),',
+      '          join44(homedir10(), ".agents", "skills")',
+      '        ],',
+    ].join('\n');
+    fs.writeFileSync(orchFile, stock);
+
+    const res = applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+
+    assert.deepEqual(res.changes.sort(), ['cache-headers', 'pi-skills']);
+    const out = fs.readFileSync(orchFile, 'utf8');
+    assert.equal(out.split('/* freebuff-pi-skills */').length - 1, 3, 'three insertion markers');
+
+    // Live aliases are reused, not the literal ones from an older build.
+    assert.equal(out.includes('path13.join(homeDir, ".pi", "agent", SKILLS_DIR_NAME)'), true, 'resolveSkillsDirs home pi dir');
+    assert.equal(out.includes('path13.join(cwd, ".pi", SKILLS_DIR_NAME)'), true, 'resolveSkillsDirs cwd pi dir');
+    assert.equal(out.includes('path9.join(home, ".pi", "agent", SKILLS_DIR_NAME)'), true, 'loadSkillFromDisk home pi dir');
+    assert.equal(out.includes('path9.join(projectRoot, ".pi", SKILLS_DIR_NAME)'), true, 'loadSkillFromDisk project pi dir');
+    assert.equal(out.includes('join44(homedir10(), ".pi", "agent", "skills")'), true, 'SkillStore home pi dir');
+    assert.equal(out.includes('join44(root, ".pi", "skills")'), true, 'SkillStore root pi dir');
+
+    // The Pi entries stay inside agentSkillsDirs and the upstream trailing
+    // comma after the closing bracket is preserved verbatim.
+    assert.match(
+      out,
+      /agentSkillsDirs: \[\n(?:.*\n)*?\s+join44\(root, "\.pi", "skills"\),\n\s+join44\(root, "\.agents", "skills"\)\n\s+\],\n/,
+    );
+
+    // Cache headers land on the 0.0.156 documentHeaders shape.
+    assert.equal(out.includes('"cache-control": "no-store"'), true, 'html no-store');
+    assert.equal(out.includes('"public, max-age=31536000, immutable"'), true, 'hashed assets immutable');
+    assert.equal(out.includes('...documentHeaders(html2)'), true, 'documentHeaders spread preserved');
+
+    // Idempotent.
+    const before = fs.readFileSync(orchFile, 'utf8');
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    assert.equal(fs.readFileSync(orchFile, 'utf8'), before, 'idempotent: no changes on re-run');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('applyOrchestratorPatches adds shadowed-skill detection to auto-run request2', () => {
   const root = tempRoot();
   try {
