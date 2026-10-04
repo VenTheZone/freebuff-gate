@@ -1,0 +1,31 @@
+name: freebuff-relay
+
+# Use the existing Tailscale installation on the Windows host. Only the host's
+# loopback address can reach the relay container; Tailscale Serve provides TLS.
+services:
+  relay:
+    image: freebuff-gate-relay:local
+    build:
+      context: ../..
+      dockerfile: docker/relay/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8795:8795"
+    environment:
+      FB_MOBILE_RELAY_HOST: "0.0.0.0"
+      FB_MOBILE_RELAY_PORT: "8795"
+      FB_MOBILE_RELAY_HTTP_URL: "${RELAY_HTTP_URL:?set RELAY_HTTP_URL}"
+      FB_MOBILE_RELAY_WS_URL: "${RELAY_WS_URL:?set RELAY_WS_URL}"
+      FB_MOBILE_RELAY_ENROLLMENT_TOKEN: "${RELAY_ENROLLMENT_TOKEN:?set RELAY_ENROLLMENT_TOKEN}"
+      FB_MOBILE_RELAY_ADMIN_TOKEN: "${RELAY_ADMIN_TOKEN:?set RELAY_ADMIN_TOKEN}"
+    volumes:
+      - relay-state:/home/node/.config/freebuff
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8795/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  relay-state:

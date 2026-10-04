@@ -85,13 +85,14 @@ function discoverMac() {
   return null;
 }
 
-// ponytail: Windows discovers the port only; set FB_LAUNCH_ID by hand until the PS script can read another process's env.
 function discoverWindows() {
   const out = execFileSync('powershell.exe', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
   ], { timeout: 8000, encoding: 'utf8' }).trim();
-  const port = parseInt(out, 10);
-  return port > 0 && port < 65536 ? { port, launchId: process.env.FB_LAUNCH_ID || null } : null;
+  const match = /^(\d{1,5})\|([^|\r\n]+)$/.exec(out);
+  if (!match) return null;
+  const port = Number(match[1]);
+  return port > 0 && port < 65536 ? { port, launchId: process.env.FB_LAUNCH_ID || match[2] } : null;
 }
 
 function discoverOrchestrator() {

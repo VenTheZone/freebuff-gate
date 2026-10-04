@@ -306,6 +306,8 @@ class RelayHub {
     this.cookieName = options.cookieName || COOKIE_NAME;
     this.webSessionTtlMs = options.webSessionTtlMs || WEB_SESSION_TTL_MS;
     this.connectors = new Map();
+    this.lastConnectorChangeAt = null;
+    this.connectorDisconnects = 0;
     this.httpRequests = new Map();
     this.webSockets = new Map();
     this.webSessions = new Map();
@@ -471,11 +473,14 @@ class RelayHub {
     const previous = this.connectors.get(id);
     if (previous && previous !== connection) previous.close(4001, 'Replaced by newer connector');
     this.connectors.set(id, connection);
+    this.lastConnectorChangeAt = new Date(this.now()).toISOString();
     connection.connectorId = id;
     connection.sendJson({ type: 'connector.ready', connectorId: id, protocolVersion: 1 });
     connection.once('close', () => {
       if (this.connectors.get(id) === connection) {
         this.connectors.delete(id);
+        this.lastConnectorChangeAt = new Date(this.now()).toISOString();
+        this.connectorDisconnects += 1;
         this.failConnectorRequests(id, 'Desktop connector disconnected');
         this.failConnectorSockets(id);
         this.stopEventWatcher(id);
@@ -1027,6 +1032,8 @@ function createRelayServer(options = {}) {
             service: 'freebuff-mobile-relay',
             protocolVersion: 1,
             connectors: hub.connectors.size,
+            lastConnectorChangeAt: hub.lastConnectorChangeAt,
+            connectorDisconnects: hub.connectorDisconnects,
           }, requestOptions);
           return;
         }
@@ -1110,7 +1117,11 @@ function createRelayServer(options = {}) {
         }
         if (req.method === 'GET' && pathname === '/v1/devices') {
           hub.requireAdmin(req);
-          sendJson(res, 200, { devices: hub.store.listDevices() }, requestOptions);
+          const devices = hub.store.listDevices().map((device) => {
+            const connectorId = hub.store.getDevice(device.id)?.connectorId;
+            return { ...device, connectorOnline: Boolean(connectorId && hub.connectors.has(connectorId)) };
+          });
+          sendJson(res, 200, { devices }, requestOptions);
           return;
         }
         const revoke = pathname.match(/^\/v1\/devices\/([^/]+)\/revoke$/);

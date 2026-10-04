@@ -186,6 +186,11 @@ test('managed relay exchanges access token for HttpOnly cookie and streams HTTP 
   const relay = await startRelay();
   try {
     const { desktop, desktopMessages, claim } = await pairAndConnect(relay);
+    const devicesOnline = await jsonRequest(`${relay.baseUrl}/v1/devices`, {
+      headers: { authorization: 'Bearer admin-secret' },
+    });
+    assert.equal(devicesOnline.body.devices[0].status, 'paired');
+    assert.equal(devicesOnline.body.devices[0].connectorOnline, true);
     const session = await fetch(`${relay.baseUrl}/v1/mobile/session`, {
       headers: { authorization: `Bearer ${claim.accessToken}` },
     });
@@ -234,7 +239,14 @@ test('managed relay exchanges access token for HttpOnly cookie and streams HTTP 
       chunks.push(Buffer.from(next.value));
     }
     assert.equal(Buffer.concat(chunks).toString('utf8'), 'data: first\n\ndata: second\n\n');
+    const closed = new Promise((resolve) => desktop.addEventListener('close', resolve, { once: true }));
     desktop.close();
+    await closed;
+    const devicesOffline = await jsonRequest(`${relay.baseUrl}/v1/devices`, {
+      headers: { authorization: 'Bearer admin-secret' },
+    });
+    assert.equal(devicesOffline.body.devices[0].status, 'paired');
+    assert.equal(devicesOffline.body.devices[0].connectorOnline, false);
   } finally {
     relay.server.hub.close();
     await new Promise((resolve) => relay.server.close(resolve));
