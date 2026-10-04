@@ -7,6 +7,9 @@ browser, and optional mobile relay and connector.
 
 ## Quick start: pair a phone
 
+For a private relay on the same Windows PC as Freebuff Desktop, follow the
+[Windows host and Tailscale guide](windows/README.md).
+
 The whole phone path in one place. Three pieces are involved: **Freebuff
 Desktop** on the PC (already installed), the **Gate stack** on the PC
 (companion installer below), and the **Gate app** on the phone (Android APK

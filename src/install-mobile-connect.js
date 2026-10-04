@@ -1233,7 +1233,10 @@ function applyPiSkillsPatch(out) {
     if (idx < 0) throw new Error(`orchestrator pi-skills anchor not found (${patch.name})`);
     const insertText = patch.insert(match.groups, out, idx).join('\n');
     const lead = patch.spliceBefore ? '' : '\n';
-    out = `${out.slice(0, idx)}${lead}${insertText}\n${out.slice(idx)}`;
+    // Desktop 0.0.156 dropped the comma after the final home skill dir.
+    // Insertion adds more array elements, so restore that separator.
+    const separator = !patch.spliceBefore && !anchor.endsWith(',') ? ',' : '';
+    out = `${out.slice(0, idx)}${separator}${lead}${insertText}\n${out.slice(idx)}`;
     patched += 1;
   }
   return { out, patched };

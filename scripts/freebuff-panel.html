@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conexões · Freebuff Remoto</title>
+    <link rel="stylesheet" href="/panel.css" />
+    <script src="/panel.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="#/" aria-label="Ir para conexões"
+          ><img class="mark" src="/brand.png" alt="" /><span
+            >Freebuff <strong>Gate</strong></span
+          ></a
+        ><span class="local-tag">Painel local · este PC</span>
+      </header>
+      <div
+        id="notice"
+        class="notice"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
+      <section id="list-page" class="page">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">GERENCIAMENTO</p>
+            <h1>Conexões</h1>
+            <p class="subtitle">Celulares com acesso ao Freebuff neste PC.</p>
+          </div>
+          <a class="button primary" href="#/new">+ Nova conexão</a>
+        </div>
+        <div id="summary" class="summary pending">
+          <span id="summary-dot" class="dot"></span>
+          <div>
+            <strong id="summary-title">Verificando conexão...</strong>
+            <p id="summary-text">Aguarde.</p>
+          </div>
+          <button id="refresh" class="button subtle" type="button">
+            Atualizar
+          </button>
+        </div>
+        <div class="section-heading">
+          <h2>Celulares</h2>
+          <span id="device-count">—</span>
+        </div>
+        <div id="devices" class="devices">
+          <p class="empty">Carregando...</p>
+        </div>
+        <p id="checked-at" class="muted">Verificando...</p>
+      </section>
+      <section id="detail-page" class="page" hidden>
+        <a class="back" href="#/">← Todas as conexões</a>
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">DETALHES DA CONEXÃO</p>
+            <h1 id="detail-name">Celular</h1>
+            <p id="detail-id" class="muted"></p>
+          </div>
+          <span id="detail-status" class="status">Verificando</span>
+        </div>
+        <div id="detail-alert" class="summary" hidden></div>
+        <section class="card">
+          <h2>Esta conexão</h2>
+          <dl class="facts">
+            <div>
+              <dt>Pareamento</dt>
+              <dd id="detail-paired">—</dd>
+            </div>
+            <div>
+              <dt>Último acesso</dt>
+              <dd id="detail-seen">—</dd>
+            </div>
+            <div>
+              <dt>Credencial</dt>
+              <dd id="detail-credential">—</dd>
+            </div>
+            <div>
+              <dt>Conector</dt>
+              <dd id="detail-connector">—</dd>
+            </div>
+          </dl>
+        </section>
+        <section class="card">
+          <h2>Ações</h2>
+          <p class="muted">
+            Reconectar reinicia conector deste PC. Pareamento do celular
+            permanece.
+          </p>
+          <div class="actions">
+            <button id="reconnect" class="button primary" type="button">
+              Reconectar</button
+            ><button id="repair" class="button outline" type="button">
+              Reparar após atualização
+            </button>
+          </div>
+          <p class="muted small">
+            Reparo verifica ponte do Desktop e pode reiniciar Freebuff.
+          </p>
+        </section>
+        <details class="card diagnostics">
+          <summary>Diagnóstico e atualizações</summary>
+          <div id="checks" class="checks"></div>
+          <p id="installation" class="muted small"></p>
+          <p id="watchdog" class="muted small"></p>
+        </details>
+        <section class="card danger">
+          <h2>Remover acesso</h2>
+          <p class="muted">
+            Revogar impede este celular de acessar. Novo acesso exigirá QR.
+          </p>
+          <button id="revoke" class="button danger-button" type="button">
+            Revogar conexão
+          </button>
+        </section>
+      </section>
+      <section id="new-page" class="page" hidden>
+        <a class="back" href="#/">← Todas as conexões</a>
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">NOVO CELULAR</p>
+            <h1>Nova conexão</h1>
+            <p class="subtitle">Crie QR e leia pelo APK Freebuff Gate.</p>
+          </div>
+        </div>
+        <section class="card pair-card">
+          <ol>
+            <li>Abra APK no celular.</li>
+            <li>Toque em <strong>Pair device → Scan QR</strong>.</li>
+            <li>Leia QR abaixo.</li>
+          </ol>
+          <button id="pair" class="button primary" type="button">
+            Criar QR de pareamento
+          </button>
+          <div id="pairing" class="pairing" hidden>
+            <div class="qr-frame">
+              <canvas id="qr" aria-label="QR de pareamento"></canvas>
+            </div>
+            <p id="expires" class="muted"></p>
+            <button id="copy-url" class="button outline" type="button">
+              Copiar link
+            </button>
+          </div>
+        </section>
+      </section>
+      <footer>
+        Verificação automática a cada 15 segundos ·
+        <span id="poll-indicator">Aguardando</span>
+      </footer>
+    </main>
+  </body>
+</html>
