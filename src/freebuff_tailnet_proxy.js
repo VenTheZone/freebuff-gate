@@ -25,12 +25,106 @@ const PORT = Number(process.env.FREEBUFF_PROXY_PORT || 58061);
 // ---- Orchestrator auto-discovery ----
 // The orchestrator picks a random port on every restart, and since Desktop
 // 0.0.151 every /api/ request must carry that launch's secret
-// (x-freebuff-launch-id). Electron hands the secret to the orchestrator only
-// through its spawn environment, so read it from there: the orchestrator is
-// the process whose environment holds FREEBUFF_LAUNCH_ID. Re-checked
-// periodically so the proxy survives orchestrator restarts.
+// (x-freebuff-launch-id). Gate-patched builds publish a protected ready file;
+// older builds expose the secret through the orchestrator spawn environment.
+// Re-check periodically so the proxy survives orchestrator restarts.
 const LAUNCH_HEADER = 'x-freebuff-launch-id';
 const DISCOVER_SCRIPT = path.join(__dirname, 'discover-orchestrator.ps1');
+function defaultOrchestratorReadyFile(
+  platform = process.platform,
+  env = process.env,
+  home = os.homedir(),
+) {
+  if (platform === 'win32') {
+    return path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Freebuff', 'orchestrator-ready.json');
+  }
+  if (platform === 'darwin') {
+    return path.join(home, 'Library', 'Preferences', 'Freebuff', 'orchestrator-ready.json');
+  }
+  return path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'freebuff', 'orchestrator-ready.json');
+}
+const ORCHESTRATOR_READY_FILE = process.env.FB_ORCHESTRATOR_READY_FILE
+  || defaultOrchestratorReadyFile();
+
+// Desktop 0.0.162 moved launch secrets from the child environment to a
+// one-shot stdin bootstrap. The patched orchestrator writes only its current
+// pid/port/launch id to this 0600 file, which also works on macOS and Windows.
+function orchestratorProcessMatches(pid, port, platform = process.platform) {
+  try {
+    process.kill(pid, 0);
+    if (platform === 'linux') {
+      const command = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      return /(?:^|\0)[^\0]*orchestrator\.js(?:\0|$)/.test(command)
+        && linuxListenPorts(pid).includes(port);
+    }
+    if (platform === 'darwin') {
+      const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+        timeout: 3000,
+        encoding: 'utf8',
+      });
+      if (!command.includes('orchestrator.js')) return false;
+      const listeners = execFileSync('lsof', [
+        '-nP', '-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN', '-Fn',
+      ], { timeout: 3000, encoding: 'utf8' });
+      return new RegExp(`:${port}(?:\\n|$)`).test(listeners);
+    }
+    if (platform === 'win32') {
+      const command = execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
+      ], { timeout: 3000, encoding: 'utf8' });
+      if (!/orchestrator\.js/i.test(command)) return false;
+      const listeners = execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `(Get-NetTCPConnection -State Listen -OwningProcess ${pid} -ErrorAction SilentlyContinue).LocalPort`,
+      ], { timeout: 3000, encoding: 'utf8' });
+      return listeners.split(/\s+/).some((value) => Number(value) === port);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function discoverReadyFile(file = ORCHESTRATOR_READY_FILE, validateProcess = orchestratorProcessMatches) {
+  try {
+    const stat = fs.statSync(file);
+    if (typeof process.getuid === 'function') {
+      if (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) return null;
+    }
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const pid = Number(value.pid);
+    const port = Number(value.port);
+    const id = typeof value.launchId === 'string' ? value.launchId : '';
+    if (!Number.isInteger(pid) || pid < 1) return null;
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !id) return null;
+    if (!validateProcess(pid, port)) return null;
+    return { pid, port, launchId: id };
+  } catch {
+    return null;
+  }
+}
+
+function discoverReadyFiles(base = ORCHESTRATOR_READY_FILE, isAlive) {
+  const ext = path.extname(base);
+  const stem = path.basename(base, ext);
+  const files = [base];
+  try {
+    for (const name of fs.readdirSync(path.dirname(base))) {
+      if (name.startsWith(`${stem}-`) && name.endsWith(ext)) {
+        files.push(path.join(path.dirname(base), name));
+      }
+    }
+  } catch {}
+  let newest = null;
+  for (const file of files) {
+    const found = discoverReadyFile(file, isAlive);
+    if (found && (!newest || found.pid > newest.pid)) newest = found;
+  }
+  return newest;
+}
 
 function linuxListenPorts(pid) {
   const inodes = new Set();
@@ -85,7 +179,8 @@ function discoverMac() {
   return null;
 }
 
-// ponytail: Windows discovers the port only; set FB_LAUNCH_ID by hand until the PS script can read another process's env.
+// Unpatched Windows builds discover only the port; patched builds use the
+// cross-platform protected ready file above.
 function discoverWindows() {
   const out = execFileSync('powershell.exe', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DISCOVER_SCRIPT
@@ -96,6 +191,8 @@ function discoverWindows() {
 
 function discoverOrchestrator() {
   try {
+    const ready = discoverReadyFiles();
+    if (ready) return ready;
     if (process.platform === 'linux') return discoverLinux();
     if (process.platform === 'darwin') return discoverMac();
     if (process.platform === 'win32') return discoverWindows();
@@ -105,7 +202,7 @@ function discoverOrchestrator() {
 
 const FREEBUFF_UPSTREAM_ENV = process.env.FREEBUFF_UPSTREAM;
 const initialDiscovery = FREEBUFF_UPSTREAM_ENV ? null : discoverOrchestrator();
-let launchId = process.env.FB_LAUNCH_ID || (initialDiscovery && initialDiscovery.launchId) || null;
+let launchId = (initialDiscovery && initialDiscovery.launchId) || process.env.FB_LAUNCH_ID || null;
 const UPSTREAM = FREEBUFF_UPSTREAM_ENV || (initialDiscovery ? `http://127.0.0.1:${initialDiscovery.port}` : 'http://127.0.0.1:58060');
 
 function withLaunchId(headers) {
@@ -1255,7 +1352,7 @@ function createProxyServer(options = {}) {
     const found = discoverOrchestrator();
     if (!found) return false;
     const moved = String(found.port) !== String(up.port) || (found.launchId && found.launchId !== launchId);
-    if (found.launchId && !process.env.FB_LAUNCH_ID) launchId = found.launchId;
+    if (found.launchId) launchId = found.launchId;
     if (String(found.port) !== String(up.port)) {
       console.log(`[proxy] orchestrator port changed ${up.port} -> ${found.port}`);
       up = new URL(`http://127.0.0.1:${found.port}`);
@@ -1831,9 +1928,13 @@ module.exports = {
   checkUiPatches,
   checkGate,
   createProxyServer,
+  defaultOrchestratorReadyFile,
+  discoverReadyFile,
+  discoverReadyFiles,
   loadOrCreateGateToken,
   rehashCsp,
   GATE_TOKEN_FILE,
+  ORCHESTRATOR_READY_FILE,
   patchBundle,
   patchBundleInfo,
   UI_SOURCE_SIDECAR,

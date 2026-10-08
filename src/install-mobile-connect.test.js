@@ -14,6 +14,7 @@ const {
   CLOSE_MARK2,
   CLOSE_MARK3,
   CREATE_REUSE,
+  OPEN_THREAD_MARK,
   SCROLL_MARK,
   SETSTATE_MARK,
   SKILL_ORIGIN_MARK,
@@ -326,7 +327,7 @@ function fakeDesktop(root) {
   const uiDir = path.join(orchRoot, 'ui');
   const assets = path.join(uiDir, 'assets');
   fs.mkdirSync(assets, { recursive: true });
-  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};};`;
+  const stockBundle = `const APP_BOOT=()=>{${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${OPEN_THREAD_MARK};${SKILL_ORIGIN_MARK};};`;
   fs.writeFileSync(path.join(assets, 'index-ABC.js'), stockBundle);
   fs.writeFileSync(path.join(uiDir, 'index.html'), `<!doctype html><head><title>t</title></head><body></body></html>`);
   const stockOrch = [
@@ -635,7 +636,7 @@ test('ui: missing patch anchors fail loudly instead of silently regressing', asy
       /did not match any patch anchor/,
     );
 
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${OPEN_THREAD_MARK};${SKILL_ORIGIN_MARK};`);
     fs.writeFileSync(path.join(fake.orchRoot, 'orchestrator.js'), 'const m=42;');
     assert.throws(
       () => installUiStack(options, {}, { runPlatformCommand }),
@@ -690,9 +691,9 @@ test('applyOrchestratorPatches adds Pi skill dirs to all orchestrator discovery 
     });
 
     const out = fs.readFileSync(orchFile, 'utf8');
-    // The SkillStore splice keeps the closing entry (comma-less, last)
-    // structurally intact after the new Pi entries.
-    assert.equal(out.includes('          join25(root, ".pi", "skills"),\n          join25(root, ".agents", "skills")\n        ]'), true, 'pi root entry sits before the closing agentSkillsDirs entry');
+    // SkillStore merges later directories over earlier ones, so Pi follows
+    // the stock .agents entry and the resulting array remains valid.
+    assert.equal(out.includes('          join25(root, ".agents", "skills"),\n          join25(root, ".pi", "skills"),\n        ]'), true, 'pi root entry follows the closing agentSkillsDirs entry');
     // Pi entries appear in all three discovery points.
     assert.equal(out.includes('path11.join(home, ".pi", "agent", SKILLS_DIR_NAME)'), true, 'home pi dir in getDefaultSkillsDirs');
     assert.equal(out.includes('path11.join(cwd, ".pi", SKILLS_DIR_NAME)'), true, 'cwd pi dir in getDefaultSkillsDirs');
@@ -728,6 +729,8 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
     const orchFile = path.join(root, 'orchestrator.js');
     const stock = [
       'function presentedLaunchTokens(x) { return x; }',
+      'const LAUNCH_ID = "test", serverPort = 1234;',
+      'console.log(`[orchestrator-ready] ${JSON.stringify({ launchId: LAUNCH_ID, pid: process.pid, port: serverPort })}`);',
       'async function serveSpa(pathname, { uiDir, reportMissingAsset, documentHeaders }) {',
       '  if (extname5(path30).toLowerCase() !== ".html")',
       '        return new Response(file2);',
@@ -753,6 +756,7 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
       '    path9.join(home, ".agents", SKILLS_DIR_NAME),',
       '  ];',
       '}',
+      'const config = {',
       'agentSkillsDirs: [',
       '          join44(homedir10(), ".claude", "skills"),',
       '          join44(homedir10(), ".agents", "skills"),',
@@ -763,6 +767,7 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
       '          join44(homedir10(), ".claude", "skills"),',
       '          join44(homedir10(), ".agents", "skills")',
       '        ],',
+      '};',
     ].join('\n');
     fs.writeFileSync(orchFile, stock);
 
@@ -772,7 +777,7 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
       perfProbePath: path.join(root, 'perf-probe.js'),
     });
 
-    assert.deepEqual(res.changes.sort(), ['cache-headers', 'pi-skills']);
+    assert.deepEqual(res.changes.sort(), ['cache-headers', 'pi-skills', 'ready-file']);
     const out = fs.readFileSync(orchFile, 'utf8');
     assert.equal(out.split('/* freebuff-pi-skills */').length - 1, 3, 'three insertion markers');
 
@@ -788,13 +793,15 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
     // comma after the closing bracket is preserved verbatim.
     assert.match(
       out,
-      /agentSkillsDirs: \[\n(?:.*\n)*?\s+join44\(root, "\.pi", "skills"\),\n\s+join44\(root, "\.agents", "skills"\)\n\s+\],\n/,
+      /agentSkillsDirs: \[\n(?:.*\n)*?\s+join44\(root, "\.agents", "skills"\),\n\s+join44\(root, "\.pi", "skills"\),\n\s+\],\n/,
     );
 
     // Cache headers land on the 0.0.156 documentHeaders shape.
     assert.equal(out.includes('"cache-control": "no-store"'), true, 'html no-store');
     assert.equal(out.includes('"public, max-age=31536000, immutable"'), true, 'hashed assets immutable');
     assert.equal(out.includes('...documentHeaders(html2)'), true, 'documentHeaders spread preserved');
+    assert.equal(out.includes('/* freebuff-gate-ready-file-v3 */'), true, 'secure discovery file published');
+    assert.doesNotThrow(() => new Function(out), 'patched orchestrator remains valid JavaScript');
 
     // Idempotent.
     const before = fs.readFileSync(orchFile, 'utf8');
@@ -804,6 +811,93 @@ test('applyOrchestratorPatches survives Desktop 0.0.156 alias renumbering and re
       perfProbePath: path.join(root, 'perf-probe.js'),
     });
     assert.equal(fs.readFileSync(orchFile, 'utf8'), before, 'idempotent: no changes on re-run');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyOrchestratorPatches keeps Desktop 0.0.162 skill arrays valid', () => {
+  const root = tempRoot();
+  try {
+    const orchFile = path.join(root, 'orchestrator.js');
+    const stock = [
+      'function presentedLaunchTokens(x) { return x; }',
+      'const LAUNCH_ID = "test", serverPort = 1234;',
+      'console.log(`[orchestrator-ready] ${JSON.stringify({ launchId: LAUNCH_ID, pid: process.pid, port: serverPort })}`);',
+      'async function serveSpa(pathname, { uiDir, reportMissingAsset, documentHeaders }) {',
+      '  if (extname7(path30).toLowerCase() !== ".html")',
+      '    return new Response(file2);',
+      '  let html2 = "";',
+      '  return new Response(html2, {',
+      '    headers: { "content-type": "text/html;charset=utf-8", ...documentHeaders(html2) }',
+      '  });',
+      '}',
+      'function resolveSkillsDirs(options2) {',
+      '  let { cwd, skillsPath, homeDir } = options2;',
+      '  if (skillsPath) return [skillsPath];',
+      '  return [',
+      '    ...homeDir ? [',
+      '      path13.join(homeDir, ".claude", SKILLS_DIR_NAME),',
+      '      path13.join(homeDir, ".agents", SKILLS_DIR_NAME)',
+      '    ] : [],',
+      '    path13.join(cwd, ".claude", SKILLS_DIR_NAME),',
+      '    path13.join(cwd, ".agents", SKILLS_DIR_NAME)',
+      '  ];',
+      '}',
+      'async function loadSkillFromDisk(projectRoot, skillName, includeHomeSkills) {',
+      '  let home = os2.homedir(), skillsDirs = [',
+      '    path7.join(projectRoot, ".agents", SKILLS_DIR_NAME),',
+      '    path7.join(projectRoot, ".claude", SKILLS_DIR_NAME),',
+      '    ...includeHomeSkills ? [',
+      '      path7.join(home, ".agents", SKILLS_DIR_NAME),',
+      '      path7.join(home, ".claude", SKILLS_DIR_NAME)',
+      '    ] : []',
+      '  ];',
+      '}',
+      'const config = {',
+      '  agentSkillsDirs: [',
+      '    join53(homedir11(), ".claude", "skills"),',
+      '    join53(homedir11(), ".agents", "skills"),',
+      '    join53(root, ".claude", "skills"),',
+      '    join53(root, ".agents", "skills")',
+      '  ],',
+      '  personalAgentSkillsDirs: []',
+      '};',
+    ].join('\n');
+    fs.writeFileSync(orchFile, stock);
+
+    const res = applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+
+    assert.deepEqual(res.changes.sort(), ['cache-headers', 'pi-skills', 'ready-file']);
+    const out = fs.readFileSync(orchFile, 'utf8');
+    assert.doesNotThrow(() => new Function(out), '0.0.162 patch output parses');
+    assert.equal(out.split('/* freebuff-pi-skills */').length - 1, 3);
+    assert.equal(out.split('path7.join(projectRoot, ".pi", SKILLS_DIR_NAME)').length - 1, 1);
+    assert.equal(out.split('path7.join(home, ".pi", "agent", SKILLS_DIR_NAME)').length - 1, 1);
+    assert.equal(out.split('join53(root, ".agents", "skills")').length - 1, 1);
+    assert.equal(out.includes('"public, max-age=31536000, immutable"'), true);
+    assert.match(out, /orchestrator-ready-" \+ process\.pid \+ "\.json/);
+
+    const before = out;
+    applyOrchestratorPatches(orchFile, {
+      configDir: path.join(root, 'config'),
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    assert.equal(fs.readFileSync(orchFile, 'utf8'), before, 'idempotent');
+
+    const movedConfig = path.join(root, 'moved-config');
+    const moved = applyOrchestratorPatches(orchFile, {
+      configDir: movedConfig,
+      uploadsDir: path.join(root, 'uploads'),
+      perfProbePath: path.join(root, 'perf-probe.js'),
+    });
+    assert.equal(moved.changes.includes('ready-file'), true, 'config path change updates publisher');
+    assert.equal(fs.readFileSync(orchFile, 'utf8').includes(path.join(movedConfig, 'orchestrator-ready-')), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -943,7 +1037,7 @@ test('verify: reports healthy stack, then fails loudly on each wiped patch', asy
     assert.match(report.errors[0].message, /CREATE_REUSE/);
 
     // Shim tag missing.
-    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${SKILL_ORIGIN_MARK};`);
+    fs.writeFileSync(path.join(fake.uiDir, 'assets', 'index-ABC.js'), `const x=${CREATE_MARK};${SETSTATE_MARK};${SCROLL_MARK};${CLOSE_MARK1};${CLOSE_MARK2};${CLOSE_MARK3};${CLOSE_BTN_MARK};${OPEN_THREAD_MARK};${SKILL_ORIGIN_MARK};`);
     fs.writeFileSync(path.join(fake.uiDir, 'index.html'), '<!doctype html><head></head></html>');
     report = verifyUiStack(options);
     assert.equal(report.ok, false);

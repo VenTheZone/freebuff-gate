@@ -976,16 +976,21 @@ function applyBundlePatch(bundleFile) {
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
     proxy.CLOSE_BTN_FIX,
+    proxy.OPEN_THREAD_FIX,
     proxy.SKILL_ORIGIN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN', 'OPEN_THREAD', 'SKILL_ORIGIN_FIX'];
   const already = fixed.every((mark) => body.includes(mark));
   if (already) return { file: bundleFile, outcome: 'already-patched' };
   const info = proxy.patchBundleInfo(body);
   if (info.recognized && info.body === body && info.obsolete.length > 0) return { file: bundleFile, outcome: 'obsolete' };
   const patched = info.body;
   if (patched === body) throw new Error(`bundle did not match any patch anchor: ${bundleFile} (app updated its bundle; update the patch anchors)`);
-  const stillMissing = names.filter((mark, index) => !patched.includes(fixed[index]));
+  const obsolete = new Set(info.obsolete || []);
+  const stillMissing = names.filter((mark, index) => {
+    if (patched.includes(fixed[index])) return false;
+    return !obsolete.has(mark) && !obsolete.has(`${mark}_FIX`);
+  });
   if (stillMissing.length > 0) throw new Error(`bundle patch incomplete after apply; missing markers: ${stillMissing.join(', ')}`);
   writeAtomically(bundleFile, patched, 0o644);
   return { file: bundleFile, outcome: 'patched' };
@@ -1108,6 +1113,10 @@ const ORCH_ROUTE_ANCHOR_RE = new RegExp(
 );
 const LAUNCH_GUARD_MARK = 'function presentedLaunchTokens(';
 const ORCH_HELPER_MARK = 'async function injectPerfProbe(';
+const ORCH_READY_FILE_MARK = '/* freebuff-gate-ready-file-v3 */';
+const ORCH_READY_FILE_END = '/* /freebuff-gate-ready-file-v3 */';
+const ORCH_READY_ANCHOR =
+  'console.log(`[orchestrator-ready] ${JSON.stringify({ launchId: LAUNCH_ID, pid: process.pid, port: serverPort })}`);';
 // Desktop 0.0.156 replaced the inline `securityHeaders` object with a
 // `documentHeaders(html)` factory, so serveSpa's signature churns. Try every
 // known shape and fail loudly only when none of them is present.
@@ -1154,89 +1163,96 @@ const SHADOW_NOTE_FIX =
   'enqueueAutorunInputs(id2, decision) {\n    let thread = this.threads.get(id2), note = [\n      decision.why.trim(),\n      decision.declined.length ? `Declined: ${decision.declined.join("; ")}` : ""\n    ].filter(Boolean).join(`\n`), rejected = [], rows = [], position = this.queue.maxPosition(id2, "queued"), createdAt = Date.now();\n    let shadowNote = /* freebuff-shadow-note */ decision.inputs.map((i) => i.skillName).filter(Boolean).filter((n) => BUILTIN_DECISION_SKILLS.has(n) && this.deps.skills.list(this.root).some((s) => s.name === n && s.source !== "managed"));\n    if (shadowNote.length) note = [note, `NOTE: ${shadowNote.join(", ")} is a user-installed skill that shadows the built-in ${shadowNote.length === 1 ? "decision skill" : "decision skills"}; the user version runs instead.`].filter(Boolean).join(`\n`);';
 
 // Order encodes the conflict policy (docs/planning/pi-mode/skill-conflicts.md):
-// `.pi` beats `.agents` at the same level, project beats home. The insertions
-// land the Pi dirs BEFORE the `.agents` entries in each array.
-// Desktop rebuilds renumber every minified import alias (path11 -> path13,
-// join25 -> join44, homedir7 -> homedir10) and upstream also renames the
-// surrounding variables (getDefaultSkillsDirs -> resolveSkillsDirs, and its
-// home parameter home -> homeDir in 0.0.156). Pinning a literal alias broke the
-// patch on every app update, so each anchor is now a regex that captures the
-// live aliases and is scoped to its enclosing function, and each insertion is a
-// builder over those captures.
+// `.pi` beats `.agents` at the same level, project beats home. SDK/SkillStore
+// merge later directories over earlier ones; loadSkillFromDisk returns the
+// first match. Place each Pi entry on the winning side for that consumer.
+//
+// Keep edits scoped to the three owning arrays. Desktop 0.0.162 added
+// includeHomeSkills conditionals; inserting both entries after one `.agents`
+// line put project Pi inside the home conditional and omitted a comma, making
+// orchestrator.js invalid JavaScript.
 const PI_SKILLS_PATCHES = [
   {
-    // sdk resolveSkillsDirs (called getDefaultSkillsDirs before Desktop 0.0.156)
     name: 'sdk resolveSkillsDirs',
-    regex: /(function (?:resolveSkillsDirs|getDefaultSkillsDirs)\([^)]*\) \{[\s\S]{0,800}?)(?<a>path\d+)\.join\((?<home>home\w*), "\.agents", SKILLS_DIR_NAME\),?/,
-    insert: ({ a, home }) => [
-      '/* freebuff-pi-skills */',
-      `    ${a}.join(${home}, ".pi", "agent", SKILLS_DIR_NAME),`,
-      `    ${a}.join(cwd, ".pi", SKILLS_DIR_NAME),`,
+    scope: /function (?:resolveSkillsDirs|getDefaultSkillsDirs)\([^)]*\) \{[\s\S]{0,1600}?\n\s{2}\];/,
+    edits: [
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>path\d+)\.join\((?<base>home\w*), "\.agents", SKILLS_DIR_NAME\),?/m,
+        entry: ({ a, base }) => `${a}.join(${base}, ".pi", "agent", SKILLS_DIR_NAME)`,
+        after: true,
+        marker: true,
+      },
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>path\d+)\.join\((?<base>cwd), "\.agents", SKILLS_DIR_NAME\),?/m,
+        entry: ({ a, base }) => `${a}.join(${base}, ".pi", SKILLS_DIR_NAME)`,
+        after: true,
+      },
     ],
   },
   {
-    // agent-runtime skill handler loadSkillFromDisk
     name: 'runtime loadSkillFromDisk',
-    regex: /(async function loadSkillFromDisk\([^)]*\) \{[\s\S]{0,800}?)(?<a>path\d+)\.join\((?<home>home\w*), "\.agents", SKILLS_DIR_NAME\),?/,
-    insert: ({ a, home }) => [
-      '/* freebuff-pi-skills */',
-      `    ${a}.join(${home}, ".pi", "agent", SKILLS_DIR_NAME),`,
-      `    ${a}.join(projectRoot, ".pi", SKILLS_DIR_NAME),`,
+    scope: /async function loadSkillFromDisk\([^)]*\) \{[\s\S]{0,1600}?\n\s{2}\];/,
+    edits: [
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>path\d+)\.join\((?<base>projectRoot), "\.agents", SKILLS_DIR_NAME\),?/m,
+        entry: ({ a, base }) => `${a}.join(${base}, ".pi", SKILLS_DIR_NAME)`,
+        marker: true,
+      },
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>path\d+)\.join\((?<base>home\w*), "\.agents", SKILLS_DIR_NAME\),?/m,
+        entry: ({ a, base }) => `${a}.join(${base}, ".pi", "agent", SKILLS_DIR_NAME)`,
+      },
     ],
   },
   {
-    // SkillStore.store agentSkillsDirs. The orchestrator lays this array out
-    // with the project entries last; Pi dirs must outrank `.agents`, which the
-    // merge order encodes (later wins). The anchor spans the element's leading
-    // indentation plus the element and its closing bracket: the bare element
-    // would also prefix-match the createSkillsDir line, and dropping the indent
-    // would double it on the first inserted line. The Pi entries go in front of
-    // the last element, so its suffix (`,`, newline, close bracket) stays
-    // attached and valid inside the array. The close bracket gained a trailing
-    // comma in 0.0.156; it is matched but never rewritten.
     name: 'SkillStore agentSkillsDirs',
-    regex: /(?<pad>[ \t]*)(?<a>join\d+)\(root, "\.agents", "skills"\)\n(?<ci>[ \t]*)\]/,
-    insert: ({ a, pad }, out, idx) => {
-      // homedir is aliased too; reuse the alias from the same store config.
-      const before = out.slice(Math.max(0, idx - 600), idx);
-      const hd = (/(homedir\d+)\(\)/.exec(before) || [, 'homedir'])[1];
-      return [
-        `${pad}${a}(root, ".agents", "skills"),`,
-        `${pad}/* freebuff-pi-skills */`,
-        `${pad}${a}(${hd}(), ".pi", "agent", "skills"),`,
-        `${pad}${a}(root, ".pi", "skills"),`,
-      ];
-    },
-    spliceBefore: true,
+    scope: /agentSkillsDirs: \[[\s\S]{0,800}?\n[ \t]*\]/,
+    edits: [
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>join\d+)\((?<base>homedir\d+)\(\), "\.agents", "skills"\),?/m,
+        entry: ({ a, base }) => `${a}(${base}(), ".pi", "agent", "skills")`,
+        after: true,
+        marker: true,
+      },
+      {
+        anchor: /(?<pad>^[ \t]*)(?<a>join\d+)\((?<base>root), "\.agents", "skills"\),?/m,
+        entry: ({ a, base }) => `${a}(${base}, ".pi", "skills")`,
+        after: true,
+      },
+    ],
   },
 ];
 
-// Inserts the Pi skill dirs into `out` at every anchor. Returns the updated
-// string plus the number of anchors actually patched (0 when already marked).
-// Inserts the Pi skill dirs into `out` at every anchor. Returns the updated
-// string plus the number of anchors actually patched (0 when already marked).
+function patchPiScope(scope, patch) {
+  for (const edit of patch.edits) {
+    const match = edit.anchor.exec(scope);
+    if (!match) {
+      throw new Error(`orchestrator pi-skills anchor not found (${patch.name}); expected /${edit.anchor.source.slice(0, 80)}…/`);
+    }
+    const pad = match.groups.pad;
+    const mark = edit.marker ? `${pad}${PI_SKILLS_MARK}\n` : '';
+    const entry = `${pad}${edit.entry(match.groups)},`;
+    let anchor = match[0];
+    if (edit.after && !anchor.trimEnd().endsWith(',')) anchor += ',';
+    const replacement = edit.after
+      ? `${anchor}\n${mark}${entry}`
+      : `${mark}${entry}\n${anchor}`;
+    scope = `${scope.slice(0, match.index)}${replacement}${scope.slice(match.index + match[0].length)}`;
+  }
+  return scope;
+}
+
 function applyPiSkillsPatch(out) {
   if (out.includes(PI_SKILLS_MARK)) return { out, patched: 0 };
-  let patched = 0;
   for (const patch of PI_SKILLS_PATCHES) {
-    const match = patch.regex.exec(out);
+    const match = patch.scope.exec(out);
     if (!match) {
-      throw new Error(`orchestrator pi-skills anchor not found (${patch.name}); expected /${patch.regex.source.slice(0, 80)}…/`);
+      throw new Error(`orchestrator pi-skills anchor not found (${patch.name}); expected /${patch.scope.source.slice(0, 80)}…/`);
     }
-    const anchor = match[0];
-    // spliceBefore: take the LAST occurrence, which is always the final
-    // element of agentSkillsDirs, and splice in front of it so its suffix
-    // (`,`, newline, close bracket) stays attached and valid inside the array.
-    // Every other anchor is a prefix of the line it decorates, so the
-    // insertion goes immediately after it.
-    const idx = patch.spliceBefore ? out.lastIndexOf(anchor) : match.index + anchor.length;
-    if (idx < 0) throw new Error(`orchestrator pi-skills anchor not found (${patch.name})`);
-    const insertText = patch.insert(match.groups, out, idx).join('\n');
-    const lead = patch.spliceBefore ? '' : '\n';
-    out = `${out.slice(0, idx)}${lead}${insertText}\n${out.slice(idx)}`;
-    patched += 1;
+    const scope = patchPiScope(match[0], patch);
+    out = `${out.slice(0, match.index)}${scope}${out.slice(match.index + match[0].length)}`;
   }
-  return { out, patched };
+  return { out, patched: PI_SKILLS_PATCHES.length };
 }
 
 // Best-effort serveSpa cache-header candidates (stock -> patched). The stock
@@ -1344,6 +1360,18 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
     }
   }
   let cachePatched = false;
+  // Hashed-asset response shape is stable, but minified aliases churn on each
+  // Desktop build (extname5 -> extname7 in 0.0.162). Capture live aliases.
+  const immutableAsset = /(if \(extname\d+\(([^)\n]+)\)\.toLowerCase\(\) !== "\.html"\)\n)([ \t]*)return new Response\(([A-Za-z_$][\w$]*)\);/.exec(out);
+  if (immutableAsset) {
+    const [stock, condition, , pad, file] = immutableAsset;
+    out = out.replace(
+      stock,
+      `${condition}${pad}return new Response(${file}, { headers: { "cache-control": "public, max-age=31536000, immutable" } });`,
+    );
+    bestEffort.push(`cache:${stock.slice(0, 60)}`);
+    cachePatched = true;
+  }
   for (const [stock, patched] of SERVE_SPA_CACHE_CANDIDATES) {
     if (out.includes(stock)) {
       out = out.split(stock).join(patched);
@@ -1352,6 +1380,54 @@ function applyOrchestratorPatches(orchestratorFile, { configDir, uploadsDir, per
     }
   }
   if (cachePatched) performed.push('cache-headers');
+  if (out.includes(LAUNCH_GUARD_MARK)) {
+    if (!out.includes(ORCH_READY_ANCHOR)) {
+      throw new Error('orchestrator ready-file anchor not found; expected the orchestrator-ready announcement');
+    }
+    const readyPrefix = path.join(configDir, 'orchestrator-ready-');
+    const readyDir = path.dirname(readyPrefix);
+    const readySource = `${ORCH_READY_FILE_MARK}
+void (async () => {
+  try {
+    let { mkdir, writeFile, chmod, readdir, unlink } = await import("fs/promises");
+    let readyFile = ${JSON.stringify(readyPrefix)} + process.pid + ".json";
+    await mkdir(${JSON.stringify(readyDir)}, { recursive: true, mode: 448 });
+    await writeFile(readyFile, JSON.stringify({ launchId: LAUNCH_ID, pid: process.pid, port: serverPort }) + "\\n", { mode: 384 });
+    await chmod(readyFile, 384);
+    for (let name of await readdir(${JSON.stringify(readyDir)})) {
+      if (!name.startsWith("orchestrator-ready-") || !name.endsWith(".json"))
+        continue;
+      let otherPid = Number(name.slice(19, -5));
+      if (!Number.isInteger(otherPid) || otherPid === process.pid)
+        continue;
+      try {
+        process.kill(otherPid, 0);
+      } catch {
+        try {
+          await unlink(${JSON.stringify(`${readyDir}/`)} + name);
+        } catch {
+        }
+      }
+    }
+  } catch (error47) {
+    console.error("[freebuff-gate] ready-file publish failed: " + (error47 instanceof Error ? error47.message : String(error47)));
+  }
+})();
+${ORCH_READY_FILE_END}`;
+    const start = out.indexOf(ORCH_READY_FILE_MARK);
+    if (start >= 0) {
+      const end = out.indexOf(ORCH_READY_FILE_END, start);
+      if (end < 0) throw new Error('orchestrator ready-file patch is incomplete; closing marker missing');
+      const current = out.slice(start, end + ORCH_READY_FILE_END.length);
+      if (current !== readySource) {
+        out = `${out.slice(0, start)}${readySource}${out.slice(end + ORCH_READY_FILE_END.length)}`;
+        performed.push('ready-file');
+      }
+    } else {
+      out = out.replace(ORCH_READY_ANCHOR, `${readySource}\n${ORCH_READY_ANCHOR}`);
+      performed.push('ready-file');
+    }
+  }
   const piPatch = (() => {
     // ponytail: pi-skills anchors renamed in Desktop 0.0.71 — best-effort,
     // skip instead of failing the routes/shim patch (upgrade path: refresh
@@ -1536,6 +1612,9 @@ async function install(options) {
     try { fs.writeFileSync(options.configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 }); } catch {}
   }
   printInstallSummary(options, config, paths);
+  if (uiStack.restartRequired) {
+    console.warn('Restart Freebuff Desktop now: the running orchestrator cannot publish its protected Gate discovery record until it relaunches.');
+  }
   return { changed: true, dryRun: false, config, paths, autoStart, piAssets, uiStack };
 }
 
@@ -1579,7 +1658,15 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
   const changes = orchResult.changes;
   results.applied.push(`orchestrator:${changes.includes('routes') || changes.includes('perf-helper') || changes.includes('cache-headers') ? changes.join(',') : 'already-patched'}`);
   results.bestEffort = orchResult.bestEffort || [];
-  return { enabled: true, desktopDir, configDir, uiDir, proxyUnit: registration.file, ...results };
+  return {
+    enabled: true,
+    desktopDir,
+    configDir,
+    uiDir,
+    proxyUnit: registration.file,
+    restartRequired: changes.includes('ready-file'),
+    ...results,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1605,9 +1692,10 @@ function collectProblems(desktopDir, options = {}) {
     proxy.CLOSE_FIX2,
     proxy.CLOSE_FIX3,
     proxy.CLOSE_BTN_FIX,
+    proxy.OPEN_THREAD_FIX,
     proxy.SKILL_ORIGIN_FIX,
   ];
-  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'];
+  const names = ['CREATE_REUSE', 'SETSTATE_FIX', 'SCROLL_FIX', 'CLOSE_FIX1', 'CLOSE_FIX2', 'CLOSE_FIX3', 'CLOSE_BTN', 'OPEN_THREAD', 'SKILL_ORIGIN_FIX'];
 
   let bundles = [];
   try {
@@ -1640,7 +1728,12 @@ function collectProblems(desktopDir, options = {}) {
     const patched = proxy.patchBundleInfo(body);
     body = patched.body;
     const obsolete = patched.obsolete || [];
-    const missing = names.filter((mark, index) => !body.includes(fixed[index]) && !obsolete.includes(names[index]));
+    const obsoleteSet = new Set(obsolete);
+    const missing = names.filter((mark, index) =>
+      !body.includes(fixed[index]) &&
+      !obsoleteSet.has(mark) &&
+      !obsoleteSet.has(`${mark}_FIX`),
+    );
     if (missing.length > 0) {
       problems.push({
         level: 'error',
@@ -1675,6 +1768,9 @@ function collectProblems(desktopDir, options = {}) {
     // dirlist is served by the tailnet proxy; only on-disk routes below.
     // Launch-guarded orchestrators (0.0.151+) get these from the proxy only.
     const guarded = src.includes(LAUNCH_GUARD_MARK);
+    if (guarded && !src.includes(ORCH_READY_FILE_MARK)) {
+      problems.push({ level: 'error', item: 'orchestrator.discovery', message: 'secure ready-file publisher missing (Desktop 0.0.162+ hides launch secrets from process environment; re-run install)' });
+    }
     if (!guarded && !src.includes('/api/fb/perf-report')) {
       problems.push({ level: 'error', item: 'orchestrator.routes', message: 'perf-report route missing (app update replaced orchestrator.js; re-run install)' });
     }

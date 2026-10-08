@@ -43,7 +43,7 @@ Leave the app on its "Pair device" screen — it is now waiting for a QR.
 One command (needs Node 22+; the script checks and can install it):
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.2/install-mobile-connect.sh | bash
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.3/install-mobile-connect.sh | bash
 ```
 
 or run `node src/freebuff-gate-setup.js` from a repo checkout — it detects
@@ -276,13 +276,20 @@ app).
   FB_UI_PATCH_STATUS_FILE (default ~/.local/share/freebuff/ui-patch-status.json).
 - **Desktop 0.0.151+ (launch guard).** The orchestrator binds a random port
   and rejects API calls without its per-launch secret (`FREEBUFF_LAUNCH_ID`).
-  The proxy finds both itself (Linux: /proc; macOS: ps/lsof; Windows: set
-  `FB_LAUNCH_ID` by hand) and re-discovers every 30 s, so a Desktop restart
-  is picked up. Supported Desktop versions are 0.0.151 and NEWER — a
-  0.0.156 install is fine. The bundle patches are obsolete on 0.0.126+
+  Desktop 0.0.162 sends that secret through a one-shot stdin bootstrap, so
+  the patched orchestrator publishes its pid, port, and launch id to the
+  mode-0600 `~/.config/freebuff/orchestrator-ready-<pid>.json`. Per-process
+  files let the proxy ignore stale or parallel test orchestrators. The proxy
+  reads those cross-platform files, falls back to process discovery for older builds, and
+  re-discovers every 30 s, so a Desktop restart is picked up. Gate is
+  runtime-validated on Linux x64 through Desktop
+  **0.0.162**; later builds must pass `verify` and the browser regression
+  checks before being declared compatible. The bundle patches are obsolete on 0.0.126+
   (native fixes); the installer reports "N patch(es) obsolete for this app
   version (skipped)" as an expected warning, not a failure. Treat that line
   as informational; only MISSING markers are a problem.
+  Restart Freebuff Desktop when the installer asks: a process already running
+  during installation cannot execute the newly patched readiness publisher.
 - **Orchestrator anchors are alias-tolerant (Desktop 0.0.156).** Every Desktop
   rebuild renumbers the minified import aliases in `orchestrator.js`
   (`path11` → `path13`, `join25` → `join44`, `homedir7` → `homedir10`), so the
@@ -294,6 +301,12 @@ app).
   `documentHeaders(html)` factory instead of a static `securityHeaders` object.
   All five are handled; if a future release changes them again, `verify` reports
   the missing `orchestrator.pi-skills` marker instead of silently skipping.
+- **Desktop 0.0.162 shell.** Desktop now wraps content in a rounded workspace
+  frame with a 52px navigation rail. On phones Gate removes the desktop
+  insets, hides the wide back/forward control group, and moves every rail
+  destination into a fixed bottom navigation bar. The 0.0.162 conditional
+  skill arrays and renumbered static-asset alias are covered by syntax and
+  idempotency tests; hashed assets retain immutable caching.
 - **Gate token.** Because the proxy injects that secret, it now requires its
   own token: open `http://127.0.0.1:58061/?fb_gate=<token>` once per browser
   (sets an HttpOnly cookie). The token lives in

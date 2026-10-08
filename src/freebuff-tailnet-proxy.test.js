@@ -16,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, defaultOrchestratorReadyFile, discoverReadyFile, discoverReadyFiles, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -74,6 +74,54 @@ test('folder picker keeps long directory names readable and discoverable', () =>
   assert.match(SHIM, /row\.title = fullName/);
   assert.match(SHIM, /row\.setAttribute\('aria-label', \(e\.dir \? 'Open folder ' : 'File '\) \+ fullName\)/);
   assert.match(SHIM, /b\.title = String\(seg\)/);
+});
+
+test('proxy discovers Desktop 0.0.162 launch secrets from the protected ready file', () => {
+  assert.equal(
+    defaultOrchestratorReadyFile('linux', { XDG_CONFIG_HOME: '/cfg' }, '/home/a'),
+    path.join('/cfg', 'freebuff', 'orchestrator-ready.json'),
+  );
+  assert.equal(
+    defaultOrchestratorReadyFile('darwin', {}, '/home/a'),
+    path.join('/home/a', 'Library', 'Preferences', 'Freebuff', 'orchestrator-ready.json'),
+  );
+  assert.equal(
+    defaultOrchestratorReadyFile('win32', { LOCALAPPDATA: '/local' }, '/home/a'),
+    path.join('/local', 'Freebuff', 'orchestrator-ready.json'),
+  );
+  const file = path.join(os.tmpdir(), `fb-orchestrator-ready-${process.pid}.json`);
+  const sibling = file.replace(/\.json$/, '-5678.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify({
+      pid: 1234,
+      port: 45678,
+      launchId: 'launch-secret',
+    }));
+    fs.chmodSync(file, 0o644);
+    assert.equal(discoverReadyFile(file, () => true), null, 'group-readable record rejected');
+    fs.chmodSync(file, 0o600);
+    assert.deepEqual(discoverReadyFile(file, (pid) => pid === 1234), {
+      pid: 1234,
+      port: 45678,
+      launchId: 'launch-secret',
+    });
+    assert.equal(discoverReadyFile(file, () => false), null, 'stale pid rejected');
+    fs.writeFileSync(sibling, JSON.stringify({
+      pid: 5678,
+      port: 45679,
+      launchId: 'live-parallel-secret',
+    }), { mode: 0o600 });
+    assert.deepEqual(
+      discoverReadyFiles(file, (pid) => pid === 5678),
+      { pid: 5678, port: 45679, launchId: 'live-parallel-secret' },
+      'live per-process record wins when the shared record is stale',
+    );
+    fs.writeFileSync(file, '{"pid":1234,"port":0,"launchId":""}');
+    assert.equal(discoverReadyFile(file, () => true), null, 'invalid record rejected');
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(sibling, { force: true });
+  }
 });
 
 test('proxy routes POST /api/chat to the local chat-server and falls back to the orchestrator when it is down', async () => {
