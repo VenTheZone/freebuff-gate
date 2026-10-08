@@ -185,26 +185,27 @@ The header (mobile and desktop) carries a palette button that switches
 between the built-in themes:
 
 1. **Default dark**, the app's own dark theme, untouched.
-2. **Cyberpunk 2077**, a dark-side Cyberpunk skin: near-black violet
-   surfaces, Cyberpunk's signature yellow for brand accents (spinners,
-   unseen dots, pills), cyan for focus rings and neon hairlines, plus a
-   faint ambient background (soft cyan/violet neon wash and CRT scanlines)
-   that shows only through the app's transparent regions. Nothing bright;
-   it stays on the dark side.
+2. **Cyberpunk 2077**, a compact terminal treatment with clipped corners,
+   square scrollbars, selection ticks, yellow/cyan neon hairlines, and a
+   faint city-grid background.
+3. **Retro Punk**, a condensed editorial-zine treatment with square
+   controls, uppercase chrome, asymmetric cards, thick borders, and offset
+   print shadows.
+4. **Flintstones**, a relaxed stone-tablet treatment with rounded irregular
+   slabs, roomier controls, heavier carved borders, and serif headings.
 
 The choice persists per browser in `localStorage` (`fb-ui:theme`) and
 applies before the app paints, so reloads never flash the wrong theme. The
-Cyberpunk theme is independent of the app's native dark/light switch: when
+Gate themes are independent of the app's native dark/light switch: when
 active it overrides that switch (the injected stylesheet is served after
 the app's CSS). The implementation lives in `src/mobile-ui.js` (picker
-state) and `src/mobile-ui.css` (scoped under
-`:root[data-fb-theme='cyberpunk']`).
+state) and `src/mobile-ui.css` (scoped under `:root[data-fb-theme]`).
 
 The gate options also appear inside the app's own Appearance UI, where the
 native Light/Dark/System choices live: the account menu's Appearance group
-gets a "Gate themes" section (Default dark / Cyberpunk 2077, with check
-marks), and the new-thread screen's theme switch row gets the same two
-options as icon buttons. Picking a native Light/Dark/System option clears
+gets a "Gate themes" section with all four choices, and the new-thread
+screen's theme switch row gets the same options as icon buttons. Picking a
+native Light/Dark/System option clears
 the gate override, so the app's own switch stays authoritative once
 touched.
 

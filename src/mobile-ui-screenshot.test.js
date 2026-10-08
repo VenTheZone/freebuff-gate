@@ -1607,7 +1607,7 @@ test('live proxy mobile UI regression covers picker controls, header, and task d
   }
 });
 
-test('theme menu switches between default dark and Cyberpunk 2077 and persists', async (t) => {
+test('theme menu applies distinct structural themes and persists', async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     if (process.env.CI) {
@@ -1662,6 +1662,28 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
       { label: 'Retro Punk', checked: 'false' },
       { label: 'Flintstones', checked: 'false' },
     ]);
+    assert.equal(menuState.expanded, 'true');
+    await delay(30);
+    assert.equal(
+      await evaluate(cdp, "document.activeElement.querySelector('.fb-theme-label')?.textContent"),
+      'Default dark',
+    );
+    await evaluate(
+      cdp,
+      "document.querySelector('.fb-theme-menu').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))",
+    );
+    assert.equal(
+      await evaluate(cdp, "document.activeElement.querySelector('.fb-theme-label')?.textContent"),
+      'Flintstones',
+    );
+    await evaluate(
+      cdp,
+      "document.querySelector('.fb-theme-menu').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))",
+    );
+    assert.equal(
+      await evaluate(cdp, "document.activeElement.querySelector('.fb-theme-label')?.textContent"),
+      'Default dark',
+    );
 
     // Pick Cyberpunk: attribute set, localStorage persisted, surface recolored.
     await evaluate(
@@ -1674,6 +1696,10 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
       })()`,
     );
     await waitFor(cdp, "!document.querySelector('.fb-theme-menu')");
+    assert.equal(
+      await evaluate(cdp, "document.querySelector('.fb-theme-toggle').getAttribute('aria-expanded')"),
+      'false',
+    );
     assert.equal(
       await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
       'cyberpunk',
@@ -1692,6 +1718,76 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
       "getComputedStyle(document.body, '::before').backgroundImage",
     );
     assert.ok(ambient.includes('radial-gradient'), 'ambient neon wash missing');
+    assert.ok(
+      (await evaluate(cdp, "getComputedStyle(document.querySelector('.tab.active')).clipPath"))
+        .includes('polygon'),
+      'cyberpunk angled tab shape missing',
+    );
+
+    // Retro Punk changes geometry and typography, not only palette.
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-theme-option'))
+        .find((el) => el.textContent.includes('Retro Punk')).click()`,
+    );
+    const retro = await evaluate(
+      cdp,
+      `(() => {
+        const composer = getComputedStyle(document.querySelector('.composer'));
+        const title = getComputedStyle(document.querySelector('.tab.active .tab-title'));
+        return {
+          theme: document.documentElement.getAttribute('data-fb-theme'),
+          radius: composer.borderRadius,
+          leftBorder: composer.borderLeftWidth,
+          transform: title.textTransform,
+        };
+      })()`,
+    );
+    assert.deepEqual(retro, {
+      theme: 'retro-punk',
+      radius: '2px',
+      leftBorder: '4px',
+      transform: 'uppercase',
+    });
+
+    // Flintstones uses roomier, rounded stone-tablet components.
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-theme-option'))
+        .find((el) => el.textContent.includes('Flintstones')).click()`,
+    );
+    const flintstones = await evaluate(
+      cdp,
+      `(() => {
+        const composer = getComputedStyle(document.querySelector('.composer'));
+        const tab = getComputedStyle(document.querySelector('.tab.active'));
+        return {
+          theme: document.documentElement.getAttribute('data-fb-theme'),
+          radius: composer.borderRadius,
+          border: composer.borderTopWidth,
+          tabHeight: tab.minHeight,
+          font: getComputedStyle(document.body).fontFamily,
+        };
+      })()`,
+    );
+    assert.equal(flintstones.theme, 'flintstones');
+    assert.equal(flintstones.radius, '24px 18px 26px 16px');
+    assert.equal(flintstones.border, '2px');
+    assert.equal(flintstones.tabHeight, '38px');
+    assert.match(flintstones.font, /ui-rounded|Trebuchet MS/);
+
+    // Return to Cyberpunk before testing persistence across reload.
+    await evaluate(cdp, "document.querySelector('.fb-theme-toggle').click()");
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-menu'))");
+    await evaluate(
+      cdp,
+      `Array.from(document.querySelectorAll('.fb-theme-option'))
+        .find((el) => el.textContent.includes('Cyberpunk 2077')).click()`,
+    );
 
     // Reload: the persisted theme applies before paint, no menu needed.
     await cdp.send('Page.reload', { ignoreCache: true });
@@ -1726,6 +1822,15 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
       await evaluate(cdp, "localStorage.getItem('fb-ui:theme')"),
       null,
     );
+    // Unknown persisted IDs must never become arbitrary root attributes.
+    await evaluate(cdp, "localStorage.setItem('fb-ui:theme', 'unknown-theme')");
+    await cdp.send('Page.reload', { ignoreCache: true });
+    await waitFor(cdp, "Boolean(document.querySelector('.fb-theme-toggle'))");
+    assert.equal(
+      await evaluate(cdp, "document.documentElement.getAttribute('data-fb-theme')"),
+      null,
+    );
+    await evaluate(cdp, "localStorage.removeItem('fb-ui:theme')");
 
     // Desktop viewport: the toggle stays visible (it is not mobile-only).
     await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -1863,6 +1968,76 @@ test('theme menu switches between default dark and Cyberpunk 2077 and persists',
       await evaluate(cdp, "document.querySelector('.fb-theme-toggle').parentElement.className"),
       'tabbar',
     );
+
+    // Desktop 0.0.162 shell: its left rail becomes a bottom nav on phones,
+    // the rounded desktop frame loses side insets, and the wide leading
+    // history/control group does not crowd out the active tab.
+    await evaluate(
+      cdp,
+      `(() => {
+        const app = document.querySelector('.app');
+        app.classList.add('desktop-shell');
+        const appWorkspace = document.createElement('div');
+        appWorkspace.className = 'app-workspace';
+        app.appendChild(appWorkspace);
+        const leading = document.createElement('div');
+        leading.className = 'shell-tab-leading';
+        app.appendChild(leading);
+        const frame = document.createElement('div');
+        frame.className = 'workspace-frame';
+        app.appendChild(frame);
+        const nav = document.createElement('nav');
+        nav.className = 'shell-navigation';
+        nav.innerHTML = '<div class="shell-navigation-top"></div><div class="shell-navigation-bottom"></div>';
+        app.appendChild(nav);
+        return true;
+      })()`,
+    );
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true,
+      screenWidth: 390,
+      screenHeight: 844,
+    });
+    await delay(100);
+    const shell = await evaluate(
+      cdp,
+      `(() => {
+        const app = getComputedStyle(document.querySelector('.desktop-shell'));
+        const appWorkspace = getComputedStyle(document.querySelector('.app-workspace'));
+        const nav = getComputedStyle(document.querySelector('.shell-navigation'));
+        const frame = getComputedStyle(document.querySelector('.workspace-frame'));
+        const leading = getComputedStyle(document.querySelector('.shell-tab-leading'));
+        return {
+          header: app.getPropertyValue('--tabbar-height').trim(),
+          workspaceHeader: appWorkspace.getPropertyValue('--tabbar-height').trim(),
+          navPosition: nav.position,
+          navDirection: nav.flexDirection,
+          navZ: nav.zIndex,
+          navWidth: document.querySelector('.shell-navigation').getBoundingClientRect().width,
+          frameLeft: frame.marginLeft,
+          frameRight: frame.marginRight,
+          frameBottom: frame.marginBottom,
+          frameRadius: frame.borderRadius,
+          leading: leading.display,
+        };
+      })()`,
+    );
+    assert.deepEqual(shell, {
+      header: 'calc(56px + 0px)',
+      workspaceHeader: 'calc(56px + 0px)',
+      navPosition: 'fixed',
+      navDirection: 'row',
+      navZ: '53',
+      navWidth: 390,
+      frameLeft: '0px',
+      frameRight: '0px',
+      frameBottom: '52px',
+      frameRadius: '0px',
+      leading: 'none',
+    });
   } finally {
     await closeChrome(browser);
     await new Promise((resolve) => proxy.close(resolve));

@@ -113,8 +113,8 @@
   } catch (e) {}
 
   // Theme selection (all viewports): the header theme menu (themePicker
-  // below) switches between the app's own dark theme and the built-in
-  // Cyberpunk 2077 theme. The choice persists per browser in localStorage
+  // below) switches between the app's own dark theme and Gate's structural
+  // themes. The choice persists per browser in localStorage
   // and is applied here, before the app paints, so a reload never flashes
   // the wrong theme. The attribute is namespaced (data-fb-theme) and lives
   // beside the app's own data-theme (dark/light switch), which it overrides
@@ -123,10 +123,21 @@
   var THEME_KEY = 'fb-ui:theme';
   var THEME_CYBERPUNK = 'cyberpunk';
   var THEME_DEFAULT = 'default';
+  var THEMES = [
+    { id: THEME_DEFAULT, label: 'Default dark', swatch: '#7cff3f' },
+    { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#b89a0f' },
+    { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
+    { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
+  ];
+  function knownTheme(id) {
+    return THEMES.some(function (theme) {
+      return theme.id === id;
+    });
+  }
   function persistedTheme() {
     try {
       var v = localStorage.getItem(THEME_KEY);
-      return v && v !== THEME_DEFAULT ? v : THEME_DEFAULT;
+      return knownTheme(v) ? v : THEME_DEFAULT;
     } catch (e) {
       return THEME_DEFAULT;
     }
@@ -3544,8 +3555,8 @@
   }
 
   // Theme picker (all viewports): a palette button in the header opens a
-  // menu with the built-in themes — the app's default dark theme and the
-  // Cyberpunk 2077 theme. Selecting one toggles data-fb-theme on <html> (the
+  // menu with the app default and Gate's three structural themes. Selecting
+  // one toggles data-fb-theme on <html> (the
   // CSS lives in mobile-ui.css) and persists the choice per browser in
   // localStorage, so Gate Desktop and Gate Mobile on this device keep the
   // same look across reloads. The app's own dark/light switch is untouched;
@@ -3563,12 +3574,6 @@
       if (!tabbar) return;
       var menu = null;
       var opener = null;
-      var THEMES = [
-        { id: 'default', label: 'Default dark', swatch: '#7cff3f' },
-        { id: THEME_CYBERPUNK, label: 'Cyberpunk 2077', swatch: '#b89a0f' },
-        { id: 'retro-punk', label: 'Retro Punk', swatch: '#ff2e63' },
-        { id: 'flintstones', label: 'Flintstones', swatch: '#ff7a1a' },
-      ];
       function themeLabel(id) {
         for (var i = 0; i < THEMES.length; i++) {
           if (THEMES[i].id === id) return THEMES[i].label;
@@ -3576,6 +3581,7 @@
         return THEME_DEFAULT === id ? 'default dark' : id;
       }
       function applyTheme(id, opts) {
+        if (!knownTheme(id)) id = THEME_DEFAULT;
         if (id && id !== THEME_DEFAULT) {
           document.documentElement.setAttribute('data-fb-theme', id);
         } else {
@@ -3593,17 +3599,23 @@
         }
         syncAppearancePatch();
       }
-      function close() {
+      function close(restoreFocus) {
+        var previousOpener = opener;
         if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
         menu = null;
-        if (opener) opener.classList.remove('open');
+        if (opener) {
+          opener.classList.remove('open');
+          opener.setAttribute('aria-expanded', 'false');
+        }
         opener = null;
         mobileOverlay.dismiss('theme-menu');
+        if (restoreFocus && previousOpener) previousOpener.focus();
       }
       function open(btn) {
         close();
         opener = btn;
         btn.classList.add('open');
+        btn.setAttribute('aria-expanded', 'true');
         var current = persistedTheme();
         menu = document.createElement('div');
         menu.className = 'fb-theme-menu';
@@ -3635,13 +3647,40 @@
           option.appendChild(check);
           option.addEventListener('click', function () {
             applyTheme(theme.id);
-            close();
+            close(true);
           });
           menu.appendChild(option);
+        });
+        menu.addEventListener('keydown', function (ev) {
+          var options = Array.prototype.slice.call(
+            menu.querySelectorAll('.fb-theme-option'),
+          );
+          var index = options.indexOf(document.activeElement);
+          var next = index;
+          if (ev.key === 'ArrowDown' || ev.key === 'ArrowRight') {
+            next = (index + 1 + options.length) % options.length;
+          } else if (ev.key === 'ArrowUp' || ev.key === 'ArrowLeft') {
+            next = (index - 1 + options.length) % options.length;
+          } else if (ev.key === 'Home') {
+            next = 0;
+          } else if (ev.key === 'End') {
+            next = options.length - 1;
+          } else {
+            return;
+          }
+          ev.preventDefault();
+          options[next].focus();
         });
         document.body.appendChild(menu);
         attachSwipeDownClose(menu, close);
         mobileOverlay.open('theme-menu', close);
+        requestAnimationFrame(function () {
+          if (!menu) return;
+          var selected = menu.querySelector(
+            '.fb-theme-option[aria-checked="true"]',
+          );
+          if (selected) selected.focus();
+        });
       }
       function ensure(header) {
         if (!header || header.querySelector('.fb-theme-toggle')) return;
@@ -3713,7 +3752,7 @@
         true,
       );
       document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape') close();
+        if (ev.key === 'Escape') close(true);
       });
       window.addEventListener('resize', close);
       // Sync the theme across this device's other windows/tabs.
@@ -3725,13 +3764,14 @@
         } else {
           document.documentElement.removeAttribute('data-fb-theme');
         }
+        syncAppearancePatch();
       });
 
       // ---- Native Appearance surfaces ----
       // The app's own Appearance UI (account menu group + the new-thread
-      // theme switch) only offers Light/Dark/System, so the gate themes were
-      // easy to miss. Patch both surfaces with the same Default dark /
-      // Cyberpunk 2077 options, styled as native items. The surfaces
+      // theme switch) only offers Light/Dark/System, so Gate themes were easy
+      // to miss. Patch both surfaces with all Gate options, styled as native
+      // items. The surfaces
       // mount/unmount per open/navigation and React re-renders them after a
       // native themePref change (wiping injected nodes), so patching is
       // idempotent and re-runs on any non-transcript DOM change (debounced
@@ -3793,8 +3833,8 @@
             group.appendChild(item);
           });
         }
-        // New-thread screen: the Light/Dark/System pill row gets the same
-        // two options as icon buttons (tooltips carry the labels).
+        // New-thread screen: the Light/Dark/System pill row gets all Gate
+        // options as icon buttons (tooltips carry the labels).
         var sw = document.querySelector('.new-thread-theme .theme-switch');
         if (sw && !sw.querySelector('.fb-gate-theme-option')) {
           THEMES.forEach(function (theme) {

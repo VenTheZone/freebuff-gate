@@ -210,6 +210,60 @@
     height: 100dvh;
   }
 
+  /* Desktop 0.0.162 wraps the workspace in a rounded frame and reserves a
+     52px navigation rail. On phones, keep every destination but move the rail
+     to a native-style bottom bar and give the workspace its full width. */
+  .desktop-shell {
+    --tabbar-height: var(--fb-mobile-header-height);
+    --shell-rail-width: 0px;
+    --shell-inset: 0px;
+    --workspace-corner: 0px;
+    --fb-mobile-nav-height: calc(52px + env(safe-area-inset-bottom, 0px));
+  }
+  .desktop-shell .app-workspace {
+    --tabbar-height: var(--fb-mobile-header-height);
+  }
+  .desktop-shell .workspace-frame {
+    margin: 0 0 var(--fb-mobile-nav-height);
+    border-radius: 0;
+  }
+  .desktop-shell .workspace-frame-edge {
+    display: none;
+  }
+  .desktop-shell .shell-navigation {
+    position: fixed;
+    z-index: 53;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    width: 100%;
+    height: var(--fb-mobile-nav-height);
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 12px env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--border);
+    background: var(--chrome);
+  }
+  .desktop-shell .shell-navigation-top,
+  .desktop-shell .shell-navigation-bottom {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .desktop-shell .shell-navigation-bottom {
+    margin: 0 0 0 auto;
+  }
+  /* Back/forward and desktop panel controls consume half the new shell
+     header. Gate already supplies touch-sized panel/session controls. */
+  .desktop-shell .shell-tab-leading {
+    display: none;
+  }
+  .desktop-shell .shell-tab-row {
+    padding-right: 0;
+  }
+
   /* Explorer: hidden by default; it opens as a sliding panel from the right
      when summoned (header .fb-panel-toggle, see mobile-ui.js). The collapsed
      icon rail is removed entirely so nothing sticks out into the chat. */
@@ -463,6 +517,12 @@
     gap: 8px;
   }
   .thread-bottom > .sponsored-ad.ad-banner .ad-copy {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .thread-bottom > .sponsored-ad.ad-banner .ad-title,
+  .thread-bottom > .sponsored-ad.ad-banner .ad-destination {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3277,6 +3337,140 @@ body {
 /* Soft ember rim under user bubbles. */
 :root[data-fb-theme='flintstones'] .msg.user .bubble {
   box-shadow: 0 1px 0 color-mix(in srgb, #ff7a1a 12%, transparent);
+}
+
+/* ─────────── Structural theme identities ───────────────────────────────
+   Palettes alone do not make separate themes. These rules change component
+   geometry, density, typography and elevation while preserving app DOM and
+   behavior across Desktop updates. Cyberpunk's clipped terminal treatment
+   lives with its Pi-specific polish below. */
+
+/* Retro Punk: compact photocopied zine — square cuts, condensed uppercase
+   chrome, thick offset ink shadows and asymmetric message cards. */
+:root[data-fb-theme='retro-punk'] body {
+  font-family: "Arial Narrow", "Liberation Sans Narrow", "Roboto Condensed",
+    system-ui, sans-serif;
+}
+:root[data-fb-theme='retro-punk'] .desktop-shell {
+  --workspace-corner: 4px;
+}
+:root[data-fb-theme='retro-punk'] :is(
+    .composer,
+    .tab,
+    .modal-panel,
+    .fb-theme-menu,
+    .fb-session-menu,
+    .fb-model-sheet,
+    .project-sidebar,
+    .ad-card,
+    .sponsored-ad
+  ) {
+  border-radius: 2px;
+}
+:root[data-fb-theme='retro-punk'] :is(
+    .composer,
+    .modal-panel,
+    .fb-theme-menu,
+    .fb-session-menu
+  ) {
+  border-left: 4px solid var(--brand);
+  box-shadow: 5px 5px 0 color-mix(in srgb, var(--accent) 24%, transparent);
+}
+:root[data-fb-theme='retro-punk'] :is(
+    .tab-title,
+    .header-menu-label,
+    .fb-theme-menu-title,
+    .project-sidebar-section-title
+  ) {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+:root[data-fb-theme='retro-punk'] .tab.active {
+  border-top: 3px solid var(--accent);
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+:root[data-fb-theme='retro-punk'] .msg.user .bubble {
+  border-width: 2px 1px 4px 4px;
+  border-radius: 0 14px 0 14px;
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--brand) 24%, transparent);
+}
+:root[data-fb-theme='retro-punk'] :is(
+    button,
+    .btn,
+    .sidebar-row,
+    .fb-model-pill,
+    .fb-effort-pill,
+    .fb-time-pill
+  ) {
+  border-radius: 2px;
+}
+
+/* Flintstones: relaxed stone tablets — rounder irregular slabs, heavier
+   borders, roomier controls and carved inset highlights. */
+:root[data-fb-theme='flintstones'] body {
+  font-family: ui-rounded, "Trebuchet MS", system-ui, sans-serif;
+  line-height: 1.5;
+}
+:root[data-fb-theme='flintstones'] .desktop-shell {
+  --workspace-corner: 28px;
+}
+:root[data-fb-theme='flintstones'] :is(
+    .composer,
+    .modal-panel,
+    .fb-theme-menu,
+    .fb-session-menu,
+    .fb-model-sheet,
+    .ad-card,
+    .sponsored-ad
+  ) {
+  border-width: 2px;
+  border-radius: 24px 18px 26px 16px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 8px 0 color-mix(in srgb, var(--border) 52%, transparent);
+}
+:root[data-fb-theme='flintstones'] :is(
+    .tab,
+    .sidebar-row,
+    .btn,
+    .agent-trigger,
+    .fb-theme-option,
+    .fb-session-menu-select,
+    .fb-model-pill,
+    .fb-effort-pill,
+    .fb-time-pill
+  ) {
+  min-height: 38px;
+  border-radius: 999px;
+}
+:root[data-fb-theme='flintstones'] .tab.active {
+  padding-inline: 4px;
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--brand) 45%, transparent);
+}
+:root[data-fb-theme='flintstones'] :is(
+    .header-menu-label,
+    .fb-theme-menu-title,
+    .project-sidebar-section-title
+  ) {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.08em;
+  letter-spacing: 0.025em;
+}
+:root[data-fb-theme='flintstones'] .messages {
+  --chat-gutter: 22px;
+}
+:root[data-fb-theme='flintstones'] .turn {
+  gap: 18px;
+}
+:root[data-fb-theme='flintstones'] .msg.user .bubble {
+  padding: 12px 16px;
+  border-width: 2px;
+  border-radius: 28px 20px 30px 14px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent),
+    0 4px 0 color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
 /* Connected-folder selector: show project paths as readable cards instead

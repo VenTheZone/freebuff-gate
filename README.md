@@ -38,7 +38,7 @@ implementation in `src/folder-select.js`.
 | `.freebuff-gate.json` | The dotfile configuration for the browser port (app, auth, workspace, UI prefs; `folderSelection` block is legacy documentation now that the picker is server-side). |
 | `src/folder-select.js` | Reference implementation of the folder-selection tweak. |
 | `src/check-ads.js` | Polls the Freebuff ad auction (codebuff.com) and reports when ads actually fill. |
-| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets, plus the built-in theme picker styles and the Cyberpunk 2077 theme (injected by the tailnet proxy; see `docs/mobile.md`). |
+| `src/mobile-ui.css` | Responsive adaptation for Gate Mobile on phones/tablets, plus four selectable structural themes: Default, Cyberpunk, Retro Punk, and Flintstones (injected by the tailnet proxy; see `docs/mobile.md`). |
 | `src/mobile-ui.js` | Tiny Gate Mobile helpers: viewport meta patch + dynamic viewport height. |
 | `src/mobile-ui-screenshot-fixture.html` | Deterministic native-UI fixture for Gate Mobile screenshot regression. |
 | `src/mobile-ui-screenshot.test.js` | Chromium CDP screenshot/layout regression test for Gate Mobile. |
@@ -274,7 +274,7 @@ Desktop files.
 After a tagged release, one command installs the verified companion:
 
 ```bash
-curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.2/install-mobile-connect.sh \
+curl -fsSL https://github.com/VenTheZone/freebuff-gate/releases/download/v0.2.3/install-mobile-connect.sh \
   | bash -s -- \
       --relay-http-url https://relay.example.com \
       --enrollment-token '<relay-bootstrap-token>'
