@@ -16,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, defaultOrchestratorReadyFile, discoverReadyFile, discoverReadyFiles, parseCodexDeviceAuthOutput, patchBundle, patchBundleInfo, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createGateUpdater, createProxyServer, defaultOrchestratorReadyFile, discoverReadyFile, discoverReadyFiles, parseCodexDeviceAuthOutput, patchBundle, patchBundleInfo, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -341,6 +341,65 @@ test('patchBundleInfo recognizes the spaces store with 0.0.162 and 0.0.176 openT
     assert.equal(info.recognized, true, openTab);
     assert.ok(info.obsolete.includes('CREATE_REUSE'), openTab);
   }
+});
+
+test('gate updater counts upstream commits and runs the wizard outside the proxy cgroup', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-gate-repo-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  const calls = [];
+  const spawned = [];
+  const updater = createGateUpdater({
+    sidecar: () => ({ sourceDir: path.join(repo, 'src') }),
+    run: async (command, args) => {
+      calls.push(args.slice(2).join(' '));
+      if (args[2] === 'rev-list') return '3';
+      if (args[2] === 'rev-parse') return args[4] === 'HEAD' ? 'aaa111' : 'bbb222';
+      return '';
+    },
+    spawnCommand: (command, argv) => {
+      spawned.push([command, ...argv]);
+      const child = new EventEmitter();
+      child.unref = () => {};
+      return child;
+    },
+    env: { INVOCATION_ID: 'x' },
+    platform: 'linux',
+  });
+  const status = await updater.status();
+  assert.equal(status.mode, 'git');
+  assert.equal(status.count, 3);
+  assert.equal(status.current, 'aaa111');
+  assert.equal(status.canUpdate, true);
+  const result = await updater.update();
+  assert.equal(result.ok, true);
+  assert.ok(calls.includes('pull --ff-only --quiet'));
+  assert.equal(spawned[0][0], 'systemd-run');
+  assert.ok(spawned[0].includes(path.join(repo, 'src', 'freebuff-gate-setup.js')));
+  assert.ok(spawned[0].includes('--upgrade'));
+  assert.equal((await updater.update()).error, 'gate_update_running');
+});
+
+test('gate updater compares a release install with the latest GitHub release', async () => {
+  const proxyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-gate-proxy-'));
+  const spawned = [];
+  const updater = createGateUpdater({
+    sidecar: () => ({ sourceDir: path.join(proxyDir, 'staging'), version: 'v0.2.3' }),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ tag_name: 'v0.2.4' }) }),
+    spawnCommand: (command, argv) => {
+      spawned.push([command, ...argv]);
+      const child = new EventEmitter();
+      child.unref = () => {};
+      return child;
+    },
+    proxyDir,
+    env: {},
+    platform: 'darwin',
+  });
+  const status = await updater.status();
+  assert.deepEqual([status.mode, status.count, status.latest], ['release', 1, 'v0.2.4']);
+  assert.equal((await updater.update()).ok, true);
+  assert.equal(spawned[0][0], process.execPath);
+  assert.deepEqual(spawned[0].slice(-2), ['--release', 'v0.2.4']);
 });
 
 test('patchBundle adds a skill-origin badge to the composer slash menu rows', () => {

@@ -7834,6 +7834,137 @@
       });
     });
   }
+  // Gate update notice (all viewports): a count badge on the shell rail's
+  // Settings button and an "Update Gate" row under Desktop's own Version
+  // row. The proxy caches its check (git upstream or latest GitHub release),
+  // so polling is cheap. Updating redeploys and restarts the proxy; a new
+  // bootedAt means the update landed and the page reloads onto it.
+  function gateUpdate() {
+    var info = null;
+    var busy = false;
+    function load() {
+      return fetch('/api/fb/gate-update', { headers: { Accept: 'application/json' } })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          info = data;
+          render();
+          return data;
+        });
+    }
+    function pending() {
+      return info && info.mode && !info.updating && info.count > 0 ? info.count : 0;
+    }
+    function statusText() {
+      if (busy || (info && info.updating)) return { text: 'Updating…', tone: '' };
+      if (info.error) return { text: info.error, tone: 'error' };
+      if (info.checkError) return { text: 'Update check failed: ' + info.checkError, tone: 'error' };
+      var count = pending();
+      if (!count) return { text: 'Up to date', tone: 'success' };
+      if (info.mode === 'release') return { text: info.latest + ' available', tone: '' };
+      return { text: count + (count === 1 ? ' new commit' : ' new commits') + ' available', tone: '' };
+    }
+    // Write only on change: replacing text nodes would re-trigger the
+    // body observer below on every frame.
+    function setText(el, text) {
+      if (el.textContent !== text) el.textContent = text;
+    }
+    function render() {
+      var count = pending();
+      document.querySelectorAll('.shell-nav-button[aria-label="Settings"]').forEach(function (btn) {
+        var badge = btn.querySelector('.fb-update-badge');
+        if (!count) {
+          if (badge) badge.remove();
+          btn.removeAttribute('aria-description');
+          return;
+        }
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'fb-update-badge';
+          badge.setAttribute('aria-hidden', 'true');
+          btn.appendChild(badge);
+        }
+        setText(badge, count > 99 ? '99+' : String(count));
+        btn.setAttribute('aria-description', count + ' Gate update' + (count === 1 ? '' : 's') + ' available');
+      });
+      var row = document.querySelector('.settings-update-row:not(.fb-gate-update-row)');
+      if (!row || !row.parentNode) return;
+      var gate = row.parentNode.querySelector('.fb-gate-update-row');
+      if (!info || !info.mode) {
+        if (gate) gate.remove();
+        return;
+      }
+      if (!gate) {
+        gate = document.createElement('div');
+        gate.className = 'settings-update-row fb-gate-update-row';
+        gate.innerHTML =
+          '<div class="settings-update-version"><span class="fb-gate-update-name"></span>' +
+          '<span class="settings-update-check fb-gate-update-status" role="status"></span></div>' +
+          '<button type="button" class="fb-gate-update-button">Update Gate</button>';
+        var native = row.querySelector('button');
+        var button = gate.querySelector('button');
+        if (native) button.className = native.className + ' fb-gate-update-button';
+        button.addEventListener('click', start);
+        row.parentNode.insertBefore(gate, row.nextSibling);
+      }
+      var status = statusText();
+      setText(gate.querySelector('.fb-gate-update-name'), 'Freebuff Gate ' + (info.current || ''));
+      var statusEl = gate.querySelector('.fb-gate-update-status');
+      setText(statusEl, status.text);
+      statusEl.className = 'settings-update-check fb-gate-update-status' + (status.tone ? ' ' + status.tone : '');
+      gate.querySelector('button').disabled = busy || !info.canUpdate;
+    }
+    function fail(message) {
+      busy = false;
+      if (info) info.error = message;
+      render();
+    }
+    function start() {
+      if (busy || !info || !info.canUpdate) return;
+      busy = true;
+      var bootedAt = info.bootedAt;
+      var deadline = Date.now() + 5 * 60 * 1000;
+      render();
+      fetch('/api/fb/gate-update', { method: 'POST' })
+        .then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok) throw new Error(data.message || data.error || 'HTTP ' + r.status);
+          });
+        })
+        .then(function () {
+          (function poll() {
+            setTimeout(function () {
+              if (Date.now() > deadline) return fail('Update is taking long; check the Gate proxy logs.');
+              // Fetch errors are expected while the proxy restarts.
+              load().then(function (data) {
+                if (data.bootedAt !== bootedAt) return location.reload();
+                if (data.error) return fail(data.error);
+                poll();
+              }, poll);
+            }, 3000);
+          })();
+        }, function (error) {
+          fail(error.message);
+        });
+    }
+    load().catch(function () {});
+    setInterval(function () {
+      if (!busy) load().catch(function () {});
+    }, 30 * 60 * 1000);
+    // The rail and the settings page re-render often; re-apply after DOM
+    // changes, batched to one pass per frame.
+    var queued = false;
+    new MutationObserver(function () {
+      if (queued || !info) return;
+      queued = true;
+      requestAnimationFrame(function () {
+        queued = false;
+        render();
+      });
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
   bindAdOverlay();
   codexConnect();
   piPanel();
@@ -7845,6 +7976,7 @@
   bindMessageCompact();
   sessionSwitcher();
   themePicker();
+  gateUpdate();
   copyFeedback();
   var mq = window.matchMedia(MOBILE);
   if (mq.matches) enterMobile();

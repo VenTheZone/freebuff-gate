@@ -264,6 +264,17 @@ app).
   bundle/shim/orchestrator for the patch markers and exits non-zero with the
   exact file when any are missing, so a regression is caught loudly. Re-run
   the install command to re-apply.
+- Gate checks for its own updates (at most every 6 h). A source checkout
+  compares against its git upstream; a release install compares against the
+  latest GitHub release. Pending updates show as a number on the Settings
+  button, and Settings gets an "Update Gate" row under Desktop's Version row.
+  The button pulls the update (`git pull --ff-only` or the new release) and
+  runs `freebuff-gate-setup.js --yes --upgrade`, which redeploys the proxy and
+  re-applies the UI patches. The page reloads once the proxy restarts.
+  Under systemd the update runs as its own `freebuff-gate-update-*` user unit,
+  so read failures with `journalctl --user -u 'freebuff-gate-update-*'`.
+  Elsewhere they go to `gate-update.log` in the proxy directory.
+  Status: `curl -s http://127.0.0.1:58061/api/fb/gate-update`.
 - The proxy also self-checks automatically, so you do not need to remember
   to run verify by hand. It re-probes on every bundle identity change (an
   app update swaps index-*.js) and on a check interval, fetches the raw

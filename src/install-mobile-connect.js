@@ -32,6 +32,8 @@ const PROXY_FILES = Object.freeze([
   'mobile-ui.js',
   'perf-probe.js',
   'discover-orchestrator.ps1',
+  // Deployed so the proxy's "Update Gate" action can run it for release installs.
+  'freebuff-gate-setup.js',
 ]);
 const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
 // Sidecar written next to the deployed proxy: records the directory the UI
@@ -938,6 +940,9 @@ function deployProxy(options, { runPlatformCommand = DEFAULT_RUN_PLATFORM_COMMAN
     path.join(proxyDir, UI_SOURCE_SIDECAR),
     `${JSON.stringify({
       sourceDir: path.resolve(options.sourceDir),
+      // Release tag of this deploy (null for source checkouts); the proxy
+      // compares it with GitHub's latest release for the update badge.
+      version: options.release || (RELEASE_VERSION_PATTERN.test(options.agentVersion || '') ? options.agentVersion : null),
       deployedAt: new Date().toISOString(),
     }, null, 2)}\n`,
     0o644,

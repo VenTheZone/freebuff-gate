@@ -54,6 +54,9 @@ const STACK_FILES_FALLBACK = Object.freeze([
   'mobile-ui.css',
   'mobile-ui.js',
   'perf-probe.js',
+  'freebuff-skill-loader.js',
+  'discover-orchestrator.ps1',
+  'freebuff-gate-setup.js',
 ]);
 
 function releaseNeeds() {
@@ -426,6 +429,10 @@ function planActions(state, options) {
       // On-disk patches missing (bundle/shim/orchestrator markers) — the
       // installer re-applies them.
       actions.push({ id: 'upgrade', description: 'Configure tailnet proxy + apply on-disk UI patches' });
+    } else if (options.upgrade) {
+      // Gate itself changed (git pull or new release): redeploy even though
+      // the current stack verifies healthy.
+      actions.push({ id: 'upgrade', description: 'Redeploy tailnet proxy + re-apply on-disk UI patches (Gate update)' });
     } else if (!state.proxy.reachable) {
       actions.push({ id: 'upgrade', description: 'Configure tailnet proxy (not running)' });
     } else if (staleServe && !orchUploadFailing) {
@@ -564,6 +571,8 @@ Options:
   --dry-run                Report state + planned actions, change nothing
   --advanced               Select self-hosted/local transport path
   --skip-upgrade           Do not install/upgrade the proxy or UI patches
+  --upgrade                Redeploy the proxy and UI patches even when healthy
+                           (used by the Settings "Update Gate" button)
   --skip-tailnet           Do not touch the tailscale serve forward
   --source-dir <dir>       Take proxy/installer files from <dir> (default: this file's dir)
   --desktop-dir <path>     Freebuff Desktop install dir (auto-detected when omitted)
@@ -620,6 +629,9 @@ function parseArgs(argv) {
         break;
       case '--skip-upgrade':
         options.skipUpgrade = true;
+        break;
+      case '--upgrade':
+        options.upgrade = true;
         break;
       case '--skip-tailnet':
         options.skipTailscale = true;

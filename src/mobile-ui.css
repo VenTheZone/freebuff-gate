@@ -5081,3 +5081,25 @@ html body .new-thread-project-menu .project-option {
     animation: none;
   }
 }
+
+/* Gate update badge on the shell rail's Settings button (all viewports). */
+.shell-nav-button[aria-label="Settings"] {
+  position: relative;
+}
+.fb-update-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger, #e5484d);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}

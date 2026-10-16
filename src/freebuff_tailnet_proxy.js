@@ -12,7 +12,7 @@
  * Port defaults to 58061; override with FREEBUFF_PROXY_PORT.
  */
 const http = require('http');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { createPiAgentController, readJsonBody: readPiJsonBody } = require('./pi-agent-bridge');
 const { injectSkills } = require('./freebuff-skill-loader');
 const fs = require('fs');
@@ -314,18 +314,20 @@ const REPO = __dirname;
 // Resolution happens per request, so edits apply on reload like the
 // deployed files themselves.
 const UI_SOURCE_SIDECAR = 'ui-source.json';
-function uiSourceDir() {
-  if (process.env.FB_UI_SOURCE_DIR) return process.env.FB_UI_SOURCE_DIR;
+function uiSourceSidecar() {
   try {
     const parsed = JSON.parse(
       fs.readFileSync(path.join(__dirname, UI_SOURCE_SIDECAR), 'utf8'),
     );
-    return typeof parsed.sourceDir === 'string' && parsed.sourceDir
-      ? parsed.sourceDir
-      : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch (e) {
-    return null;
+    return {};
   }
+}
+function uiSourceDir() {
+  if (process.env.FB_UI_SOURCE_DIR) return process.env.FB_UI_SOURCE_DIR;
+  const { sourceDir } = uiSourceSidecar();
+  return typeof sourceDir === 'string' && sourceDir ? sourceDir : null;
 }
 function uiAssetPath(name) {
   const installed = path.join(__dirname, name);
@@ -341,6 +343,148 @@ function uiAssetPath(name) {
     }
   }
   return installed;
+}
+
+// ---- Gate self-update ----
+// Settings shows a count badge and an "Update Gate" button. A source install
+// (ui-source.json points into a git checkout) counts commits behind its
+// upstream and updates with `git pull --ff-only`; a release install compares
+// the deployed release tag with GitHub's latest. Both then run the setup
+// wizard with --upgrade, which redeploys and restarts this proxy and
+// re-applies the UI patches. Checks are cached so clients can poll freely.
+const GATE_REPOSITORY = process.env.FB_GATE_REPOSITORY || 'VenTheZone/freebuff-gate';
+const GATE_UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+const GATE_RELEASE_TAG = /^v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)*$/;
+const PROXY_BOOTED_AT = new Date().toISOString();
+
+function execFileText(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 60_000, encoding: 'utf8', ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.detail = String(stderr || error.message).trim();
+        reject(error);
+      } else {
+        resolve(String(stdout).trim());
+      }
+    });
+  });
+}
+
+function runningAsSea() {
+  try { return require('node:sea').isSea(); } catch (e) { return false; }
+}
+
+function createGateUpdater({
+  run = execFileText,
+  spawnCommand = spawn,
+  fetchImpl = (...args) => fetch(...args),
+  sidecar = uiSourceSidecar,
+  proxyDir = __dirname,
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  let state = { mode: null, count: 0, current: null, latest: null, checkedAt: 0, checkError: null, updating: false, error: null };
+  let checking = null;
+
+  function source() {
+    // ponytail: the standalone setup binary updates by downloading a new binary; not handled here.
+    if (runningAsSea()) return { mode: null };
+    const { sourceDir, version } = sidecar();
+    if (typeof sourceDir === 'string' && sourceDir) {
+      const repo = path.dirname(sourceDir);
+      if (fs.existsSync(path.join(repo, '.git'))) {
+        return { mode: 'git', repo, wizard: path.join(sourceDir, 'freebuff-gate-setup.js') };
+      }
+    }
+    if (GATE_RELEASE_TAG.test(version || '')) {
+      return { mode: 'release', version, wizard: path.join(proxyDir, 'freebuff-gate-setup.js') };
+    }
+    return { mode: null };
+  }
+
+  async function check() {
+    const src = source();
+    const next = { mode: src.mode, count: 0, current: null, latest: null };
+    if (src.mode === 'git') {
+      const git = (...args) => run('git', ['-C', src.repo, ...args]);
+      await git('fetch', '--quiet');
+      next.count = Number(await git('rev-list', '--count', 'HEAD..@{u}')) || 0;
+      next.current = await git('rev-parse', '--short', 'HEAD');
+      next.latest = await git('rev-parse', '--short', '@{u}');
+    } else if (src.mode === 'release') {
+      const response = await fetchImpl(`https://api.github.com/repos/${GATE_REPOSITORY}/releases/latest`, {
+        headers: { accept: 'application/vnd.github+json', 'user-agent': 'freebuff-gate' },
+      });
+      if (!response.ok) throw new Error(`GitHub latest release lookup failed: HTTP ${response.status}`);
+      const tag = (await response.json()).tag_name;
+      next.current = src.version;
+      next.latest = GATE_RELEASE_TAG.test(tag || '') ? tag : null;
+      next.count = next.latest && next.latest !== src.version ? 1 : 0;
+    }
+    return next;
+  }
+
+  function refresh() {
+    if (!checking) {
+      checking = check()
+        .then((next) => { state = { ...state, ...next, checkError: null }; })
+        .catch((error) => { state = { ...state, checkError: error.detail || error.message }; })
+        .finally(() => {
+          // Failed checks are cached too, so an offline host is not refetched per poll.
+          state.checkedAt = Date.now();
+          checking = null;
+        });
+    }
+    return checking;
+  }
+
+  async function status() {
+    if (Date.now() - state.checkedAt > GATE_UPDATE_CHECK_MS) await refresh();
+    const { checkedAt, ...rest } = state;
+    return {
+      ...rest,
+      checkedAt: checkedAt ? new Date(checkedAt).toISOString() : null,
+      bootedAt: PROXY_BOOTED_AT,
+      canUpdate: Boolean(state.mode) && state.count > 0 && !state.updating,
+    };
+  }
+
+  async function update() {
+    if (state.updating) return { ok: false, error: 'gate_update_running' };
+    const src = source();
+    if (!src.mode) return { ok: false, error: 'gate_update_unsupported' };
+    state = { ...state, updating: true, error: null };
+    try {
+      if (src.mode === 'git') {
+        await run('git', ['-C', src.repo, 'pull', '--ff-only', '--quiet'], { timeout: 120_000 });
+      } else if (!state.latest) {
+        await refresh();
+        if (!state.latest) throw new Error(state.checkError || 'latest Gate release unknown');
+      }
+      const args = [src.wizard, '--yes', '--upgrade'];
+      if (src.mode === 'release') args.push('--release', state.latest);
+      // The wizard restarts this proxy. Under systemd a plain child shares the
+      // service cgroup and dies with it mid-install, so run it as its own unit.
+      const viaSystemd = platform === 'linux' && Boolean(env.INVOCATION_ID);
+      const [command, argv] = viaSystemd
+        ? ['systemd-run', ['--user', '--collect', '--quiet', `--unit=freebuff-gate-update-${Date.now()}`, process.execPath, ...args]]
+        : [process.execPath, args];
+      const log = viaSystemd ? 'ignore' : fs.openSync(path.join(proxyDir, 'gate-update.log'), 'a');
+      const child = spawnCommand(command, argv, { detached: true, stdio: ['ignore', log, log] });
+      if (typeof log === 'number') fs.closeSync(log);
+      child.on('error', (error) => { state = { ...state, updating: false, error: error.message }; });
+      child.on('exit', (code) => {
+        state = { ...state, updating: false, checkedAt: 0, error: code ? `Gate update exited with code ${code}` : null };
+      });
+      child.unref();
+      return { ok: true, mode: src.mode };
+    } catch (error) {
+      state = { ...state, updating: false, error: error.detail || error.message };
+      return { ok: false, error: 'gate_update_failed', message: state.error };
+    }
+  }
+
+  return { status, update };
 }
 
 // ---- ad broadcast cache ----
@@ -1379,6 +1523,7 @@ function createProxyServer(options = {}) {
     timeoutMs: options.codexTimeoutMs,
   });
   const piAgent = createPiAgentController(options.pi || {});
+  const gateUpdater = createGateUpdater(options.gateUpdate || {});
   const skillOptions = options.skills || {};
   const server = http.createServer((req, res) => {
   if (gateToken && !checkGate(gateToken, req, res)) return;
@@ -1401,6 +1546,14 @@ function createProxyServer(options = {}) {
   }
   if (req.method === 'POST' && pathname === '/api/fb/codex/device/cancel') {
     sendJson(res, 200, codexAuth.cancel());
+    return;
+  }
+  if (pathname === '/api/fb/gate-update' && (req.method === 'GET' || req.method === 'POST')) {
+    const work = req.method === 'GET' ? gateUpdater.status() : gateUpdater.update();
+    work.then((result) => {
+      const status = result.ok === false ? (result.error === 'gate_update_running' ? 409 : result.error === 'gate_update_unsupported' ? 400 : 500) : req.method === 'POST' ? 202 : 200;
+      sendJson(res, status, result);
+    });
     return;
   }
   // Pi coding-agent bridge. Pi runs locally on Desktop; Gate Mobile reaches
@@ -1928,6 +2081,7 @@ module.exports = {
   createCodexDeviceAuthController,
   checkUiPatches,
   checkGate,
+  createGateUpdater,
   createProxyServer,
   defaultOrchestratorReadyFile,
   discoverReadyFile,
