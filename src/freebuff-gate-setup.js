@@ -122,9 +122,22 @@ function listenPortsOfPid(pid) {
   return ports;
 }
 
+// The proxy answers 401 without its gate cookie (Desktop 0.0.151+ stack),
+// which made every health probe fail and planned a needless proxy restart.
+// Probes only target loopback, so presenting the local token is safe.
+function gateHeaders() {
+  const file = process.env.FB_GATE_TOKEN_FILE || path.join(os.homedir(), '.config', 'freebuff', 'gate-proxy.token');
+  try {
+    const token = fs.readFileSync(file, 'utf8').trim();
+    return token ? { cookie: `fb_gate=${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 function httpGet(url, timeoutMs = 4000) {
   return new Promise((resolve) => {
-    const request = http.get(url, { timeout: timeoutMs }, (response) => {
+    const request = http.get(url, { timeout: timeoutMs, headers: gateHeaders() }, (response) => {
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', () => {
@@ -237,7 +250,7 @@ function derivePorts(options = {}) {
 
 function httpPost(url, body = '') {
   return new Promise((resolve) => {
-    const request = http.request(url, { method: 'POST', timeout: 4000 }, (response) => {
+    const request = http.request(url, { method: 'POST', timeout: 4000, headers: gateHeaders() }, (response) => {
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', () => {
@@ -248,6 +261,18 @@ function httpPost(url, body = '') {
     request.on('error', (error) => resolve({ ok: false, error: error.message, status: 0, body: '' }));
     request.end(body);
   });
+}
+
+// 0.0.126+ bundles never carry __fbOpenThread: the proxy recognizes them and
+// records every bundle patch as obsolete. Reuse its detection when the proxy
+// module sits beside this file (repo checkout or deployed proxy dir).
+function bundlePatchesObsolete(body) {
+  try {
+    const info = require('./freebuff_tailnet_proxy').patchBundleInfo(body);
+    return info.recognized && info.obsolete.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function probeProxyHealth(proxyPort, desktopPort) {
@@ -265,7 +290,7 @@ async function probeProxyHealth(proxyPort, desktopPort) {
     const bundle = await httpGet(`http://127.0.0.1:${proxyPort}${bundleMatch[0]}`);
     checks.push({
       name: `bundle patch (${path.basename(bundleMatch[0])})`,
-      ok: bundle.ok && bundle.body.includes('__fbOpenThread'),
+      ok: bundle.ok && (bundle.body.includes('__fbOpenThread') || bundlePatchesObsolete(bundle.body)),
     });
   } else {
     checks.push({ name: 'bundle patch', ok: false });

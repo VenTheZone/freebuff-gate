@@ -292,3 +292,33 @@ test('unitEnvValue parses KEY=value from systemctl output', () => {
   }
   assert.equal(value, '58060');
 });
+
+test('proxy health probe sends the gate cookie and accepts a 0.0.176 spaces-store bundle', async () => {
+  const http = require('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-gate-token-'));
+  const tokenFile = path.join(dir, 'gate-proxy.token');
+  fs.writeFileSync(tokenFile, 'secret\n');
+  const server = http.createServer((req, res) => {
+    if (req.headers.cookie !== 'fb_gate=secret') {
+      res.writeHead(401);
+      return res.end();
+    }
+    if (req.url.startsWith('/assets/')) {
+      return res.end('async openTab(n,i,r,s){x},async closeTab(n,i=!1){y}');
+    }
+    if (req.method === 'POST') return res.end('{}');
+    res.end('<script id="fb-desktop-shim"></script>fb-session-switch fb-new-session<script src="/assets/index-abc.js"></script>');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const previous = process.env.FB_GATE_TOKEN_FILE;
+  process.env.FB_GATE_TOKEN_FILE = tokenFile;
+  try {
+    const health = await setup.probeProxyHealth(server.address().port, null);
+    assert.equal(health.reachable, true);
+    assert.deepStrictEqual(health.checks.filter((check) => !check.ok), []);
+  } finally {
+    if (previous === undefined) delete process.env.FB_GATE_TOKEN_FILE;
+    else process.env.FB_GATE_TOKEN_FILE = previous;
+    server.close();
+  }
+});
