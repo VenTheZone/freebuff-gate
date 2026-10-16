@@ -57,6 +57,7 @@ const STACK_FILES_FALLBACK = Object.freeze([
   'freebuff-skill-loader.js',
   'discover-orchestrator.ps1',
   'freebuff-gate-setup.js',
+  'freebuff-desktop-launch.js',
 ]);
 
 function releaseNeeds() {
@@ -754,6 +755,9 @@ async function main(argv = process.argv.slice(2)) {
       if (action.id === 'upgrade') {
         const stack = installerModule.installUiStack({ ...options, desktopDir: state.desktopDir, sourceDir });
         console.log(`  applied: ${stack.applied.join(', ')}`);
+        for (const file of stack.launcherEntries || []) {
+          console.log(`  menu entry now starts Desktop through the Gate launcher: ${file}`);
+        }
         if (stack.bestEffort && stack.bestEffort.length > 0) {
           console.log(`  best-effort cache-header patch: ${stack.bestEffort.join(', ')}`);
         }

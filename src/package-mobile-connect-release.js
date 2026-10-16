@@ -27,6 +27,7 @@ const RELEASE_FILES = Object.freeze([
   // Interactive setup wizard: detects the Desktop install, installs/upgrades
   // the proxy + UI patches, re-applies the tailnet forward, verifies health.
   'freebuff-gate-setup.js',
+  'freebuff-desktop-launch.js',
 ]);
 
 function normalizeReleaseVersion(value) {

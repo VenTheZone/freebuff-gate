@@ -34,6 +34,8 @@ const PROXY_FILES = Object.freeze([
   'discover-orchestrator.ps1',
   // Deployed so the proxy's "Update Gate" action can run it for release installs.
   'freebuff-gate-setup.js',
+  // Menu-entry launcher that re-patches Desktop after its own AppImage updates.
+  'freebuff-desktop-launch.js',
 ]);
 const PROXY_UI_FILES = Object.freeze(['mobile-ui.css', 'mobile-ui.js']);
 // Sidecar written next to the deployed proxy: records the directory the UI
@@ -1634,8 +1636,64 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
   const desktopDir = findFreebuffDesktop(options);
   const registration = proxyAutoStartPaths(options);
   const proxyDeploy = deployProxy(options, { runPlatformCommand });
-  const results = { proxy: proxyDeploy.proxyDir, applied: [], bestEffort: [] };
+  return {
+    enabled: true,
+    proxy: proxyDeploy.proxyDir,
+    proxyUnit: registration.file,
+    ...applyDesktopPatches(desktopDir, { ...options, proxyDir: proxyDeploy.proxyDir }),
+    launcherEntries: wireDesktopLauncher(desktopDir, { ...options, proxyDir: proxyDeploy.proxyDir }),
+  };
+}
 
+// Points Linux menu entries that start the extracted AppImage
+// (<desktop-dir>/squashfs-root/AppRun) at freebuff-desktop-launch.js, keeping
+// their Desktop flags. Without the launcher, Desktop's own updater swaps in an
+// unpatched AppImage. Entries already on the launcher are refreshed so a
+// moved proxy dir or node binary is picked up. Returns the files changed.
+function wireDesktopLauncher(desktopDir, options = {}) {
+  const platform = options.platform || process.platform;
+  // ponytail: the standalone setup binary has no launcher mode; its users keep the plain AppRun entry.
+  if (platform !== 'linux' || (options.proxyRuntimeArgs || []).length > 0) return [];
+  const env = options.env || process.env;
+  const home = options.home || os.homedir();
+  const applicationsDir = options.applicationsDir
+    || path.join(env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'applications');
+  const quote = (value) => (/[\s"'\\$`]/.test(value) ? `"${value.replace(/(["\\$`])/g, '\\$1')}"` : value);
+  const launcher = path.join(options.proxyDir, 'freebuff-desktop-launch.js');
+  // The desktop dir in Exec scopes later refreshes to entries for this
+  // install only (a test or second install never rewrites another's entry).
+  const scope = `FREEBUFF_DESKTOP_DIR=${quote(path.resolve(desktopDir))}`;
+  const command = `env ${scope} ${quote(options.nodePath || process.execPath)} ${quote(launcher)}`;
+  const appRun = path.join(path.resolve(desktopDir), 'squashfs-root', 'AppRun');
+  let names = [];
+  try { names = fs.readdirSync(applicationsDir).filter((name) => name.endsWith('.desktop')); } catch { return []; }
+  const changed = [];
+  for (const name of names) {
+    const file = path.join(applicationsDir, name);
+    const text = fs.readFileSync(file, 'utf8');
+    const next = text.replace(/^Exec=(.*)$/gm, (line, exec) => {
+      const index = exec.includes(appRun)
+        ? exec.indexOf(appRun) + appRun.length
+        : exec.includes(`${scope} `) && exec.includes('freebuff-desktop-launch.js')
+          ? exec.indexOf('freebuff-desktop-launch.js') + 'freebuff-desktop-launch.js'.length
+          : -1;
+      if (index < 0) return line;
+      const rest = exec.slice(index).replace(/^["']/, '');
+      return `Exec=${command}${rest}`;
+    });
+    if (next !== text) {
+      writeAtomically(file, next, 0o644);
+      changed.push(file);
+    }
+  }
+  return changed;
+}
+
+// On-disk half of installUiStack: patches one Desktop install in place
+// without touching the proxy. The Desktop launcher reuses it to patch a
+// freshly extracted AppImage before swapping it in.
+function applyDesktopPatches(desktopDir, options = {}) {
+  const results = { applied: [], bestEffort: [] };
   const orchDir = orchestratorDirOf(desktopDir);
   const uiDir = path.join(orchDir, 'ui');
   const platformPaths = defaultPaths({
@@ -1645,7 +1703,7 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
   });
   const configDir = path.dirname(platformPaths.configFile);
   const uploadsDir = path.join(path.dirname(platformPaths.installDir), 'uploads');
-  const perfProbePath = path.join(proxyDeploy.proxyDir, 'perf-probe.js');
+  const perfProbePath = path.join(options.proxyDir || platformPaths.proxyDir, 'perf-probe.js');
 
   const assetsDir = path.join(uiDir, 'assets');
   const bundles = fs.readdirSync(assetsDir).filter((name) => /^index-[^/]+\.js$/.test(name));
@@ -1664,11 +1722,9 @@ function installUiStack(options, paths, { runPlatformCommand = DEFAULT_RUN_PLATF
   results.applied.push(`orchestrator:${changes.includes('routes') || changes.includes('perf-helper') || changes.includes('cache-headers') ? changes.join(',') : 'already-patched'}`);
   results.bestEffort = orchResult.bestEffort || [];
   return {
-    enabled: true,
     desktopDir,
     configDir,
     uiDir,
-    proxyUnit: registration.file,
     restartRequired: changes.includes('ready-file'),
     ...results,
   };
@@ -2033,6 +2089,8 @@ module.exports = {
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,
+  applyDesktopPatches,
+  wireDesktopLauncher,
   applyIndexShim,
   applyOrchestratorPatches,
   applyProxyAutoStart,

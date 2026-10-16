@@ -12,6 +12,7 @@ const SEA_ASSETS = Object.freeze([
   'freebuff-setup.js',
   'freebuff-setup-wizard.js',
   'freebuff-gate-setup.js',
+  'freebuff-desktop-launch.js',
   'install-mobile-connect.js',
   'mobile-connect-agent.js',
   'mobile-connect-protocol.js',

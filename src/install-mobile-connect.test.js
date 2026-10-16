@@ -55,6 +55,7 @@ const {
   WINDOWS_TASK_NAME,
   applyAutoStart,
   applyBundlePatch,
+  wireDesktopLauncher,
   applyIndexShim,
   applyOrchestratorPatches,
   autoStartPaths,
@@ -1244,4 +1245,26 @@ test('standalone runtime mode is carried into companion launcher and service', a
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('wireDesktopLauncher points only this install\'s AppRun menu entry at the Gate launcher', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fb-wire-launcher-'));
+  const apps = path.join(root, 'applications');
+  fs.mkdirSync(apps);
+  const desktopDir = path.join(root, 'freebuff-desktop');
+  const otherDir = path.join(root, 'other-desktop');
+  const entry = path.join(apps, 'freebuff-desktop.desktop');
+  const other = path.join(apps, 'other.desktop');
+  fs.writeFileSync(entry, `[Desktop Entry]\nExec=env APPDIR=${desktopDir}/squashfs-root ${desktopDir}/squashfs-root/AppRun --no-sandbox %U\n`);
+  fs.writeFileSync(other, `[Desktop Entry]\nExec=${otherDir}/squashfs-root/AppRun %U\n`);
+  const options = { platform: 'linux', applicationsDir: apps, proxyDir: '/proxy dir', nodePath: '/usr/bin/node' };
+
+  assert.deepEqual(wireDesktopLauncher(desktopDir, options), [entry]);
+  assert.match(fs.readFileSync(entry, 'utf8'), new RegExp(`^Exec=env FREEBUFF_DESKTOP_DIR=${desktopDir} /usr/bin/node "/proxy dir/freebuff-desktop-launch.js" --no-sandbox %U$`, 'm'));
+  assert.deepEqual(wireDesktopLauncher(desktopDir, options), [], 'idempotent');
+  assert.deepEqual(wireDesktopLauncher(desktopDir, { ...options, proxyDir: '/moved' }), [entry], 'refreshes a moved proxy dir');
+  assert.match(fs.readFileSync(entry, 'utf8'), /\/usr\/bin\/node \/moved\/freebuff-desktop-launch\.js --no-sandbox %U$/m);
+  assert.deepEqual(wireDesktopLauncher(path.join(root, 'unrelated'), { ...options, proxyDir: '/elsewhere' }), [], 'other installs untouched');
+  assert.match(fs.readFileSync(other, 'utf8'), /^Exec=.*other-desktop\/squashfs-root\/AppRun %U$/m);
+  assert.deepEqual(wireDesktopLauncher(desktopDir, { ...options, platform: 'darwin' }), []);
 });

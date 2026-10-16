@@ -264,6 +264,26 @@ app).
   bundle/shim/orchestrator for the patch markers and exits non-zero with the
   exact file when any are missing, so a regression is caught loudly. Re-run
   the install command to re-apply.
+- Desktop updates on Linux AppImage installs: Gate patches the extracted
+  copy in `<desktop-dir>/squashfs-root`, which Desktop's own updater does
+  not know about. On its own, the updater downloads the new AppImage next to
+  the old one, deletes the old one, and "restart to update" starts the new
+  AppImage directly, without Gate's patches. The installer therefore points
+  any menu entry whose `Exec` runs `<desktop-dir>/squashfs-root/AppRun` at
+  `freebuff-desktop-launch.js` in the proxy directory, keeping its flags.
+  That launcher:
+  - extracts a newer `Freebuff-X.Y.Z-*.AppImage` from the desktop dir into
+    a staging dir before each launch, applies and verifies the patches, then
+    swaps it in;
+  - keeps the previous copy as `squashfs-root-<version>-gate-backup`, and
+    only the newest of those;
+  - after "restart to update", stops the unpatched instance the updater
+    started and relaunches the patched copy.
+  If the new version fails Gate's patch verification, the current copy keeps
+  running. The failure goes to `<desktop-dir>/gate-launch.log` and a desktop
+  notification asks you to update Gate. The launcher never swaps the copy a
+  running Desktop is using. Desktops started some other way (autostart, a
+  terminal) still need `node freebuff-desktop-launch.js [flags]`.
 - Gate checks for its own updates (at most every 6 h). A source checkout
   compares against its git upstream; a release install compares against the
   latest GitHub release. Pending updates show as a number on the Settings
