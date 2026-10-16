@@ -1143,7 +1143,8 @@ function patchBundleInfo(body) {
   // 0.0.126+ (spaces/threads store): openTab no longer has a home-tab
   // branch, so the home-thread reuse and phantom-close patches have nothing
   // to fix. The store still names openTab/closeTab, which identifies it.
-  const isSpacesStore = !body.includes('lr(t,()=>') && /async openTab\(\w,\w,\w\)\{/.test(body) && /async closeTab\(\w,\w=!1\)\{/.test(body);
+  // 0.0.176 added a fourth openTab parameter, so accept three or more.
+  const isSpacesStore = !body.includes('lr(t,()=>') && /async openTab\(\w(?:,\w){2,}\)\{/.test(body) && /async closeTab\(\w,\w=!1\)\{/.test(body);
   if (isSpacesStore) {
     return { body: out, obsolete: UI_PATCH_MARKERS.map(([name]) => name).concat('CLOSE_BTN_FIX', 'SKILL_ORIGIN_FIX'), recognized: true };
   }

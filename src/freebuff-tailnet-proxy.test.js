@@ -16,7 +16,7 @@ process.env.FB_AD_SNIFF_LOG = path.join(os.tmpdir(), `fb-ad-sniff-${process.pid}
 // Attach uploads must never write to the real ~/.local/share tree.
 process.env.FB_UPLOADS_DIR = path.join(os.tmpdir(), `fb-uploads-${process.pid}`);
 
-const { createProxyServer, defaultOrchestratorReadyFile, discoverReadyFile, discoverReadyFiles, parseCodexDeviceAuthOutput, patchBundle, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
+const { createProxyServer, defaultOrchestratorReadyFile, discoverReadyFile, discoverReadyFiles, parseCodexDeviceAuthOutput, patchBundle, patchBundleInfo, CREATE_REUSE, CREATE_REUSE_V2, CREATE_REUSE_V3, CREATE_REUSE_V4, CREATE_REUSE_V5, CREATE_REUSE_V6, CLOSE_BTN_FIX, CLOSE_BTN_MARK, CLOSE_FIX1, CLOSE_FIX1_V1, CLOSE_FIX1_V2, CLOSE_FIX1_V2_BUGGY, CLOSE_FIX2, CLOSE_FIX2_V1, CLOSE_FIX3, CLOSE_FIX3_V1, CLOSE_FIX3_V2, SETSTATE_FIX, SCROLL_FIX, OPEN_THREAD_FIX, OPEN_THREAD_MARK, SKILL_ORIGIN_MARK, SKILL_ORIGIN_FIX, SHIM, checkUiPatches, rehashCsp, UI_PATCH_STATUS_FILE, UPLOADS_DIR } = require('./freebuff_tailnet_proxy');
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -333,6 +333,14 @@ test('patchBundle rewrites the home-tab mark and leaves unknown bytes alone', ()
   assert.ok(!patched.includes(mark), 'original create-thread mark is gone');
   assert.ok(patched.includes('fb.homeThread'), 'reuse callback pins the home thread');
   assert.equal(patchBundle('plain javascript'), 'plain javascript');
+});
+
+test('patchBundleInfo recognizes the spaces store with 0.0.162 and 0.0.176 openTab arity', () => {
+  for (const openTab of ['async openTab(n,i,r){', 'async openTab(n,i,r,s){']) {
+    const info = patchBundleInfo(`head;${openTab}x},async closeTab(n,i=!1){y};tail;`);
+    assert.equal(info.recognized, true, openTab);
+    assert.ok(info.obsolete.includes('CREATE_REUSE'), openTab);
+  }
 });
 
 test('patchBundle adds a skill-origin badge to the composer slash menu rows', () => {
